@@ -58,6 +58,12 @@ def _list_videos(directory="."):
     return sorted(videos)
 
 
+def _get_running_video():
+    if VIDEO_FILE.exists():
+        return VIDEO_FILE.read_text().strip()
+    return None
+
+
 def _stop_wallpaper():
     if PID_FILE.exists():
         pid_str = PID_FILE.read_text().strip()
@@ -78,7 +84,7 @@ def _stop_wallpaper():
         PID_FILE.unlink(missing_ok=True)
 
 
-def _run_wallpaper_process(video_path, hide_icons=False):
+def _run_wallpaper_process(video_path, hide_icons=False, quiet=False):
     _ensure_state_dir()
     log_path = STATE_DIR / "lwp.log"
     venv_python = Path(__file__).resolve().parent / ".venv" / "bin" / "python3"
@@ -95,7 +101,8 @@ def _run_wallpaper_process(video_path, hide_icons=False):
             stdin=subprocess.DEVNULL,
         )
     PID_FILE.write_text(str(proc.pid))
-    print(f"wallpaper started (pid: {proc.pid})")
+    if not quiet:
+        print(f"wallpaper started (pid: {proc.pid})")
 
 
 def cmd_set(video_path, hide_icons=False):
@@ -113,12 +120,13 @@ def cmd_set(video_path, hide_icons=False):
     _run_wallpaper_process(video_path, hide_icons)
 
 
-def cmd_stop():
+def cmd_stop(quiet=False):
     _ensure_state_dir()
     _stop_wallpaper()
     if _icons_hidden():
         _show_desktop_icons()
-    print("wallpaper stopped")
+    if not quiet:
+        print("wallpaper stopped")
 
 
 def cmd_status():
@@ -275,6 +283,228 @@ def _wallpaper_main(video_path, hide_icons):
     app.run()
 
 
+def cmd_tui(directory="."):
+    import curses
+
+    def _draw(stdscr):
+        curses.use_default_colors()
+        if curses.has_colors():
+            curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_BLUE)
+            curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_WHITE)
+            curses.init_pair(3, curses.COLOR_GREEN, -1)
+            curses.init_pair(4, curses.COLOR_CYAN, -1)
+            curses.init_pair(5, curses.COLOR_YELLOW, -1)
+            curses.init_pair(6, curses.COLOR_RED, -1)
+        curses.curs_set(0)
+
+        videos = _list_videos(directory)
+        selected = 0
+        search = ""
+        searching = False
+        status_msg = ""
+        msg_type = "info"
+
+        def get_filtered():
+            if search:
+                return [v for v in videos if search.lower() in v.name.lower()]
+            return list(videos)
+
+        while True:
+            height, width = stdscr.getmaxyx()
+            if height < 6 or width < 40:
+                stdscr.clear()
+                stdscr.addstr(0, 0, "Terminal too small (min 40x6)")
+                stdscr.refresh()
+                stdscr.getch()
+                continue
+
+            filtered = get_filtered()
+            if selected >= len(filtered):
+                selected = max(0, len(filtered) - 1)
+
+            stdscr.clear()
+
+            # Header
+            h = f" lwp - Live Wallpaper Player  ({len(videos)} videos) "
+            stdscr.attron(curses.color_pair(1) if curses.has_colors() else curses.A_REVERSE)
+            stdscr.addstr(0, 0, " " * width)
+            stdscr.addstr(0, 0, h[:width - 1])
+            stdscr.attroff(curses.color_pair(1) if curses.has_colors() else curses.A_REVERSE)
+
+            # Status line - currently playing
+            running = _get_running_video()
+            hid = _icons_hidden()
+            line = 1
+            if running:
+                try:
+                    rn = os.path.basename(running)
+                except Exception:
+                    rn = running
+                t = f" >> Now: {rn}"
+                if hid:
+                    t += "  [icons hidden]"
+                if curses.has_colors():
+                    stdscr.attron(curses.color_pair(3))
+                stdscr.addstr(line, 0, t[:width - 1])
+                if curses.has_colors():
+                    stdscr.attroff(curses.color_pair(3))
+                line += 1
+
+            # Search input bar
+            if searching:
+                s = f" Search: {search}"
+                if curses.has_colors():
+                    stdscr.attron(curses.color_pair(4))
+                stdscr.addstr(line, 0, s[:width - 1])
+                if curses.has_colors():
+                    stdscr.attroff(curses.color_pair(4))
+                line += 1
+
+            # Video list
+            list_start = line + 1
+            list_height = height - 2 - list_start
+
+            if not filtered:
+                msg = "no videos found" if not search else "no matches for filter"
+                if curses.has_colors():
+                    stdscr.attron(curses.color_pair(4))
+                stdscr.addstr(list_start, 2, msg)
+                if not search:
+                    stdscr.addstr(list_start + 1, 2, "press 'r' to refresh")
+                if curses.has_colors():
+                    stdscr.attroff(curses.color_pair(4))
+
+            # Scroll window centered on selection
+            scroll = max(0, selected - list_height // 2)
+            if scroll + list_height > len(filtered):
+                scroll = max(0, len(filtered) - list_height)
+
+            for i, v in enumerate(filtered[scroll:scroll + list_height]):
+                y = list_start + i
+                idx = scroll + i
+                is_sel = idx == selected
+                is_playing = False
+                if running:
+                    try:
+                        is_playing = os.path.samefile(str(v), running)
+                    except (OSError, FileNotFoundError):
+                        pass
+
+                if is_sel:
+                    prefix = " >"
+                elif is_playing:
+                    prefix = " *"
+                else:
+                    prefix = "  "
+                label = f"{prefix} {v.name}"
+                if len(label) > width - 1:
+                    label = label[:width - 4] + "..."
+                if y >= height - 1:
+                    continue
+
+                if is_sel:
+                    style = curses.A_REVERSE
+                    if curses.has_colors():
+                        style |= curses.color_pair(2)
+                elif is_playing:
+                    style = curses.color_pair(3) if curses.has_colors() else curses.A_BOLD
+                else:
+                    style = curses.color_pair(4) if curses.has_colors() else 0
+
+                stdscr.attron(style)
+                stdscr.addstr(y, 0, label)
+                stdscr.attroff(style)
+
+            # Status bar (avoid bottom-right corner: max width-1)
+            keys = "Enter:Set  s:Stop  i:Icons  /:Search  r:Refresh  q:Quit"
+            bar_style = curses.color_pair(5) if curses.has_colors() else curses.A_REVERSE
+            stdscr.attron(bar_style | curses.A_BOLD)
+            safe_w = max(1, width - 1)
+            stdscr.addstr(height - 1, 0, " " * safe_w)
+            if status_msg:
+                s_style = curses.color_pair(6) if (msg_type == "error" and curses.has_colors()) else (curses.color_pair(3) if curses.has_colors() else curses.A_BOLD)
+                stdscr.attron(s_style)
+                stdscr.addstr(height - 1, 0, status_msg[:safe_w])
+                stdscr.attroff(s_style)
+            else:
+                stdscr.addstr(height - 1, 0, keys[:safe_w])
+            stdscr.attroff(bar_style | curses.A_BOLD)
+
+            stdscr.refresh()
+
+            # Input handling
+            key = stdscr.getch()
+
+            if searching:
+                if key == 27:
+                    searching = False
+                    search = ""
+                elif key in (curses.KEY_BACKSPACE, 127, 8):
+                    search = search[:-1]
+                elif key in (ord("\n"), curses.KEY_ENTER):
+                    searching = False
+                elif 32 <= key <= 126:
+                    search += chr(key)
+                continue
+
+            if key == ord("/"):
+                searching = True
+                search = ""
+                status_msg = ""
+            elif key in (ord("q"), 27):
+                break
+            elif key in (ord("j"), curses.KEY_DOWN):
+                if filtered:
+                    selected = min(selected + 1, len(filtered) - 1)
+            elif key in (ord("k"), curses.KEY_UP):
+                selected = max(selected - 1, 0)
+            elif key == ord("g"):
+                selected = 0
+            elif key == ord("G"):
+                if filtered:
+                    selected = len(filtered) - 1
+            elif key == curses.KEY_PPAGE:
+                selected = max(selected - list_height, 0) if list_height > 0 else 0
+            elif key == curses.KEY_NPAGE:
+                if list_height > 0 and filtered:
+                    selected = min(selected + list_height, len(filtered) - 1)
+            elif key in (ord("\n"), curses.KEY_ENTER):
+                if filtered:
+                    vp = str(filtered[selected])
+                    if not os.path.isfile(vp):
+                        status_msg = "error: file not found"
+                        msg_type = "error"
+                    else:
+                        _ensure_state_dir()
+                        _stop_wallpaper()
+                        if not hid and _icons_hidden():
+                            _show_desktop_icons()
+                        VIDEO_FILE.write_text(vp + "\n")
+                        _run_wallpaper_process(vp, hid, quiet=True)
+                        status_msg = f"set: {filtered[selected].name}"
+                        msg_type = "info"
+            elif key == ord("s"):
+                cmd_stop(quiet=True)
+                status_msg = "wallpaper stopped"
+                msg_type = "info"
+            elif key == ord("i"):
+                if _icons_hidden():
+                    _show_desktop_icons()
+                    status_msg = "desktop icons shown"
+                else:
+                    _hide_desktop_icons()
+                    status_msg = "desktop icons hidden"
+                msg_type = "info"
+            elif key == ord("r"):
+                videos = _list_videos(directory)
+                status_msg = f"refreshed: {len(videos)} videos"
+                msg_type = "info"
+            else:
+                status_msg = ""
+
+    curses.wrapper(_draw)
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="lwp",
@@ -296,6 +526,9 @@ def main():
     p_list = sub.add_parser("list", help="list video files in a directory")
     p_list.add_argument("dir", nargs="?", default=".", help="directory (default: .)")
 
+    p_tui = sub.add_parser("tui", help="browse and select videos interactively")
+    p_tui.add_argument("dir", nargs="?", default=".", help="directory (default: .)")
+
     p_run = sub.add_parser("_run", help=argparse.SUPPRESS)
     p_run.add_argument("--path", required=True)
     p_run.add_argument("--hide-icons", action="store_true")
@@ -310,6 +543,8 @@ def main():
         cmd_status()
     elif args.command == "list":
         cmd_list(args.dir)
+    elif args.command == "tui":
+        cmd_tui(args.dir)
     elif args.command == "_run":
         _wallpaper_main(args.path, hide_icons=args.hide_icons)
 
