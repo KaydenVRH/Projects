@@ -48,7 +48,11 @@ sketchybar --default "${default[@]}"
 sketchybar --add item chevron left \
            --set chevron icon= label.drawing=off icon.color=$VIBRANT_GREEN \
            --add item front_app left \
-           --set front_app icon.drawing=off script="$PLUGIN_DIR/front_app.sh" \
+           --set front_app icon.drawing=off \
+           label.padding_left=32 \
+           background.height=28 \
+           background.corner_radius=5 \
+           script="$PLUGIN_DIR/front_app.sh" \
            --subscribe front_app front_app_switched
 
 ##### Adding Right Items #####
