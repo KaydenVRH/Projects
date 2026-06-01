@@ -553,25 +553,38 @@ def _enable_autostart():
     <true/>
     <key>KeepAlive</key>
     <false/>
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
     <key>StandardOutPath</key>
-    <string>/tmp/lwp/autostart.log</string>
+    <string>{CONFIG_DIR}/autostart.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/lwp/autostart.log</string>
+    <string>{CONFIG_DIR}/autostart.log</string>
 </dict>
 </plist>"""
     plist.write_text(content)
-    result = subprocess.run(["launchctl", "load", str(plist)], capture_output=True, text=True)
-    if result.returncode == 0:
+    uid = os.getuid()
+    loaded = False
+    for cmd in [["launchctl", "bootstrap", f"gui/{uid}", str(plist)],
+                ["launchctl", "load", str(plist)]]:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0 or "already bootstrapped" in result.stderr:
+            loaded = True
+            break
+    if loaded:
         print(f"autostart enabled: {plist}")
     else:
-        print(f"error: {result.stderr.strip()}", file=sys.stderr)
+        print(f"error enabling autostart", file=sys.stderr)
         sys.exit(1)
 
 
 def _disable_autostart():
     plist = _autostart_plist()
+    uid = os.getuid()
+    subprocess.run(["launchctl", "bootout", f"gui/{uid}/com.lwp.wallpaper"],
+                    capture_output=True)
+    subprocess.run(["launchctl", "unload", str(plist)],
+                    capture_output=True)
     if plist.exists():
-        subprocess.run(["launchctl", "unload", str(plist)], capture_output=True)
         plist.unlink()
         print("autostart disabled")
     else:
@@ -587,19 +600,37 @@ def _autostart_status():
 
 
 def _autostart_run():
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = CONFIG_DIR / "autostart.log"
+    log = open(log_path, "w")
+
+    def logmsg(msg):
+        log.write(f"{msg}\n")
+        log.flush()
+
+    logmsg(f"[{time.strftime('%H:%M:%S')}] autostart run starting")
     config = _load_config()
     video = config.get("last_video", "")
-    if not video or not os.path.isfile(video):
+    if not video:
+        logmsg("no video configured, exiting")
         sys.exit(0)
+    if not os.path.isfile(video):
+        logmsg(f"video file not found: {video}")
+        sys.exit(0)
+
     hide_icons = config.get("hide_icons", False)
+    logmsg(f"video={video} hide_icons={hide_icons}")
     _ensure_state_dir()
     _stop_wallpaper()
     if hide_icons and not _icons_hidden():
+        logmsg("hiding desktop icons")
         _hide_desktop_icons()
     elif not hide_icons and _icons_hidden():
+        logmsg("showing desktop icons")
         _show_desktop_icons()
     VIDEO_FILE.write_text(video + "\n")
     _run_wallpaper_process(video, hide_icons, quiet=True)
+    logmsg("wallpaper process spawned, exiting")
 
 
 def cmd_autostart(action):
