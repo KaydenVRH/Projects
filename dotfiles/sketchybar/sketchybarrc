@@ -67,6 +67,19 @@ sketchybar --add item clock right \
            --add item cpu right \
            --set cpu update_freq=5 icon= script="$PLUGIN_DIR/cpu.sh" \
            --add item ram right \
-           --set ram update_freq=5 icon= script="$PLUGIN_DIR/ram.sh"
+           --set ram update_freq=5 icon= script="$PLUGIN_DIR/ram.sh" \
+           --add item wifi right \
+           --set wifi update_freq=10 icon= script="$PLUGIN_DIR/wifi.sh" \
+           --add item bluetooth right \
+           --set bluetooth update_freq=30 icon= script="$PLUGIN_DIR/bluetooth.sh" \
+           --add item now_playing left \
+           --set now_playing drawing=off \
+           label.padding_left=32 \
+           label.max_chars=40 \
+           scroll_texts=on \
+           background.height=28 \
+           script="$PLUGIN_DIR/now_playing.sh" \
+           update_freq=5 \
+           --subscribe now_playing media_change
 
 sketchybar --update
