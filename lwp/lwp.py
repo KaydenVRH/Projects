@@ -9,6 +9,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import signal
 import subprocess
@@ -21,6 +22,8 @@ PID_FILE = STATE_DIR / "pid"
 VIDEO_FILE = STATE_DIR / "current_video.txt"
 ICONS_STATE_FILE = STATE_DIR / "icons_hidden"
 VIDEO_EXTS = {"*.mp4", "*.mov", "*.m4v", "*.avi", "*.mkv", "*.webm"}
+CONFIG_DIR = Path.home() / ".lwp"
+CONFIG_FILE = CONFIG_DIR / "config.json"
 
 
 def _ensure_state_dir():
@@ -62,6 +65,20 @@ def _get_running_video():
     if VIDEO_FILE.exists():
         return VIDEO_FILE.read_text().strip()
     return None
+
+
+def _save_config(video_path, hide_icons):
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(json.dumps({"last_video": video_path, "hide_icons": hide_icons}))
+
+
+def _load_config():
+    if CONFIG_FILE.exists():
+        try:
+            return json.loads(CONFIG_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
 
 
 def _stop_wallpaper():
@@ -117,6 +134,7 @@ def cmd_set(video_path, hide_icons=False):
     elif _icons_hidden():
         _show_desktop_icons()
     VIDEO_FILE.write_text(video_path + "\n")
+    _save_config(video_path, hide_icons)
     _run_wallpaper_process(video_path, hide_icons)
 
 
@@ -480,6 +498,7 @@ def cmd_tui(directory="."):
                         if not hid and _icons_hidden():
                             _show_desktop_icons()
                         VIDEO_FILE.write_text(vp + "\n")
+                        _save_config(vp, hid)
                         _run_wallpaper_process(vp, hid, quiet=True)
                         status_msg = f"set: {filtered[selected].name}"
                         msg_type = "info"
@@ -503,6 +522,95 @@ def cmd_tui(directory="."):
                 status_msg = ""
 
     curses.wrapper(_draw)
+
+
+def _autostart_plist():
+    return Path.home() / "Library" / "LaunchAgents" / "com.lwp.wallpaper.plist"
+
+
+def _enable_autostart():
+    script = Path(__file__).resolve()
+    venv_python = script.parent / ".venv" / "bin" / "python3"
+    python = str(venv_python) if venv_python.exists() else sys.executable
+
+    plist = _autostart_plist()
+    plist.parent.mkdir(parents=True, exist_ok=True)
+
+    content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.lwp.wallpaper</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{python}</string>
+        <string>{script}</string>
+        <string>autostart</string>
+        <string>run</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/tmp/lwp/autostart.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/lwp/autostart.log</string>
+</dict>
+</plist>"""
+    plist.write_text(content)
+    result = subprocess.run(["launchctl", "load", str(plist)], capture_output=True, text=True)
+    if result.returncode == 0:
+        print(f"autostart enabled: {plist}")
+    else:
+        print(f"error: {result.stderr.strip()}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _disable_autostart():
+    plist = _autostart_plist()
+    if plist.exists():
+        subprocess.run(["launchctl", "unload", str(plist)], capture_output=True)
+        plist.unlink()
+        print("autostart disabled")
+    else:
+        print("autostart not enabled")
+
+
+def _autostart_status():
+    plist = _autostart_plist()
+    if plist.exists():
+        print("autostart: enabled")
+    else:
+        print("autostart: disabled")
+
+
+def _autostart_run():
+    config = _load_config()
+    video = config.get("last_video", "")
+    if not video or not os.path.isfile(video):
+        sys.exit(0)
+    hide_icons = config.get("hide_icons", False)
+    _ensure_state_dir()
+    _stop_wallpaper()
+    if hide_icons and not _icons_hidden():
+        _hide_desktop_icons()
+    elif not hide_icons and _icons_hidden():
+        _show_desktop_icons()
+    VIDEO_FILE.write_text(video + "\n")
+    _run_wallpaper_process(video, hide_icons, quiet=True)
+
+
+def cmd_autostart(action):
+    if action in ("on", "enable"):
+        _enable_autostart()
+    elif action in ("off", "disable"):
+        _disable_autostart()
+    elif action == "status":
+        _autostart_status()
+    elif action == "run":
+        _autostart_run()
 
 
 def main():
@@ -529,6 +637,13 @@ def main():
     p_tui = sub.add_parser("tui", help="browse and select videos interactively")
     p_tui.add_argument("dir", nargs="?", default=".", help="directory (default: .)")
 
+    p_autostart = sub.add_parser("autostart", help="manage login autostart")
+    p_autostart.add_argument(
+        "action", nargs="?", default="status",
+        choices=["on", "off", "enable", "disable", "status", "run"],
+        help="on|off|status (default: status)",
+    )
+
     p_run = sub.add_parser("_run", help=argparse.SUPPRESS)
     p_run.add_argument("--path", required=True)
     p_run.add_argument("--hide-icons", action="store_true")
@@ -545,6 +660,8 @@ def main():
         cmd_list(args.dir)
     elif args.command == "tui":
         cmd_tui(args.dir)
+    elif args.command == "autostart":
+        cmd_autostart(args.action)
     elif args.command == "_run":
         _wallpaper_main(args.path, hide_icons=args.hide_icons)
 
