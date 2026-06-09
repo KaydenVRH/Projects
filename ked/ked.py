@@ -345,6 +345,7 @@ def main(stdscr):
 
         mode_label = "INSERT" if mode == 'insert' else "NORMAL"
         parts = [
+            "<ked>",
             f"<{os.path.basename(filepath or 'untitled')}>",
             f"<{mode_label}>",
         ]
