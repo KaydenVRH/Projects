@@ -3,6 +3,7 @@ import curses
 import sys
 import os
 import datetime
+import subprocess
 
 PYTHON_KEYWORDS = {
     'False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await',
@@ -35,7 +36,9 @@ THEME = {
     'gutter_fg': -1,
     'gutter_bg': -1,
     'find_fg': -1,
-    'find_bg': -1,
+    'find_bg': 236,
+    'find_sel_fg': curses.COLOR_WHITE,
+    'find_sel_bg': curses.COLOR_BLUE,
 }
 
 COLOR_PAIRS = {
@@ -60,6 +63,7 @@ def setup_colors(theme=None):
     curses.init_pair(7, theme['status_fg'], theme['status_bg'])
     curses.init_pair(8, theme['gutter_fg'], theme['gutter_bg'])
     curses.init_pair(9, theme['find_fg'], theme['find_bg'])
+    curses.init_pair(10, theme['find_sel_fg'], theme['find_sel_bg'])
 
 
 def highlight_python(line):
@@ -203,26 +207,26 @@ def fuzzy_finder(stdscr, root):
             offset = selected - max_visible + 1
 
         for i in range(h):
-            stdscr.addstr(i, 0, " " * (w - 1))
+            stdscr.addstr(i, 0, " " * (w - 1), curses.color_pair(9))
 
         matches = len(results) if query else len(files)
         s = '' if matches == 1 else 'es'
         label = f" <find>  <{matches} match{s}> "
-        stdscr.addstr(0, 0, label[:w - 1], curses.A_REVERSE | curses.color_pair(9))
+        stdscr.addstr(0, 0, label[:w - 1], curses.A_BOLD | curses.color_pair(9))
 
         visible = results[offset:offset + max_visible]
         for i, f in enumerate(visible):
             display = f
-            m = w - 3
+            m = w - 4
             if len(display) > m:
                 display = "..." + display[-(m - 3):]
             if offset + i == selected:
-                stdscr.addstr(i + 1, 0, " " + display, curses.A_REVERSE)
+                stdscr.addstr(i + 1, 0, "  " + display, curses.color_pair(10))
             else:
-                stdscr.addstr(i + 1, 0, " " + display)
+                stdscr.addstr(i + 1, 0, "  " + display, curses.color_pair(9))
 
         prompt = f"> {query}"
-        stdscr.addstr(h - 1, 0, prompt.ljust(w - 1), curses.A_REVERSE | curses.color_pair(9))
+        stdscr.addstr(h - 1, 0, prompt.ljust(w - 1), curses.color_pair(7))
         stdscr.move(h - 1, min(len(prompt), w - 1))
 
         key = stdscr.getch()
@@ -256,6 +260,45 @@ def fuzzy_finder(stdscr, root):
             offset = 0
 
 
+def run_python(stdscr, filepath):
+    if not filepath:
+        return
+    h, w = stdscr.getmaxyx()
+
+    try:
+        result = subprocess.run(
+            ['python3', filepath],
+            capture_output=True, text=True, timeout=30
+        )
+        output = result.stdout + result.stderr
+        if result.returncode != 0:
+            output += f"\n[exit code: {result.returncode}]"
+        if not output:
+            output = "[no output]"
+    except subprocess.TimeoutExpired:
+        output = "[timed out after 30s]"
+    except Exception as e:
+        output = f"[error: {e}]"
+
+    lines_out = output.splitlines()
+    max_visible = h - 3
+    scroll = max(0, len(lines_out) - max_visible)
+
+    for i in range(h):
+        stdscr.addstr(i, 0, " " * (w - 1), curses.color_pair(9))
+
+    header = " <run>  <output> "
+    stdscr.addstr(0, 0, header[:w - 1], curses.A_BOLD | curses.color_pair(9))
+
+    visible = lines_out[scroll:scroll + max_visible]
+    for i, line in enumerate(visible):
+        stdscr.addstr(i + 1, 0, " " + line[:w - 3] + " " * (w - 3 - min(len(line), w - 3)), curses.color_pair(9))
+
+    footer = " press any key to dismiss "
+    stdscr.addstr(h - 1, 0, footer.ljust(w - 1), curses.color_pair(7))
+    stdscr.getch()
+
+
 def main(stdscr):
     curses.raw()
     curses.cbreak()
@@ -265,7 +308,7 @@ def main(stdscr):
     setup_colors()
 
     filepath = sys.argv[1] if len(sys.argv) > 1 else None
-    lines = [''] if not filepath else open(filepath).read().splitlines()
+    lines = (open(filepath).read().splitlines() or ['']) if filepath else ['']
     modified = False
     y = x = top = 0
     mode = 'normal'
@@ -314,7 +357,7 @@ def main(stdscr):
         if gap < 1:
             gap = 1
         status = left + " " * gap + right
-        stdscr.addstr(h - 1, 0, status[:w - 1], curses.color_pair(7))
+        stdscr.addstr(h - 1, 0, status[:w - 1], curses.A_BOLD | curses.color_pair(7))
 
         stdscr.move(min(y - top, h - 2), min(x + gutter_width, w - 1))
         key = stdscr.getch()
@@ -334,6 +377,18 @@ def main(stdscr):
                     y = x = top = 0
                 except (IOError, OSError):
                     pass
+            continue
+
+        if key == 18:  # Ctrl+R — run file
+            if filepath:
+                save_file(filepath, lines)
+                modified = False
+                run_python(stdscr, filepath)
+            else:
+                h, w = stdscr.getmaxyx()
+                msg = " <run>  <no file to run — save with :w filename> "
+                stdscr.addstr(h - 1, 0, msg.ljust(w - 1), curses.color_pair(7))
+                stdscr.getch()
             continue
 
         if mode == 'normal':
