@@ -1,0 +1,12 @@
+[package]
+name = "ked"
+version = "0.1.0"
+edition = "2021"
+
+# ked — a vim-like TUI text editor.
+# Only 3 dependencies: ratatui for TUI widgets, crossterm for events/terminal,
+# anyhow for error handling.  No external walkdir / ignore crates needed.
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+anyhow = "1"

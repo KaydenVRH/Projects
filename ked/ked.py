@@ -24,22 +24,90 @@ PYTHON_BUILTINS = {
     'self',
 }
 
-THEME = {
-    'keyword_fg': curses.COLOR_CYAN,
-    'string_fg': curses.COLOR_GREEN,
-    'comment_fg': curses.COLOR_RED,
-    'number_fg': curses.COLOR_YELLOW,
-    'builtin_fg': curses.COLOR_MAGENTA,
-    'decorator_fg': curses.COLOR_YELLOW,
-    'status_fg': curses.COLOR_WHITE,
-    'status_bg': curses.COLOR_BLUE,
-    'gutter_fg': -1,
-    'gutter_bg': -1,
-    'find_fg': -1,
-    'find_bg': 236,
-    'find_sel_fg': curses.COLOR_WHITE,
-    'find_sel_bg': curses.COLOR_BLUE,
+THEMES = {
+    'default': {
+        'keyword_fg': curses.COLOR_CYAN,
+        'string_fg': curses.COLOR_GREEN,
+        'comment_fg': curses.COLOR_RED,
+        'number_fg': curses.COLOR_YELLOW,
+        'builtin_fg': curses.COLOR_MAGENTA,
+        'decorator_fg': curses.COLOR_YELLOW,
+        'status_fg': curses.COLOR_WHITE,
+        'status_bg': curses.COLOR_BLUE,
+        'gutter_fg': 242,
+        'gutter_bg': -1,
+        'find_fg': -1,
+        'find_bg': 236,
+        'find_sel_fg': curses.COLOR_WHITE,
+        'find_sel_bg': curses.COLOR_BLUE,
+    },
+    'monokai': {
+        'keyword_fg': 197,
+        'string_fg': 148,
+        'comment_fg': 242,
+        'number_fg': 141,
+        'builtin_fg': 81,
+        'decorator_fg': 221,
+        'status_fg': 15,
+        'status_bg': 235,
+        'gutter_fg': 240,
+        'gutter_bg': 234,
+        'find_fg': 15,
+        'find_bg': 235,
+        'find_sel_fg': 15,
+        'find_sel_bg': 197,
+    },
+    'solarized': {
+        'keyword_fg': 36,
+        'string_fg': 64,
+        'comment_fg': 60,
+        'number_fg': 136,
+        'builtin_fg': 61,
+        'decorator_fg': 136,
+        'status_fg': 131,
+        'status_bg': 235,
+        'gutter_fg': 240,
+        'gutter_bg': 234,
+        'find_fg': 36,
+        'find_bg': 235,
+        'find_sel_fg': 15,
+        'find_sel_bg': 36,
+    },
+    'nord': {
+        'keyword_fg': 111,
+        'string_fg': 150,
+        'comment_fg': 244,
+        'number_fg': 209,
+        'builtin_fg': 143,
+        'decorator_fg': 209,
+        'status_fg': 188,
+        'status_bg': 239,
+        'gutter_fg': 243,
+        'gutter_bg': 237,
+        'find_fg': 188,
+        'find_bg': 239,
+        'find_sel_fg': 188,
+        'find_sel_bg': 111,
+    },
+    'gruvbox': {
+        'keyword_fg': 214,
+        'string_fg': 142,
+        'comment_fg': 246,
+        'number_fg': 208,
+        'builtin_fg': 109,
+        'decorator_fg': 208,
+        'status_fg': 235,
+        'status_bg': 214,
+        'gutter_fg': 243,
+        'gutter_bg': 237,
+        'find_fg': 235,
+        'find_bg': 214,
+        'find_sel_fg': 214,
+        'find_sel_bg': 237,
+    },
 }
+
+ACTIVE_THEME = 'default'
 
 COLOR_PAIRS = {
     'keyword': 1,
@@ -51,9 +119,10 @@ COLOR_PAIRS = {
 }
 
 
-def setup_colors(theme=None):
-    if theme is None:
-        theme = THEME
+def setup_colors(name=None):
+    if name is None:
+        name = ACTIVE_THEME
+    theme = THEMES[name]
     curses.init_pair(1, theme['keyword_fg'], -1)
     curses.init_pair(2, theme['string_fg'], -1)
     curses.init_pair(3, theme['comment_fg'], -1)
@@ -411,6 +480,24 @@ def main(stdscr):
                         break
                 elif action == 'q!':
                     break
+                elif action == 'theme':
+                    if arg and arg in THEMES:
+                        global ACTIVE_THEME
+                        ACTIVE_THEME = arg
+                        setup_colors(arg)
+                    elif arg:
+                        msg = f" <unknown theme '{arg}'> "
+                        stdscr.addstr(h - 1, 0, msg.ljust(w - 1), curses.color_pair(7))
+                        stdscr.getch()
+                    else:
+                        msg = f" <current theme: {ACTIVE_THEME}> "
+                        stdscr.addstr(h - 1, 0, msg.ljust(w - 1), curses.color_pair(7))
+                        stdscr.getch()
+                elif action == 'themes':
+                    available = ', '.join(sorted(THEMES))
+                    msg = f" <themes: {available}> "
+                    stdscr.addstr(h - 1, 0, msg.ljust(w - 1), curses.color_pair(7))
+                    stdscr.getch()
                 continue
 
             elif key == ord('i'):

@@ -1,0 +1,9 @@
+# Rust build output
+target/
+
+# Compiled binary (root-level copy from `cp target/release/ked ked`)
+/ked
+
+# Python cache files
+__pycache__/
+*.pyc
