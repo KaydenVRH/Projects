@@ -18,6 +18,7 @@ use std::{
     cmp::min,
     fs,
     process::Command as ProcCmd,
+    time::SystemTime,
 };
 
 use anyhow::{Context, Result};
@@ -25,7 +26,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Position, Rect},
-    style::{Style},
+    style::{Style, Modifier},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
@@ -33,6 +34,7 @@ use ratatui::{
 use crate::highlight;
 use crate::theme::{Theme, ThemeKind};
 use crate::finder::Finder;
+use crate::music::MusicPlayer;
 
 // ── Mode & State ─────────────────────────────────────────────────
 
@@ -50,6 +52,8 @@ pub enum State {
     Command, // typing a : command on the status line
     Finder,  // fuzzy file finder open
     Run,     // Python run output displayed
+    Music,   // music player picker (Ctrl+T)
+    Theme,   // theme selector (Ctrl+E)
 }
 
 // ── Editor ───────────────────────────────────────────────────────
@@ -82,9 +86,14 @@ pub struct Editor {
     // ── run output ──
     pub run_output: String,
 
+    // ── music player (Ctrl+M) ──
+    pub music_player: MusicPlayer,
+
     // ── file ──
     pub filename: Option<String>,
     pub modified: bool,
+    /// Last known mtime of the open file (for auto-reload).
+    pub last_mtime: Option<SystemTime>,
 
     // ── undo / redo ──
     pub undo_stack: Vec<Vec<String>>,
@@ -95,6 +104,8 @@ pub struct Editor {
 
     // ── theme ──
     pub theme: ThemeKind,
+    /// Currently-highlighted row in the theme selector.
+    pub theme_selected: usize,
 
     // ── cached terminal size (updated every render) ──
     pub cache_w: u16,
@@ -111,7 +122,7 @@ impl Editor {
     /// If `filename` is `None`, start with a single empty line
     /// (like vim's empty buffer).
     pub fn new(filename: Option<&str>) -> Result<Self> {
-        let (lines, filename) = if let Some(path) = filename {
+        let (lines, filename, last_mtime) = if let Some(path) = filename {
             let content =
                 fs::read_to_string(path).with_context(|| format!("can't read {path}"))?;
             // Split into lines.  If the file ends with `\n`, push an
@@ -121,9 +132,13 @@ impl Editor {
             if content.ends_with('\n') {
                 lines.push(String::new());
             }
-            (lines, Some(path.to_string()))
+            if lines.is_empty() {
+                lines.push(String::new());
+            }
+            let mtime = fs::metadata(path).ok().and_then(|m| m.modified().ok());
+            (lines, Some(path.to_string()), mtime)
         } else {
-            (vec![String::new()], None)
+            (vec![String::new()], None, None)
         };
 
         Ok(Self {
@@ -139,12 +154,15 @@ impl Editor {
             finder_query: String::new(),
             finder_selection: 0,
             run_output: String::new(),
+            music_player: MusicPlayer::new(),
             filename,
+            last_mtime,
             modified: false,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             clipboard: Vec::new(),
             theme: ThemeKind::Default,
+            theme_selected: 0,
             cache_w: 80,
             cache_h: 24,
         })
@@ -156,17 +174,43 @@ impl Editor {
 
     /// Handle a key press.  Returns `true` to keep running, `false` to quit.
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
-        // If an overlay is active (command bar, finder, run output),
-        // dispatch to the overlay handler first.
+        // Ctrl+T = music player (opens from any state).  We can't use
+        // Ctrl+M — it sends the same byte (0x0D) as Enter in most
+        // terminals so crossterm never sees it as Ctrl+M.
+        // Check this BEFORE overlay dispatch so it works everywhere.
+        if key.code == KeyCode::Char('t') && key.modifiers == KeyModifiers::CONTROL {
+            self.state = State::Music;
+            self.music_player.selected = 0;
+            // Scan ~/Music (recursively).  Fall back to cwd if HOME
+            // isn't set (very unlikely on macOS).
+            let music_dir = std::env::var("HOME")
+                .map(|h| format!("{h}/Music"))
+                .unwrap_or_else(|_| ".".to_string());
+            self.music_player.scan(&music_dir);
+            return true;
+        }
+
+        // Ctrl+E = theme selector (opens from any state).
+        if key.code == KeyCode::Char('e') && key.modifiers == KeyModifiers::CONTROL {
+            self.state = State::Theme;
+            self.theme_selected = 0;
+            return true;
+        }
+
+        // If an overlay is active (command bar, finder, run, music,
+        // theme), dispatch to the overlay handler first.
         match self.state {
             State::Command => return self.handle_cmd_state(key),
             State::Finder => return self.handle_finder_state(key),
             State::Run => return self.handle_run_state(key),
+            State::Music => return self.handle_music_state(key),
+            State::Theme => return self.handle_theme_state(key),
             State::Normal => {}
         }
 
-        // Global keybindings that work in both normal and insert modes:
-        // Ctrl+P = fuzzy file finder, Ctrl+R = run Python, Ctrl+C/D = quit.
+                // Global keybindings that work in both normal and insert modes:
+        // Ctrl+P = finder, Ctrl+R = run Python, Ctrl+T = music player,
+        // Ctrl+C/D = quit.
         if key.modifiers == KeyModifiers::CONTROL {
             match key.code {
                 KeyCode::Char('p') => {
@@ -627,6 +671,143 @@ impl Editor {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    //  Music-state key handling (Ctrl+M overlay)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Handle keys while the music-player picker is open.
+    fn handle_music_state(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            // Esc closes the picker (playback continues).
+            KeyCode::Esc => {
+                self.state = State::Normal;
+            }
+            // Enter: start playing the selected file.
+            KeyCode::Enter => {
+                self.music_player.play(self.music_player.selected);
+            }
+            // 's' or Backspace: stop playback.
+            KeyCode::Char('s') | KeyCode::Backspace => {
+                self.music_player.stop();
+            }
+            // Navigation.
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.music_player.selected =
+                    self.music_player.selected.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let max = self.music_player.files.len().saturating_sub(1);
+                self.music_player.selected =
+                    (self.music_player.selected + 1).min(max);
+            }
+            KeyCode::PageUp => {
+                self.music_player.selected =
+                    self.music_player.selected.saturating_sub(10);
+            }
+            KeyCode::PageDown => {
+                let max = self.music_player.files.len().saturating_sub(1);
+                self.music_player.selected =
+                    (self.music_player.selected + 10).min(max);
+            }
+
+            KeyCode::Char('c') | KeyCode::Char('d')
+                if key.modifiers == KeyModifiers::CONTROL =>
+            {
+                return false;
+            }
+
+            _ => {}
+        }
+        true
+    }
+
+    // ── theme-selector state ────────────────────────────────────
+
+    fn handle_theme_state(&mut self, key: KeyEvent) -> bool {
+        let themes = ThemeKind::all();
+        match key.code {
+            // Esc / Enter: close selector, apply selection.
+            KeyCode::Esc => self.state = State::Normal,
+            KeyCode::Enter => {
+                self.theme = themes[self.theme_selected];
+                self.state = State::Normal;
+            }
+            // Navigation.
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.theme_selected = self.theme_selected.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let max = themes.len().saturating_sub(1);
+                self.theme_selected = (self.theme_selected + 1).min(max);
+            }
+            // Ctrl+C/D: quit.
+            KeyCode::Char('c') | KeyCode::Char('d')
+                if key.modifiers == KeyModifiers::CONTROL =>
+            {
+                return false;
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// Poll the music-player thread for events (auto-next-track).
+    /// Called every frame: polls music events and auto-reloads the
+    /// file if it changed on disk (only when there are no unsaved edits).
+    pub fn tick(&mut self) {
+        self.music_player.poll();
+        self.auto_reload();
+    }
+
+    /// If the open file was modified externally (mtime changed) and
+    /// we have no unsaved changes, reload it in-place.
+    fn auto_reload(&mut self) {
+        let fname = match &self.filename {
+            Some(f) => f.clone(),
+            None => return,
+        };
+        // Don't clobber unsaved edits.
+        if self.modified {
+            return;
+        }
+        let current_mtime =
+            match fs::metadata(&fname).ok().and_then(|m| m.modified().ok()) {
+                Some(m) => m,
+                None => return,
+            };
+        let prev = match self.last_mtime {
+            Some(p) => p,
+            None => {
+                self.last_mtime = Some(current_mtime);
+                return;
+            }
+        };
+        if current_mtime == prev {
+            return;
+        }
+        // File changed — reload.
+        let content = match fs::read_to_string(&fname) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let mut new_lines: Vec<String> =
+            content.lines().map(|l| l.to_string()).collect();
+        if content.ends_with('\n') {
+            new_lines.push(String::new());
+        }
+        if new_lines.is_empty() {
+            new_lines.push(String::new());
+        }
+        // Preserve cursor line if possible.
+        let saved_cy = self.cy.min(new_lines.len().saturating_sub(1));
+        let saved_cx = self.cx.min(new_lines[saved_cy].len());
+        self.lines = new_lines;
+        self.cy = saved_cy;
+        self.cx = saved_cx;
+        self.top = self.top.min(self.lines.len().saturating_sub(1));
+        self.last_mtime = Some(current_mtime);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     //  Command execution
     // ═══════════════════════════════════════════════════════════════
 
@@ -771,6 +952,7 @@ impl Editor {
     fn save_to_disk(&mut self, path: &str) -> Result<()> {
         let content = self.lines.join("\n");
         fs::write(path, &content).with_context(|| format!("can't write {path}"))?;
+        self.last_mtime = fs::metadata(path).ok().and_then(|m| m.modified().ok());
         Ok(())
     }
 
@@ -958,8 +1140,18 @@ impl Editor {
 
             // (b) highlighted content
             let raw = &self.lines[buf_row];
+            let lang = self.filename.as_deref()
+                .and_then(|f| {
+                    let ext = f.rsplit('.').next()?;
+                    match ext {
+                        "rs" => Some(highlight::Lang::Rust),
+                        "py" => Some(highlight::Lang::Python),
+                        _ => None,
+                    }
+                })
+                .unwrap_or(highlight::Lang::Plain);
             let highlighted = if buf_row < self.lines.len() {
-                highlight::highlight_line(raw, &theme)
+                highlight::highlight_line(raw, &theme, lang)
             } else {
                 vec![Span::styled(raw.clone(), style)]
             };
@@ -1000,6 +1192,8 @@ impl Editor {
                 // no separate overlay needed.
             }
             State::Finder => self.render_finder(f, area),
+            State::Music => self.render_music(f, area),
+            State::Theme => self.render_theme(f, area),
             State::Run => self.render_run(f, area, &theme),
             _ => {}
         }
@@ -1028,8 +1222,16 @@ impl Editor {
             let mod_str = if self.modified { " [+]" } else { "" };
             let location = format!("{}:{}", self.cy + 1, self.cx + 1);
             let tname = self.theme.name();
+            // Append " ♫ song.mp3" if playing music.
+            let now_playing = self.music_player.current_song.as_ref()
+                .filter(|_| self.music_player.playing)
+                .map(|s| {
+                    let name = s.rsplit('/').next().unwrap_or(s);
+                    format!("  ♫ {name}")
+                })
+                .unwrap_or_default();
             format!(
-                " {mode_str}  {fname}{mod_str}  ─ {location}  ─ {tname} "
+                " {mode_str}  {fname}{mod_str}  ─ {location}  ─ {tname}{now_playing} "
             )
         };
 
@@ -1129,6 +1331,169 @@ impl Editor {
                 list_area,
             );
         }
+    }
+
+    // ── music player overlay (Ctrl+M) ──────────────────────────
+
+    fn render_music(&self, f: &mut Frame, area: Rect) {
+        let theme = self.theme.theme();
+
+        let popup_w = (area.width as f32 * 0.6) as u16;
+        let popup_h = (area.height as f32 * 0.5) as u16;
+        let popup_x = (area.width - popup_w) / 2;
+        let popup_y = (area.height - popup_h) / 3;
+        let popup = Rect::new(
+            popup_x,
+            popup_y,
+            popup_w.min(area.width),
+            popup_h.min(area.height),
+        );
+
+        f.render_widget(Clear, popup);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Music Player ")
+            .title_style(Style::new().fg(theme.fg))
+            .border_style(Style::new().fg(theme.fg));
+        let inner = block.inner(popup);
+        f.render_widget(block, popup);
+
+        if inner.height < 2 {
+            return;
+        }
+        let [status_area, list_area] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
+        .areas(inner);
+
+        // Status line: now-playing or hint.
+        let status_text = if let Some(ref song) = self.music_player.current_song {
+            let name = song.rsplit('/').next().unwrap_or(song);
+            format!(" Now Playing: {name}")
+        } else if self.music_player.files.is_empty() {
+            " No MP3 files found in this directory.".to_string()
+        } else {
+            format!(" {} files — Enter=play  s=stop  Esc=close", self.music_player.files.len())
+        };
+        let status_span = Span::styled(
+            status_text,
+            Style::new().fg(theme.status_fg).bg(theme.status_bg),
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(status_span))
+                .style(Style::new().bg(theme.status_bg)),
+            status_area,
+        );
+
+        // File list.
+        let results: Vec<ListItem> = self
+            .music_player
+            .files
+            .iter()
+            .enumerate()
+            .map(|(i, path)| {
+                let name = path.rsplit('/').next().unwrap_or(path);
+                let is_playing = self.music_player.playing
+                    && self.music_player.current_index == i;
+                let style = if i == self.music_player.selected {
+                    Style::new()
+                        .fg(theme.status_bg)
+                        .bg(theme.status_fg)
+                } else if is_playing {
+                    Style::new()
+                        .fg(theme.fg)
+                        .bg(theme.bg)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::new().fg(theme.fg).bg(theme.bg)
+                };
+                let prefix = if is_playing { " ▶ " } else { "   " };
+                ListItem::new(Line::from(Span::styled(
+                    format!("{prefix}{name}"),
+                    style,
+                )))
+            })
+            .collect();
+
+        if results.is_empty() {
+            let no_files = vec![ListItem::new(Line::from(Span::styled(
+                " (no mp3 files)",
+                Style::new().fg(theme.fg).bg(theme.bg),
+            )))];
+            f.render_widget(
+                List::new(no_files).style(Style::new().bg(theme.bg)),
+                list_area,
+            );
+        } else {
+            f.render_widget(
+                List::new(results).style(Style::new().bg(theme.bg)),
+                list_area,
+            );
+        }
+    }
+
+    // ── theme-selector overlay ─────────────────────────────────
+
+    fn render_theme(&self, f: &mut Frame, area: Rect) {
+        let theme = self.theme.theme();
+
+        let popup_w = (area.width as f32 * 0.45) as u16;
+        let popup_h = (area.height as f32 * 0.4) as u16;
+        let popup_x = (area.width - popup_w) / 2;
+        let popup_y = (area.height - popup_h) / 3;
+        let popup = Rect::new(
+            popup_x,
+            popup_y,
+            popup_w.min(area.width),
+            popup_h.min(area.height),
+        );
+
+        f.render_widget(Clear, popup);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Theme Selector ")
+            .title_style(Style::new().fg(theme.fg))
+            .border_style(Style::new().fg(theme.fg));
+        let inner = block.inner(popup);
+        f.render_widget(block, popup);
+
+        if inner.height < 1 {
+            return;
+        }
+
+        let list_items: Vec<ListItem> = ThemeKind::all()
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let name = t.name();
+                let is_current = *t == self.theme;
+                let style = if i == self.theme_selected {
+                    Style::new()
+                        .fg(theme.status_bg)
+                        .bg(theme.status_fg)
+                } else if is_current {
+                    Style::new()
+                        .fg(theme.fg)
+                        .bg(theme.bg)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::new().fg(theme.fg).bg(theme.bg)
+                };
+                let prefix = if is_current { " ✓ " } else { "   " };
+                ListItem::new(Line::from(Span::styled(
+                    format!("{prefix}{name}"),
+                    style,
+                )))
+            })
+            .collect();
+
+        f.render_widget(
+            List::new(list_items).style(Style::new().bg(theme.bg)),
+            inner,
+        );
     }
 
     // ── run output overlay ───────────────────────────────────────

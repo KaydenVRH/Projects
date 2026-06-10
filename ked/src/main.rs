@@ -19,13 +19,15 @@
 mod editor;
 mod finder;
 mod highlight;
+mod music;
 mod theme;
 
 use std::io;
+use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::{
-    event::{read, Event, KeyEventKind},
+    event::{poll, read, Event, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -49,6 +51,7 @@ fn main() -> Result<()> {
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = std::process::Command::new("pkill").arg("-x").arg("afplay").output();
         prev_hook(info);
     }));
 
@@ -57,20 +60,29 @@ fn main() -> Result<()> {
 
     // ---- main event loop ----
     loop {
+        // Check for audio-thread events (auto-next-track) and
+        // auto-reload the file if it changed on disk.
+        editor.tick();
+
         // render the current editor state
         terminal.draw(|f| editor.render(f))?;
 
-        // block until a key event arrives
-        match read()? {
-            Event::Key(key) if key.kind == KeyEventKind::Press => {
-                // handle_key returns false → quit requested
-                if !editor.handle_key(key) {
-                    break;
+        // Poll with a 100 ms timeout so keyboard feels snappy
+        // while the music player thread can still auto-advance.
+        let timeout = Duration::from_millis(100);
+        if poll(timeout)? {
+            if let Event::Key(key) = read()? {
+                if key.kind == KeyEventKind::Press {
+                    if !editor.handle_key(key) {
+                        break;
+                    }
                 }
             }
-            _ => {}
         }
     }
+
+    // ---- stop music before cleanup ----
+    editor.music_player.stop();
 
     // ---- cleanup ----
     disable_raw_mode()?;
