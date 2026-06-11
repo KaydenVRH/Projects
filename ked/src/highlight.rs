@@ -39,6 +39,9 @@ pub enum TokenKind {
     Plain,
     Keyword,
     Builtin,
+    Type,
+    Function,
+    Lifetime,
     String,
     FStringPrefix, // the `f` before an f-string
     Comment,
@@ -79,8 +82,8 @@ const RS_KEYWORDS: &[&str] = &[
     "unsafe", "use", "where", "while",
 ];
 
-/// Rust built-in / std-prelude types and common std items.
-const RS_BUILTINS: &[&str] = &[
+/// Rust std / prelude type names.
+const RS_TYPES: &[&str] = &[
     "bool", "char", "str",
     "i8", "i16", "i32", "i64", "i128", "isize",
     "u8", "u16", "u32", "u64", "u128", "usize",
@@ -98,6 +101,22 @@ const RS_BUILTINS: &[&str] = &[
     "Send", "Sync", "Sized",
     "Fn", "FnMut", "FnOnce",
     "Some", "None", "Ok", "Err",
+    "Pin", "Unpin",
+];
+
+/// Rust built-in macros and utility functions.
+const RS_BUILTINS: &[&str] = &[
+    "dbg", "eprintln", "eprint", "println", "print", "format",
+    "assert", "assert_eq", "assert_ne",
+    "panic", "unreachable", "unimplemented", "todo",
+    "vec", "cfg", "matches",
+    "include_str", "include_bytes",
+    "concat", "stringify",
+    "write", "writeln",
+    "file", "line", "column",
+    "env", "option_env",
+    "compile_error",
+    "core", "std", "alloc", "proc_macro",
 ];
 
 /// Tokenise a Python line into coloured spans.
@@ -126,6 +145,9 @@ fn style_for_kind(kind: TokenKind, theme: &Theme) -> Style {
         TokenKind::Plain        => Style::new().fg(theme.fg),
         TokenKind::Keyword      => theme.keyword,
         TokenKind::Builtin      => theme.builtin,
+        TokenKind::Type         => theme.rstype,
+        TokenKind::Function     => theme.function,
+        TokenKind::Lifetime     => theme.lifetime,
         TokenKind::String       => theme.string,
         TokenKind::FStringPrefix=> theme.fstring_prefix,
         TokenKind::Comment      => theme.comment,
@@ -404,25 +426,46 @@ fn tokenize_rust(line: &str) -> Vec<Token> {
             continue;
         }
 
-        // ── char literal: `'x'`, `'\n'` ──
-        if ch == '\'' && i + 2 < n {
+        // ── char literal `'x'` / lifetime `'ident` ──
+        if ch == '\'' {
             let start = i;
-            i += 1;
-            if chars[i] == '\\' && i + 1 < n {
-                i += 2; // escaped char
-            } else {
+            if i + 2 < n {
                 i += 1;
+                // escaped char
+                if chars[i] == '\\' && i + 1 < n {
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                // char literal if closing quote follows
+                if i < n && chars[i] == '\'' {
+                    i += 1;
+                    tokens.push(Token {
+                        kind: TokenKind::String,
+                        text: chars[start..i].iter().collect(),
+                    });
+                    continue;
+                }
             }
-            if i < n && chars[i] == '\'' {
+            // Not a char literal — try lifetime: `'ident`
+            if i < n && chars[i].is_alphabetic() {
                 i += 1;
+                while i < n && (chars[i].is_alphanumeric() || chars[i] == '_') {
+                    i += 1;
+                }
                 tokens.push(Token {
-                    kind: TokenKind::String,
+                    kind: TokenKind::Lifetime,
                     text: chars[start..i].iter().collect(),
                 });
                 continue;
             }
-            // Not a char literal — backtrack (might be lifetime).
+            // Lone `'` (odd edge case) — emit as punctuation.
+            tokens.push(Token {
+                kind: TokenKind::Punctuation,
+                text: "'".to_string(),
+            });
             i = start + 1;
+            continue;
         }
 
         // ── attribute: `#[...]` or `#![...]` ──
@@ -538,6 +581,15 @@ fn tokenize_rust(line: &str) -> Vec<Token> {
             ch,
             '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';' | '\\'
         ) {
+            // When we see `(`, check if the previous non-whitespace
+            // token was a plain identifier — it's a function call.
+            if ch == '(' {
+                if let Some(last) = tokens.last_mut() {
+                    if last.kind == TokenKind::Plain {
+                        last.kind = TokenKind::Function;
+                    }
+                }
+            }
             tokens.push(Token {
                 kind: TokenKind::Punctuation,
                 text: ch.to_string(),
@@ -546,7 +598,7 @@ fn tokenize_rust(line: &str) -> Vec<Token> {
             continue;
         }
 
-        // ── identifiers / words (keyword, builtin, or macro) ──
+        // ── identifiers / words (keyword, type, builtin, macro) ──
         if ch.is_alphanumeric() || ch == '_' {
             let start = i;
             while i < n && (chars[i].is_alphanumeric() || chars[i] == '_') {
@@ -559,14 +611,20 @@ fn tokenize_rust(line: &str) -> Vec<Token> {
                 TokenKind::Builtin
             } else if RS_KEYWORDS.contains(&word.as_str()) {
                 TokenKind::Keyword
+            } else if RS_TYPES.contains(&word.as_str()) {
+                TokenKind::Type
             } else if RS_BUILTINS.contains(&word.as_str()) {
                 TokenKind::Builtin
             } else {
-                TokenKind::Plain
+                // Check if this follows `fn` keyword — then it's a
+                // function declaration name.
+                let after_fn = tokens.last()
+                    .map(|t| t.kind == TokenKind::Keyword && t.text == "fn")
+                    .unwrap_or(false);
+                if after_fn { TokenKind::Function } else { TokenKind::Plain }
             };
             tokens.push(Token { kind, text: word });
             if is_macro {
-                // include the '!'
                 tokens.push(Token {
                     kind: TokenKind::Operator,
                     text: "!".to_string(),

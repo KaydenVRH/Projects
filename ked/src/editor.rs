@@ -32,6 +32,7 @@ use ratatui::{
 };
 
 use crate::highlight;
+use crate::shell::ShellProcess;
 use crate::theme::{Theme, ThemeKind};
 use crate::finder::Finder;
 use crate::music::MusicPlayer;
@@ -54,6 +55,7 @@ pub enum State {
     Run,     // Python run output displayed
     Music,   // music player picker (Ctrl+T)
     Theme,   // theme selector (Ctrl+E)
+    Shell,   // pop-up shell (Ctrl+J) — handled in main.rs
 }
 
 // ── Editor ───────────────────────────────────────────────────────
@@ -113,11 +115,15 @@ pub struct Editor {
     // ── cached terminal size (updated every render) ──
     pub cache_w: u16,
     pub cache_h: u16,
+
+    // ── pop-up shell (Ctrl+J) ──
+    pub shell: Option<ShellProcess>,
+    pub shell_reader: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Editor {
     // ═══════════════════════════════════════════════════════════════
-    //  Construction
+    //  Construction & Drop
     // ═══════════════════════════════════════════════════════════════
 
     /// Create a new editor, optionally loading a file from disk.
@@ -169,7 +175,19 @@ impl Editor {
             flash: None,
             cache_w: 80,
             cache_h: 24,
+            shell: None,
+            shell_reader: None,
         })
+    }
+
+    // ── cleanup ──
+
+    /// Join the shell reader thread and drop the shell process.
+    pub fn kill_shell(&mut self) {
+        self.shell = None;
+        if let Some(handle) = self.shell_reader.take() {
+            let _ = handle.join();
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -178,6 +196,13 @@ impl Editor {
 
     /// Handle a key press.  Returns `true` to keep running, `false` to quit.
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
+        // If the shell overlay is active, forward every key to the
+        // shell (including Ctrl+J, Ctrl+C, etc.).  The only way out
+        // is to type `exit` in the shell.
+        if self.state == State::Shell {
+            return self.handle_shell_state(key);
+        }
+
         // Clear any flash message on the next keypress.
         self.flash = None;
 
@@ -204,6 +229,28 @@ impl Editor {
             return true;
         }
 
+        // Ctrl+J = pop-up shell (opens from any state).
+        if key.code == KeyCode::Char('j') && key.modifiers == KeyModifiers::CONTROL {
+            match ShellProcess::spawn() {
+                Ok((shell, reader)) => {
+                    shell.force_raw_mode();
+                    self.shell = Some(shell);
+                    self.shell_reader = Some(reader);
+                    self.state = State::Shell;
+                    // Set initial terminal size for the shell.
+                    if let Some(ref s) = self.shell {
+                        // pick a reasonable default — will be
+                        // updated on first render.
+                        s.resize(40, 100);
+                    }
+                }
+                Err(e) => {
+                    self.flash = Some(format!("shell failed: {e}"));
+                }
+            }
+            return true;
+        }
+
         // If an overlay is active (command bar, finder, run, music,
         // theme), dispatch to the overlay handler first.
         match self.state {
@@ -213,6 +260,7 @@ impl Editor {
             State::Music => return self.handle_music_state(key),
             State::Theme => return self.handle_theme_state(key),
             State::Normal => {}
+            State::Shell => {} // handled in main.rs by spawning $SHELL
         }
 
                 // Global keybindings that work in both normal and insert modes:
@@ -757,12 +805,40 @@ impl Editor {
         true
     }
 
+    fn handle_shell_state(&mut self, key: KeyEvent) -> bool {
+        let shell = match self.shell.as_ref() {
+            Some(s) => s,
+            None => {
+                self.state = State::Normal;
+                return true;
+            }
+        };
+        // Force raw mode on the slave side so the terminal driver
+        // never echoes (even if the shell re-enabled it).
+        shell.force_raw_mode();
+        let bytes = key_to_bytes(key);
+        shell.write(&bytes);
+        true
+    }
+
     /// Poll the music-player thread for events (auto-next-track).
     /// Called every frame: polls music events and auto-reloads the
     /// file if it changed on disk (only when there are no unsaved edits).
     pub fn tick(&mut self) {
         self.music_player.poll();
         self.auto_reload();
+        // Pump shell output and detect shell death.
+        if let Some(ref mut s) = self.shell {
+            s.tick();
+            s.force_raw_mode();
+            if !s.is_alive() {
+                self.shell = None;
+                if let Some(handle) = self.shell_reader.take() {
+                    let _ = handle.join();
+                }
+                self.state = State::Normal;
+            }
+        }
     }
 
     /// If the open file was modified externally (mtime changed) and
@@ -1091,6 +1167,10 @@ impl Editor {
             return; // terminal too small, don't draw anything
         }
 
+        // Full-area clear so shell-popup border artifacts don't
+        // linger when the shell closes.
+        f.render_widget(ratatui::widgets::Clear, area);
+
         // Cache dimensions for scroll clamping (called outside render).
         self.cache_w = area.width;
         self.cache_h = area.height;
@@ -1162,6 +1242,9 @@ impl Editor {
         // Wrap in Paragraph and render.  We explicitly set the width
         // so long lines don't wrap (we handle horiz scroll ourselves).
         let content = Text::from(lines_vec);
+        // Clear the entire content area first so shell-overlay artifacts
+        // (text that rendered past the line-number gutter) don't ghost.
+        f.render_widget(ratatui::widgets::Clear, content_area);
         let paragraph = Paragraph::new(content)
             .style(Style::new().bg(theme.bg));
         f.render_widget(paragraph, content_area);
@@ -1188,6 +1271,7 @@ impl Editor {
             State::Music => self.render_music(f, area),
             State::Theme => self.render_theme(f, area),
             State::Run => self.render_run(f, area, &theme),
+            State::Shell => self.render_shell(f, area),
             _ => {}
         }
     }
@@ -1235,6 +1319,7 @@ impl Editor {
             Style::new().fg(theme.status_fg).bg(theme.status_bg),
         )))
         .style(Style::new().bg(theme.status_bg));
+        f.render_widget(ratatui::widgets::Clear, area);
         f.render_widget(bar, area);
     }
 
@@ -1520,5 +1605,100 @@ impl Editor {
             .wrap(Wrap { trim: false });
 
         f.render_widget(output_paragraph, popup);
+    }
+
+    fn render_shell(&self, f: &mut Frame, area: Rect) {
+        let theme = self.theme.theme();
+        let popup_w = (area.width as f32 * 0.92) as u16;
+        let popup_h = (area.height as f32 * 0.85) as u16;
+        let popup_x = (area.width - popup_w) / 2;
+        let popup_y = (area.height - popup_h) / 2;
+        let popup = Rect::new(
+            popup_x,
+            popup_y,
+            popup_w.min(area.width),
+            popup_h.min(area.height),
+        );
+
+        f.render_widget(Clear, popup);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Shell — type exit to close ")
+            .title_style(Style::new().fg(theme.fg))
+            .border_style(Style::new().fg(theme.fg));
+        let inner = block.inner(popup);
+        f.render_widget(block, popup);
+
+        // Tell the shell about the popup dimensions (for column width, etc.).
+        if let Some(ref s) = self.shell {
+            s.resize(inner.height, inner.width);
+        }
+
+        if inner.height < 1 {
+            return;
+        }
+
+        let output_str = self.shell.as_ref().map(|s| s.output());
+        let text = output_str.as_deref().unwrap_or("");
+        let lines: Vec<&str> = text.lines().collect();
+        let max_rows = inner.height as usize;
+        let start = lines.len().saturating_sub(max_rows);
+        let visible: Vec<&str> = lines[start..].to_vec();
+
+        let mut styled_lines: Vec<Line> = Vec::with_capacity(visible.len());
+        for line in &visible {
+            styled_lines.push(Line::from(Span::styled(
+                *line,
+                Style::new().fg(theme.fg).bg(theme.bg),
+            )));
+        }
+        // Pad empty lines so the cursor stays in place visually.
+        while styled_lines.len() < max_rows {
+            styled_lines.push(Line::from(Span::styled(
+                "~",
+                Style::new().fg(theme.comment.fg.unwrap_or(theme.fg)).bg(theme.bg),
+            )));
+        }
+
+        let paragraph = Paragraph::new(Text::from(styled_lines))
+            .style(Style::new().bg(theme.bg));
+        f.render_widget(paragraph, inner);
+    }
+}
+
+/// Convert a crossterm key event into the byte sequence to send to
+/// the shell's PTY.  Handles regular chars, Ctrl+letter, arrows,
+/// Home/End, Delete, PageUp/Down, Esc, Tab, Enter, Backspace.
+fn key_to_bytes(key: KeyEvent) -> Vec<u8> {
+    match key.code {
+        KeyCode::Char(c) => {
+            if key.modifiers == KeyModifiers::CONTROL && c.is_ascii_lowercase() {
+                vec![(c as u8) - b'a' + 1] // Ctrl+A → 0x01, etc.
+            } else if key.modifiers == KeyModifiers::CONTROL && c.is_ascii_uppercase() {
+                // Ctrl+Shift+A → 0x01 as well (same byte)
+                vec![(c as u8) - b'A' + 1]
+            } else if key.modifiers == KeyModifiers::ALT {
+                let mut v = vec![0x1b]; // ESC prefix
+                v.extend(c.encode_utf8(&mut [0; 4]).as_bytes());
+                v
+            } else {
+                c.to_string().into_bytes()
+            }
+        }
+        KeyCode::Enter => vec![b'\r'],
+        KeyCode::Backspace => vec![0x7f],
+        KeyCode::Tab => vec![b'\t'],
+        KeyCode::Esc => vec![0x1b],
+        KeyCode::Left => vec![0x1b, b'[', b'D'],
+        KeyCode::Right => vec![0x1b, b'[', b'C'],
+        KeyCode::Up => vec![0x1b, b'[', b'A'],
+        KeyCode::Down => vec![0x1b, b'[', b'B'],
+        KeyCode::Home => vec![0x1b, b'[', b'H'],
+        KeyCode::End => vec![0x1b, b'[', b'F'],
+        KeyCode::Delete => vec![0x1b, b'[', b'3', b'~'],
+        KeyCode::PageUp => vec![0x1b, b'[', b'5', b'~'],
+        KeyCode::PageDown => vec![0x1b, b'[', b'6', b'~'],
+        _ => vec![],
     }
 }

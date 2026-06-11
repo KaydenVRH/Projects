@@ -24,18 +24,21 @@ pub struct Theme {
     pub status_fg:     Color,   // status bar text
 
     // ── syntax tokens ──
-    pub keyword:       Style,   // `if`, `def`, `class`, `return`, …
-    pub builtin:       Style,   // `print`, `len`, `range`, `int`, …
+    pub keyword:       Style,   // `fn`, `let`, `match`, `return`, …
+    pub builtin:       Style,   // `print`, `len`, `println!`, …
+    pub rstype:        Style,   // type names `i32`, `String`, `Vec`, …
+    pub function:      Style,   // function / method names
+    pub lifetime:      Style,   // lifetime annotations `'a`, `'static`
     pub string:        Style,   // `"..."` and `'...'`
     pub fstring_prefix:Style,   // the `f` before an f-string
-    pub comment:       Style,   // `# ...`
+    pub comment:       Style,   // `#`, `//`, `///`, `//!`
     pub number:        Style,   // `42`, `3.14`
-    pub decorator:     Style,   // `@property`
+    pub decorator:     Style,   // `@property`, `#[…]`
     pub operator:      Style,   // `==`, `+=`, `->`, …
     pub punctuation:   Style,   // `(`, `)`, `:`, `,`
 }
 
-/// The five built-in theme variants.
+/// The six built-in theme variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeKind {
     Default,
@@ -43,6 +46,7 @@ pub enum ThemeKind {
     Solarized,
     Nord,
     Gruvbox,
+    Bi,
 }
 
 impl ThemeKind {
@@ -54,6 +58,7 @@ impl ThemeKind {
             ThemeKind::Solarized => solarized(),
             ThemeKind::Nord      => nord(),
             ThemeKind::Gruvbox   => gruvbox(),
+            ThemeKind::Bi        => bi(),
         }
     }
 
@@ -65,6 +70,7 @@ impl ThemeKind {
             ThemeKind::Solarized => "solarized",
             ThemeKind::Nord      => "nord",
             ThemeKind::Gruvbox   => "gruvbox",
+            ThemeKind::Bi        => "bi",
         }
     }
 
@@ -76,6 +82,7 @@ impl ThemeKind {
             ThemeKind::Solarized,
             ThemeKind::Nord,
             ThemeKind::Gruvbox,
+            ThemeKind::Bi,
         ]
     }
 
@@ -87,6 +94,7 @@ impl ThemeKind {
             "solarized" => Some(ThemeKind::Solarized),
             "nord"      => Some(ThemeKind::Nord),
             "gruvbox"   => Some(ThemeKind::Gruvbox),
+            "bi"        => Some(ThemeKind::Bi),
             _           => None,
         }
     }
@@ -112,6 +120,9 @@ fn default() -> Theme {
         status_fg:     Color::White,
         keyword:       fg(Color::Blue),
         builtin:       fg(Color::Cyan),
+        rstype:        fg(Color::Yellow),
+        function:      fg(Color::White),
+        lifetime:      fg(Color::Rgb(0x5e, 0xbc, 0xce)),
         string:        fg(Color::Green),
         fstring_prefix:fg_bold(Color::Green),
         comment:       fg(Color::Rgb(120, 120, 120)),
@@ -133,6 +144,9 @@ fn monokai() -> Theme {
         status_fg:     Color::Rgb(0x27, 0x28, 0x22),
         keyword:       fg(Color::Rgb(0xf9, 0x26, 0x72)),  // pink
         builtin:       fg(Color::Rgb(0xae, 0x81, 0xff)),  // purple
+        rstype:        fg(Color::Rgb(0xa6, 0xe2, 0x2e)),  // green
+        function:      fg(Color::Rgb(0xe6, 0xdb, 0x74)),  // yellow
+        lifetime:      fg(Color::Rgb(0x66, 0xd9, 0xef)),  // cyan
         string:        fg(Color::Rgb(0xe6, 0xdb, 0x74)),  // yellow
         fstring_prefix:fg_bold(Color::Rgb(0xe6, 0xdb, 0x74)),
         comment:       fg(Color::Rgb(0x75, 0x75, 0x5e)),
@@ -154,6 +168,9 @@ fn solarized() -> Theme {
         status_fg:     Color::Rgb(0xfd, 0xf6, 0xe3),
         keyword:       fg(Color::Rgb(0xcb, 0x4b, 0x16)),  // orange
         builtin:       fg(Color::Rgb(0x2a, 0xa1, 0x98)),  // cyan
+        rstype:        fg(Color::Rgb(0xb5, 0x89, 0x00)),  // yellow
+        function:      fg(Color::Rgb(0x26, 0x8b, 0xd2)),  // blue
+        lifetime:      fg(Color::Rgb(0x2a, 0xa1, 0x98)),  // cyan
         string:        fg(Color::Rgb(0x2d, 0xc1, 0x00)),  // green
         fstring_prefix:fg_bold(Color::Rgb(0x2d, 0xc1, 0x00)),
         comment:       fg(Color::Rgb(0x93, 0xa1, 0xa1)),
@@ -175,6 +192,9 @@ fn nord() -> Theme {
         status_fg:     Color::Rgb(0xd8, 0xde, 0xe9),
         keyword:       fg(Color::Rgb(0x81, 0xa1, 0xc1)),  // blue
         builtin:       fg(Color::Rgb(0x88, 0xc0, 0xd0)),  // light blue
+        rstype:        fg(Color::Rgb(0xeb, 0xcb, 0x8b)),  // yellow
+        function:      fg(Color::Rgb(0xd8, 0xde, 0xe9)),  // white
+        lifetime:      fg(Color::Rgb(0x88, 0xc0, 0xd0)),  // light blue
         string:        fg(Color::Rgb(0xa3, 0xbe, 0x8c)),  // green
         fstring_prefix:fg_bold(Color::Rgb(0xa3, 0xbe, 0x8c)),
         comment:       fg(Color::Rgb(0x61, 0x6e, 0x88)),
@@ -196,6 +216,9 @@ fn gruvbox() -> Theme {
         status_fg:     Color::Rgb(0xeb, 0xdb, 0xb2),
         keyword:       fg(Color::Rgb(0xfb, 0x49, 0x34)),  // red
         builtin:       fg(Color::Rgb(0x8e, 0xc0, 0x7c)),  // green
+        rstype:        fg(Color::Rgb(0xd3, 0x86, 0x9b)),  // magenta
+        function:      fg(Color::Rgb(0xeb, 0xdb, 0xb2)),  // fg
+        lifetime:      fg(Color::Rgb(0x83, 0xa5, 0x98)),  // aqua
         string:        fg(Color::Rgb(0xb8, 0xbb, 0x26)),  // yellow-green
         fstring_prefix:fg_bold(Color::Rgb(0xb8, 0xbb, 0x26)),
         comment:       fg(Color::Rgb(0x92, 0x83, 0x74)),
@@ -203,5 +226,30 @@ fn gruvbox() -> Theme {
         decorator:     fg(Color::Rgb(0xfe, 0x80, 0x19)),  // orange
         operator:      fg(Color::Rgb(0xeb, 0xdb, 0xb2)),
         punctuation:   fg(Color::Rgb(0xeb, 0xdb, 0xb2)),
+    }
+}
+
+fn bi() -> Theme {
+    // Bi pride flag inspired: pink #D70270, purple #734F96, blue #0038A8
+    // Dark bg with pink/purple/blue accents.
+    Theme {
+        fg:            Color::Rgb(0xe6, 0xdf, 0xf0),  // light lavender
+        bg:            Color::Rgb(0x0d, 0x0a, 0x14),  // deep purple-black
+        line_number:   Style::new().fg(Color::Rgb(0x4a, 0x3a, 0x60)),
+        tilde:         Style::new().fg(Color::Rgb(0x4a, 0x3a, 0x60)),
+        status_bg:     Color::Rgb(0xd7, 0x02, 0x70),  // bi-pink
+        status_fg:     Color::Rgb(0xff, 0xff, 0xff),
+        keyword:       fg(Color::Rgb(0xd7, 0x02, 0x70)),  // bi-pink
+        builtin:       fg(Color::Rgb(0xb0, 0x7c, 0xc6)),  // purple
+        rstype:        fg(Color::Rgb(0x5b, 0x9b, 0xd5)),  // soft blue
+        function:      fg(Color::Rgb(0xd4, 0xc5, 0xe8)),  // soft lavender
+        lifetime:      fg(Color::Rgb(0x7e, 0xc8, 0xe3)),  // light cyan
+        string:        fg(Color::Rgb(0xe8, 0x8a, 0xb0)),  // rose pink
+        fstring_prefix:fg_bold(Color::Rgb(0xe8, 0x8a, 0xb0)),
+        comment:       fg(Color::Rgb(0x60, 0x50, 0x7a)),  // muted purple
+        number:        fg(Color::Rgb(0xb0, 0x7c, 0xc6)),  // purple
+        decorator:     fg(Color::Rgb(0x5b, 0x9b, 0xd5)),  // soft blue
+        operator:      fg(Color::Rgb(0xe6, 0xdf, 0xf0)),
+        punctuation:   fg(Color::Rgb(0xe6, 0xdf, 0xf0)),
     }
 }

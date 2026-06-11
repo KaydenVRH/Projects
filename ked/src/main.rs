@@ -20,6 +20,7 @@ mod editor;
 mod finder;
 mod highlight;
 mod music;
+mod shell;
 mod theme;
 
 use std::io;
@@ -76,13 +77,17 @@ fn main() -> Result<()> {
                     if !editor.handle_key(key) {
                         break;
                     }
+                    // Immediately pump shell output so typed
+                    // characters appear without a frame of delay.
+                    editor.tick();
                 }
             }
         }
     }
 
-    // ---- stop music before cleanup ----
+    // ---- stop music and shell before cleanup ----
     editor.music_player.stop();
+    editor.kill_shell();
 
     // ---- cleanup ----
     disable_raw_mode()?;
