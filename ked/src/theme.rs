@@ -38,7 +38,7 @@ pub struct Theme {
     pub punctuation:   Style,   // `(`, `)`, `:`, `,`
 }
 
-/// The six built-in theme variants.
+/// The eight built-in theme variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeKind {
     Default,
@@ -47,30 +47,36 @@ pub enum ThemeKind {
     Nord,
     Gruvbox,
     Bi,
+    Catppuccin,
+    TokyoNight,
 }
 
 impl ThemeKind {
     /// Return the colour palette for this variant.
     pub fn theme(&self) -> Theme {
         match self {
-            ThemeKind::Default   => default(),
-            ThemeKind::Monokai   => monokai(),
-            ThemeKind::Solarized => solarized(),
-            ThemeKind::Nord      => nord(),
-            ThemeKind::Gruvbox   => gruvbox(),
-            ThemeKind::Bi        => bi(),
+            ThemeKind::Default    => default(),
+            ThemeKind::Monokai    => monokai(),
+            ThemeKind::Solarized  => solarized(),
+            ThemeKind::Nord       => nord(),
+            ThemeKind::Gruvbox    => gruvbox(),
+            ThemeKind::Bi         => bi(),
+            ThemeKind::Catppuccin => catppuccin(),
+            ThemeKind::TokyoNight => tokyo_night(),
         }
     }
 
     /// Human-readable name for the `:themes` command.
     pub fn name(&self) -> &'static str {
         match self {
-            ThemeKind::Default   => "default",
-            ThemeKind::Monokai   => "monokai",
-            ThemeKind::Solarized => "solarized",
-            ThemeKind::Nord      => "nord",
-            ThemeKind::Gruvbox   => "gruvbox",
-            ThemeKind::Bi        => "bi",
+            ThemeKind::Default    => "default",
+            ThemeKind::Monokai    => "monokai",
+            ThemeKind::Solarized  => "solarized",
+            ThemeKind::Nord       => "nord",
+            ThemeKind::Gruvbox    => "gruvbox",
+            ThemeKind::Bi         => "bi",
+            ThemeKind::Catppuccin => "catppuccin",
+            ThemeKind::TokyoNight => "tokyonight",
         }
     }
 
@@ -83,18 +89,22 @@ impl ThemeKind {
             ThemeKind::Nord,
             ThemeKind::Gruvbox,
             ThemeKind::Bi,
+            ThemeKind::Catppuccin,
+            ThemeKind::TokyoNight,
         ]
     }
 
     /// Parse a case-insensitive theme name from a command.
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
-            "default"   => Some(ThemeKind::Default),
-            "monokai"   => Some(ThemeKind::Monokai),
-            "solarized" => Some(ThemeKind::Solarized),
-            "nord"      => Some(ThemeKind::Nord),
-            "gruvbox"   => Some(ThemeKind::Gruvbox),
-            "bi"        => Some(ThemeKind::Bi),
+            "default"    => Some(ThemeKind::Default),
+            "monokai"    => Some(ThemeKind::Monokai),
+            "solarized"  => Some(ThemeKind::Solarized),
+            "nord"       => Some(ThemeKind::Nord),
+            "gruvbox"    => Some(ThemeKind::Gruvbox),
+            "bi"         => Some(ThemeKind::Bi),
+            "catppuccin" => Some(ThemeKind::Catppuccin),
+            "tokyonight" => Some(ThemeKind::TokyoNight),
             _           => None,
         }
     }
@@ -251,5 +261,53 @@ fn bi() -> Theme {
         decorator:     fg(Color::Rgb(0x5b, 0x9b, 0xd5)),  // soft blue
         operator:      fg(Color::Rgb(0xe6, 0xdf, 0xf0)),
         punctuation:   fg(Color::Rgb(0xe6, 0xdf, 0xf0)),
+    }
+}
+
+fn catppuccin() -> Theme {
+    // Catppuccin Mocha: warm pastels on deep purple-brown bg
+    Theme {
+        fg:            Color::Rgb(0xcd, 0xd6, 0xf4),  // text
+        bg:            Color::Rgb(0x1e, 0x1e, 0x2e),  // base
+        line_number:   Style::new().fg(Color::Rgb(0x6c, 0x70, 0x86)),  // overlay1
+        tilde:         Style::new().fg(Color::Rgb(0x6c, 0x70, 0x86)),
+        status_bg:     Color::Rgb(0x31, 0x32, 0x44),  // surface0
+        status_fg:     Color::Rgb(0xcd, 0xd6, 0xf4),
+        keyword:       fg(Color::Rgb(0xcb, 0xa6, 0xf7)),  // mauve
+        builtin:       fg(Color::Rgb(0x89, 0xb4, 0xfa)),  // blue
+        rstype:        fg(Color::Rgb(0xf9, 0xe2, 0xaf)),  // yellow
+        function:      fg(Color::Rgb(0xf5, 0xc2, 0xe7)),  // pink
+        lifetime:      fg(Color::Rgb(0x94, 0xe2, 0xd5)),  // teal
+        string:        fg(Color::Rgb(0xa6, 0xe3, 0xa1)),  // green
+        fstring_prefix:fg_bold(Color::Rgb(0xa6, 0xe3, 0xa1)),
+        comment:       fg(Color::Rgb(0x6c, 0x70, 0x86)),  // overlay1
+        number:        fg(Color::Rgb(0xfa, 0xb3, 0x87)),  // peach
+        decorator:     fg(Color::Rgb(0xf3, 0x8b, 0xa8)),  // red
+        operator:      fg(Color::Rgb(0x89, 0xb4, 0xfa)),  // blue
+        punctuation:   fg(Color::Rgb(0xcd, 0xd6, 0xf4)),
+    }
+}
+
+fn tokyo_night() -> Theme {
+    // Tokyo Night: deep blue-black bg, cyan/blue/purple accents
+    Theme {
+        fg:            Color::Rgb(0xc0, 0xca, 0xf5),  // text
+        bg:            Color::Rgb(0x1a, 0x1b, 0x26),  // bg
+        line_number:   Style::new().fg(Color::Rgb(0x56, 0x5f, 0x89)),  // comment
+        tilde:         Style::new().fg(Color::Rgb(0x56, 0x5f, 0x89)),
+        status_bg:     Color::Rgb(0x2a, 0x2e, 0x3d),  // surface0
+        status_fg:     Color::Rgb(0xc0, 0xca, 0xf5),
+        keyword:       fg(Color::Rgb(0xbb, 0x9a, 0xf7)),  // purple
+        builtin:       fg(Color::Rgb(0x7d, 0xcf, 0xff)),  // cyan
+        rstype:        fg(Color::Rgb(0x7a, 0xa2, 0xf7)),  // blue
+        function:      fg(Color::Rgb(0xe0, 0xaf, 0x68)),  // yellow
+        lifetime:      fg(Color::Rgb(0x7d, 0xcf, 0xff)),  // cyan
+        string:        fg(Color::Rgb(0x9e, 0xce, 0x6a)),  // green
+        fstring_prefix:fg_bold(Color::Rgb(0x9e, 0xce, 0x6a)),
+        comment:       fg(Color::Rgb(0x56, 0x5f, 0x89)),
+        number:        fg(Color::Rgb(0xff, 0x9e, 0x64)),  // orange
+        decorator:     fg(Color::Rgb(0xf7, 0x76, 0x8e)),  // red
+        operator:      fg(Color::Rgb(0x7d, 0xcf, 0xff)),  // cyan
+        punctuation:   fg(Color::Rgb(0xc0, 0xca, 0xf5)),
     }
 }

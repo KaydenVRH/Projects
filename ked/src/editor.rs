@@ -25,7 +25,7 @@ use anyhow::{Context, Result};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Position, Rect},
+    layout::{Alignment, Constraint, Layout, Position, Rect},
     style::{Style, Modifier},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
@@ -1186,9 +1186,15 @@ impl Editor {
         ])
         .areas(area);
 
-        // ── 1. main content ──────────────────────────────────────
-        let gutter = self.gutter_width() + 1; // e.g. " 12│"
+        // ── 1. main content / splash ────────────────────────────
         let theme = self.theme.theme();
+        let is_splash = self.filename.is_none()
+            && self.lines.len() == 1
+            && self.lines[0].is_empty();
+        if is_splash {
+            self.render_splash(f, content_area, &theme);
+        } else {
+        let gutter = self.gutter_width() + 1;
         let mut lines_vec: Vec<Line> = Vec::new();
         let visible_lines = content_area.height as usize;
 
@@ -1248,17 +1254,22 @@ impl Editor {
         let paragraph = Paragraph::new(content)
             .style(Style::new().bg(theme.bg));
         f.render_widget(paragraph, content_area);
+        } // end else (normal content)
 
         // ── 2. status bar ────────────────────────────────────────
         self.render_status(f, status_area, width);
 
         // ── 3. cursor position ───────────────────────────────────
-        let cy_screen = (self.cy.saturating_sub(self.top)) as u16;
-        let cx_screen = (self.cx.saturating_sub(self.left)) as u16 + gutter as u16;
-        if cy_screen < content_area.height {
-            let cursor_x = content_area.x + cx_screen;
-            let cursor_y = content_area.y + cy_screen;
-            f.set_cursor_position(Position::new(cursor_x, cursor_y));
+        if is_splash {
+            f.set_cursor_position(Position::new(0, 0));
+        } else if let Some(gutter) = self.gutter_width().checked_add(1) {
+            let cy_screen = (self.cy.saturating_sub(self.top)) as u16;
+            let cx_screen = (self.cx.saturating_sub(self.left)) as u16 + gutter as u16;
+            if cy_screen < content_area.height {
+                let cursor_x = content_area.x + cx_screen;
+                let cursor_y = content_area.y + cy_screen;
+                f.set_cursor_position(Position::new(cursor_x, cursor_y));
+            }
         }
 
         // ── 4. overlays ──────────────────────────────────────────
@@ -1664,6 +1675,62 @@ impl Editor {
         let paragraph = Paragraph::new(Text::from(styled_lines))
             .style(Style::new().bg(theme.bg));
         f.render_widget(paragraph, inner);
+    }
+
+    fn render_splash(&self, f: &mut Frame, area: Rect, theme: &Theme) {
+        f.render_widget(Clear, area);
+
+        let figlet = [
+            " _            _ ",
+            "| |          | |",
+            "| | _____  __| |",
+            "| |/ / _ \\/ _` |",
+            "|   <  __/ (_| |",
+            "|_|\\_\\___|\\__,_|",
+        ];
+
+        let keybinds = [
+            ("Ctrl+P", "  find file    "),
+            ("Ctrl+J", "  shell        "),
+            ("Ctrl+R", "  run python   "),
+            ("Ctrl+T", "  music        "),
+            ("Ctrl+E", "  theme        "),
+            ("Ctrl+S", "  save         "),
+            (":wq",    "  save & quit  "),
+            (":q!",    "  quit         "),
+        ];
+
+        let mut lines: Vec<Line> = Vec::new();
+
+        let total_h = figlet.len() + 2 + (keybinds.len() + 1) / 2;
+        let pad_top = (area.height as usize).saturating_sub(total_h) / 2;
+        for _ in 0..pad_top {
+            lines.push(Line::from(""));
+        }
+
+        for line in &figlet {
+            lines.push(Line::from(Span::styled(*line, theme.keyword)));
+        }
+
+        lines.push(Line::from(""));
+
+        for chunk in keybinds.chunks(2) {
+            let left = Span::styled(chunk[0].0.to_string(), theme.builtin);
+            let left_desc = Span::styled(chunk[0].1.to_string(), Style::new().fg(theme.fg));
+            let mut spans = vec![left, left_desc];
+            if chunk.len() > 1 {
+                let right = Span::styled(chunk[1].0.to_string(), theme.builtin);
+                let right_desc = Span::styled(chunk[1].1.to_string(), Style::new().fg(theme.fg));
+                spans.push(right);
+                spans.push(right_desc);
+            }
+            lines.push(Line::from(spans));
+        }
+
+        let paragraph = Paragraph::new(Text::from(lines))
+            .alignment(Alignment::Center)
+            .style(Style::new().bg(theme.bg));
+        f.render_widget(paragraph, area);
     }
 }
 
