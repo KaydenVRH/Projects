@@ -107,6 +107,9 @@ pub struct Editor {
     /// Currently-highlighted row in the theme selector.
     pub theme_selected: usize,
 
+    // ── flash message (shown in status bar, cleared next render) ──
+    pub flash: Option<String>,
+
     // ── cached terminal size (updated every render) ──
     pub cache_w: u16,
     pub cache_h: u16,
@@ -163,6 +166,7 @@ impl Editor {
             clipboard: Vec::new(),
             theme: ThemeKind::Default,
             theme_selected: 0,
+            flash: None,
             cache_w: 80,
             cache_h: 24,
         })
@@ -174,6 +178,9 @@ impl Editor {
 
     /// Handle a key press.  Returns `true` to keep running, `false` to quit.
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
+        // Clear any flash message on the next keypress.
+        self.flash = None;
+
         // Ctrl+T = music player (opens from any state).  We can't use
         // Ctrl+M — it sends the same byte (0x0D) as Enter in most
         // terminals so crossterm never sees it as Ctrl+M.
@@ -825,10 +832,7 @@ impl Editor {
             // :q — quit (refuse if modified)
             "q" => {
                 if self.modified {
-                    // Show error in status line — we set state back
-                    // to Command with an error message for one frame.
-                    self.cmd_buf = "No write since last change (add ! to override)".to_string();
-                    self.state = State::Command;
+                    self.flash = Some("No write since last change (add ! to override)".to_string());
                     return true;
                 }
                 return false;
@@ -841,17 +845,14 @@ impl Editor {
                     match self.save_to_disk(fname) {
                         Ok(_) => {
                             self.modified = false;
-                            self.cmd_buf = format!("'{}' written", fname);
-                            self.state = State::Command;
+                            self.flash = Some(format!("'{}' written", fname));
                         }
                         Err(e) => {
-                            self.cmd_buf = format!("Error: {e}");
-                            self.state = State::Command;
+                            self.flash = Some(format!("Error: {e}"));
                         }
                     }
                 } else {
-                    self.cmd_buf = "No filename.  Use :w <name>".to_string();
-                    self.state = State::Command;
+                    self.flash = Some("No filename.  Use :w <name>".to_string());
                 }
             }
             // :w <filename> — save as
@@ -862,12 +863,10 @@ impl Editor {
                         Ok(_) => {
                             self.filename = Some(fname.to_string());
                             self.modified = false;
-                            self.cmd_buf = format!("'{}' written", fname);
-                            self.state = State::Command;
+                            self.flash = Some(format!("'{}' written", fname));
                         }
                         Err(e) => {
-                            self.cmd_buf = format!("Error: {e}");
-                            self.state = State::Command;
+                            self.flash = Some(format!("Error: {e}"));
                         }
                     }
                 }
@@ -880,8 +879,7 @@ impl Editor {
                         return false;
                     }
                 } else {
-                    self.cmd_buf = "No filename".to_string();
-                    self.state = State::Command;
+                    self.flash = Some("No filename".to_string());
                     return true;
                 }
                 return false;
@@ -890,22 +888,18 @@ impl Editor {
             cmd if cmd.starts_with("theme ") || cmd == "theme" => {
                 let name = cmd.trim_start_matches("theme ").trim();
                 if name.is_empty() || name == "theme" {
-                    self.cmd_buf = format!("Current theme: {}", self.theme.name());
-                    self.state = State::Command;
+                    self.flash = Some(format!("Current theme: {}", self.theme.name()));
                 } else if let Some(t) = ThemeKind::from_str(name) {
                     self.theme = t;
-                    self.cmd_buf = format!("Theme: {}", t.name());
-                    self.state = State::Command;
+                    self.flash = Some(format!("Theme: {}", t.name()));
                 } else {
-                    self.cmd_buf = format!("Unknown theme '{name}'");
-                    self.state = State::Command;
+                    self.flash = Some(format!("Unknown theme '{name}'"));
                 }
             }
             // :themes — list available themes
             "themes" => {
                 let names: Vec<&str> = ThemeKind::all().iter().map(|t| t.name()).collect();
-                self.cmd_buf = format!("Themes: {}", names.join(", "));
-                self.state = State::Command;
+                self.flash = Some(format!("Themes: {}", names.join(", ")));
             }
             // :e <filename> — open a file
             cmd if cmd.starts_with("e ") => {
@@ -929,16 +923,14 @@ impl Editor {
                             self.redo_stack.clear();
                         }
                         Err(e) => {
-                            self.cmd_buf = format!("Can't open {fname}: {e}");
-                            self.state = State::Command;
+                            self.flash = Some(format!("Can't open {fname}: {e}"));
                         }
                     }
                 }
             }
             // Unknown command.
             _ => {
-                self.cmd_buf = format!("Unknown command: {cmd_name}");
-                self.state = State::Command;
+                self.flash = Some(format!("Unknown command: {cmd_name}"));
             }
         }
         true
@@ -1146,6 +1138,7 @@ impl Editor {
                     match ext {
                         "rs" => Some(highlight::Lang::Rust),
                         "py" => Some(highlight::Lang::Python),
+                        "conf" | "ini" | "cfg" => Some(highlight::Lang::Conf),
                         _ => None,
                     }
                 })
@@ -1206,7 +1199,9 @@ impl Editor {
         let theme = self.theme.theme();
 
         // Build the status text depending on state.
-        let text: String = if self.state == State::Command {
+        let text: String = if let Some(ref msg) = self.flash {
+            format!(" {msg} ")
+        } else if self.state == State::Command {
             // Show the command being typed.
             format!(":{}", self.cmd_buf)
         } else {

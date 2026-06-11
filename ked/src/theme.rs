@@ -114,7 +114,7 @@ fn default() -> Theme {
         builtin:       fg(Color::Cyan),
         string:        fg(Color::Green),
         fstring_prefix:fg_bold(Color::Green),
-        comment:       fg(Color::DarkGray),
+        comment:       fg(Color::Rgb(120, 120, 120)),
         number:        fg(Color::Yellow),
         decorator:     fg(Color::Magenta),
         operator:      fg(Color::White),

@@ -29,6 +29,7 @@ pub struct Token {
 pub enum Lang {
     Python,
     Rust,
+    Conf,
     Plain,
 }
 
@@ -107,6 +108,7 @@ pub fn highlight_line(line: &str, theme: &Theme, lang: Lang) -> Vec<Span<'static
     let tokens = match lang {
         Lang::Python => tokenize_python(line),
         Lang::Rust => tokenize_rust(line),
+        Lang::Conf => tokenize_conf(line),
         Lang::Plain => vec![Token { kind: TokenKind::Plain, text: line.to_string() }],
     };
     tokens
@@ -571,6 +573,142 @@ fn tokenize_rust(line: &str) -> Vec<Token> {
                 });
                 i += 1;
             }
+            continue;
+        }
+
+        // ── anything else: whitespace, etc. ──
+        let start = i;
+        i += 1;
+        tokens.push(Token {
+            kind: TokenKind::Plain,
+            text: chars[start..i].iter().collect(),
+        });
+    }
+
+    tokens
+}
+
+// ── Conf-file tokeniser (Kitty, etc.) ─────────────────────────
+
+/// Tokenise a line from a `.conf` file.
+///
+/// Highlights:
+///   - `#` as comment (line start or mid-line prose)
+///   - Hex colour values like `#1e1e2e` as numbers
+///   - Quoted strings
+///   - Numbers (integers, floats)
+fn tokenize_conf(line: &str) -> Vec<Token> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut tokens: Vec<Token> = Vec::new();
+    let mut i = 0;
+    let n = chars.len();
+
+    while i < n {
+        let ch = chars[i];
+
+        // ── strings: "..." or '...' ──
+        if ch == '"' || ch == '\'' {
+            let quote = ch;
+            let start = i;
+            i += 1;
+            while i < n {
+                if chars[i] == '\\' && i + 1 < n {
+                    i += 2;
+                    continue;
+                }
+                if chars[i] == quote {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            tokens.push(Token {
+                kind: TokenKind::String,
+                text: chars[start..i].iter().collect(),
+            });
+            continue;
+        }
+
+        // ── `#`: comment or hex color? ──────────────────────
+        //
+        // Heuristic:
+        //   - Line start or preceded by whitespace AND followed
+        //     by 3–8 hex digits (then space / EOL) → color value
+        //   - Otherwise → rest-of-line comment
+        if ch == '#' {
+            let preceded_by_space = i == 0
+                || chars[i.saturating_sub(1)].is_whitespace();
+            let could_be_color = preceded_by_space
+                && i + 1 < n
+                && chars[i + 1].is_ascii_hexdigit();
+            if could_be_color {
+                let start = i;
+                i += 1; // skip #
+                let hex_start = i;
+                while i < n && chars[i].is_ascii_hexdigit() {
+                    i += 1;
+                }
+                let hex_len = i - hex_start;
+                if (hex_len == 3 || hex_len == 4 || hex_len == 6 || hex_len == 8)
+                    && (i == n || chars[i].is_whitespace()
+                        || chars[i] == '"' || chars[i] == '\'')
+                {
+                    tokens.push(Token {
+                        kind: TokenKind::Number,
+                        text: chars[start..i].iter().collect(),
+                    });
+                    continue;
+                }
+                // Not a valid colour — treat as comment from `#`.
+                i = hex_start; // backtrack to after #
+            }
+            // Comment: rest of line.
+            tokens.push(Token {
+                kind: TokenKind::Comment,
+                text: chars[i.saturating_sub(1)..].iter().collect(),
+            });
+            break;
+        }
+
+        // ── numbers ──
+        if ch.is_ascii_digit()
+            || (ch == '.' && i + 1 < n && chars[i + 1].is_ascii_digit())
+        {
+            let start = i;
+            while i < n
+                && (chars[i].is_ascii_digit()
+                    || chars[i] == '.'
+                    || chars[i] == '_')
+            {
+                i += 1;
+            }
+            tokens.push(Token {
+                kind: TokenKind::Number,
+                text: chars[start..i].iter().collect(),
+            });
+            continue;
+        }
+
+        // ── punctuation / operators used in conf bindings ──
+        if matches!(ch, '+' | '-' | '=' | ':' | ',' | '~' | '>' | '<') {
+            tokens.push(Token {
+                kind: TokenKind::Operator,
+                text: ch.to_string(),
+            });
+            i += 1;
+            continue;
+        }
+
+        // ── identifiers / words ──
+        if ch.is_alphanumeric() || ch == '_' {
+            let start = i;
+            while i < n && (chars[i].is_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            tokens.push(Token {
+                kind: TokenKind::Plain,
+                text: chars[start..i].iter().collect(),
+            });
             continue;
         }
 
