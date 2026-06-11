@@ -1,16 +1,15 @@
-use std::ffi::CStr;
 use std::io;
 use std::sync::mpsc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct ShellProcess {
     fd: i32,
+    /// Original slave fd from openpty — kept open so we can call
+    /// tcsetattr directly (more reliable than reopening the device).
+    slave_fd: i32,
     pid: i32,
     rx: mpsc::Receiver<Vec<u8>>,
     alive: bool,
-    /// Path to the slave device (e.g. "/dev/ttys001").
-    /// Used from the parent to force raw mode via `tcsetattr`.
-    slave_path: String,
     /// Raw bytes from the shell (kept as bytes to preserve UTF-8).
     output: Vec<u8>,
     /// ANSI escape sequence state machine.
@@ -56,8 +55,6 @@ impl ShellProcess {
             if ret != 0 {
                 return Err(io::Error::last_os_error());
             }
-            let slave_path = CStr::from_ptr(slave_name.as_ptr())
-                .to_string_lossy().into_owned();
 
             let pid = libc::fork();
             if pid == -1 {
@@ -113,7 +110,10 @@ impl ShellProcess {
             }
 
             // ── parent ──
-            libc::close(slave);
+            // Keep the slave fd open so we can call tcsetattr on it
+            // directly.  Reopening the device path can fail or have
+            // side effects when we aren't the controlling process.
+            let slave_fd = slave;
 
             let (tx, rx) = mpsc::channel();
             let alive = std::sync::Arc::new(AtomicBool::new(true));
@@ -136,34 +136,38 @@ impl ShellProcess {
 
             Ok((ShellProcess {
                 fd: master,
+                slave_fd,
                 pid,
                 rx,
                 alive: true,
-                slave_path,
                 output: Vec::new(),
                 esc_state: EscState::Normal,
             }, reader))
         }
     }
 
-    /// Force the slave to raw mode (ECHO off).  Reopens the slave
-    /// device and calls `tcsetattr` directly — this is the most reliable
-    /// approach across all macOS versions.
+    /// Force the slave to raw mode (ECHO off).  Uses the original
+    /// slave fd from `openpty` so `tcsetattr` is applied on a fd
+    /// that the kernel definitely recognises as the slave device.
+    /// Verifies the change and retries with `TCSADRAIN` if needed.
     pub fn force_raw_mode(&self) {
         unsafe {
-            let cpath = std::ffi::CString::new(self.slave_path.as_str()).unwrap();
-            let slave_fd = libc::open(cpath.as_ptr(), libc::O_RDWR | libc::O_NOCTTY);
-            if slave_fd < 0 {
+            let mut t: libc::termios = std::mem::zeroed();
+            if libc::tcgetattr(self.slave_fd, &mut t) != 0 {
                 return;
             }
-            let mut t: libc::termios = std::mem::zeroed();
-            if libc::tcgetattr(slave_fd, &mut t) != 0 {
-                libc::close(slave_fd);
-                return;
+            if t.c_lflag & libc::ECHO == 0 {
+                return; // already off
             }
             t.c_lflag &= !libc::ECHO;
-            libc::tcsetattr(slave_fd, libc::TCSANOW, &t);
-            libc::close(slave_fd);
+            libc::tcsetattr(self.slave_fd, libc::TCSANOW, &t);
+            // Verify — if ECHO is still on, retry with TCSADRAIN.
+            let mut check: libc::termios = std::mem::zeroed();
+            if libc::tcgetattr(self.slave_fd, &mut check) == 0
+                && check.c_lflag & libc::ECHO != 0
+            {
+                libc::tcsetattr(self.slave_fd, libc::TCSADRAIN, &t);
+            }
         }
     }
 
@@ -248,6 +252,7 @@ impl Drop for ShellProcess {
         unsafe {
             libc::kill(self.pid, libc::SIGTERM);
             libc::close(self.fd);
+            libc::close(self.slave_fd);
         }
     }
 }
