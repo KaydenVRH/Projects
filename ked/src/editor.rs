@@ -56,6 +56,7 @@ pub enum State {
     Music,   // music player picker (Ctrl+T)
     Theme,   // theme selector (Ctrl+E)
     Shell,   // pop-up shell (Ctrl+J) — handled in main.rs
+    Visual,  // visual mode: selecting text with movement keys
 }
 
 // ── Editor ───────────────────────────────────────────────────────
@@ -101,8 +102,11 @@ pub struct Editor {
     pub undo_stack: Vec<Vec<String>>,
     pub redo_stack: Vec<Vec<String>>,
 
-    // ── clipboard (for yy/dd/p/P) ──
-    pub clipboard: Vec<String>,
+    // ── visual mode ──
+    pub selection_anchor: Option<(usize, usize)>,
+
+    // ── clipboard (for yy/dd/p/visual yank) ──
+    pub clipboard_text: String,
 
     // ── theme ──
     pub theme: ThemeKind,
@@ -169,7 +173,8 @@ impl Editor {
             modified: false,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
-            clipboard: Vec::new(),
+            selection_anchor: None,
+            clipboard_text: String::new(),
             theme: ThemeKind::Default,
             theme_selected: 0,
             flash: None,
@@ -253,6 +258,7 @@ impl Editor {
 
         // If an overlay is active (command bar, finder, run, music,
         // theme), dispatch to the overlay handler first.
+        // Visual is handled after global keybindings (below).
         match self.state {
             State::Command => return self.handle_cmd_state(key),
             State::Finder => return self.handle_finder_state(key),
@@ -260,12 +266,13 @@ impl Editor {
             State::Music => return self.handle_music_state(key),
             State::Theme => return self.handle_theme_state(key),
             State::Normal => {}
-            State::Shell => {} // handled in main.rs by spawning $SHELL
+            State::Shell => {}
+            State::Visual => {}
         }
 
-                // Global keybindings that work in both normal and insert modes:
-        // Ctrl+P = finder, Ctrl+R = run Python, Ctrl+T = music player,
-        // Ctrl+C/D = quit.
+        // Global keybindings that work in both normal and insert modes
+        // (and also visual mode, via the fall-through above):
+        // Ctrl+P = finder, Ctrl+R = run Python, Ctrl+C/D = quit.
         if key.modifiers == KeyModifiers::CONTROL {
             match key.code {
                 KeyCode::Char('p') => {
@@ -292,7 +299,10 @@ impl Editor {
             }
         }
 
-        // Otherwise dispatch by editing mode.
+        // Dispatch by visual state or editing mode.
+        if self.state == State::Visual {
+            return self.handle_visual_mode(key);
+        }
         match self.mode {
             Mode::Normal => self.handle_normal_mode(key),
             Mode::Insert => self.handle_insert_mode(key),
@@ -378,6 +388,12 @@ impl Editor {
                 }
             }
 
+            // ── enter visual mode ──
+            KeyCode::Char('v') => {
+                self.state = State::Visual;
+                self.selection_anchor = Some((self.cy, self.cx));
+            }
+
             // ── enter insert mode ──
             KeyCode::Char('i') => self.mode = Mode::Insert,
             KeyCode::Char('a') => {
@@ -427,7 +443,7 @@ impl Editor {
                 self.save_undo();
                 if !self.lines.is_empty() {
                     let removed = self.lines.remove(self.cy);
-                    self.clipboard = vec![removed];
+                    self.clipboard_text = removed;
                     self.modified = true;
                     if self.lines.is_empty() {
                         self.lines.push(String::new());
@@ -440,29 +456,45 @@ impl Editor {
             // ── yank line (yy) ──
             KeyCode::Char('y') => {
                 if !self.lines.is_empty() {
-                    self.clipboard = vec![self.lines[self.cy].clone()];
+                    self.clipboard_text = self.lines[self.cy].clone();
                 }
             }
 
-            // ── paste below / above (p / P) ──
+            // ── paste (p / P) ──
             KeyCode::Char('p') => {
-                if !self.clipboard.is_empty() {
+                if !self.clipboard_text.is_empty() {
                     self.save_undo();
-                    for (i, line) in self.clipboard.iter().enumerate() {
-                        self.lines.insert(self.cy + 1 + i, line.clone());
+                    // If clipboard contains newlines, paste as lines below.
+                    if self.clipboard_text.contains('\n') {
+                        let pasted_lines: Vec<&str> = self.clipboard_text.split('\n').collect();
+                        for (i, line) in pasted_lines.iter().enumerate() {
+                            self.lines.insert(self.cy + 1 + i, line.to_string());
+                        }
+                        self.cy += pasted_lines.len();
+                        self.cx = 0;
+                    } else {
+                        // Single-line: insert at cursor.
+                        let line = &mut self.lines[self.cy];
+                        line.insert_str(self.cx, &self.clipboard_text);
+                        self.cx += self.clipboard_text.len();
                     }
-                    self.cy += self.clipboard.len();
-                    self.cx = 0;
                     self.modified = true;
                 }
             }
             KeyCode::Char('P') => {
-                if !self.clipboard.is_empty() {
+                if !self.clipboard_text.is_empty() {
                     self.save_undo();
-                    for (i, line) in self.clipboard.iter().enumerate() {
-                        self.lines.insert(self.cy + i, line.clone());
+                    if self.clipboard_text.contains('\n') {
+                        let pasted_lines: Vec<&str> = self.clipboard_text.split('\n').collect();
+                        for (i, line) in pasted_lines.iter().enumerate() {
+                            self.lines.insert(self.cy + i, line.to_string());
+                        }
+                        self.cx = 0;
+                    } else {
+                        let line = &mut self.lines[self.cy];
+                        line.insert_str(self.cx, &self.clipboard_text);
+                        self.cx += self.clipboard_text.len();
                     }
-                    self.cx = 0;
                     self.modified = true;
                 }
             }
@@ -584,12 +616,159 @@ impl Editor {
                 }
             }
 
+            // Ctrl+A: paste clipboard text.
+            KeyCode::Char('a') if key.modifiers == KeyModifiers::CONTROL => {
+                if !self.clipboard_text.is_empty() {
+                    let line = &mut self.lines[self.cy];
+                    line.insert_str(self.cx, &self.clipboard_text);
+                    self.cx += self.clipboard_text.len();
+                    self.modified = true;
+                }
+            }
+
             // Regular character: insert at cursor.
             KeyCode::Char(ch) => {
                 let line = &mut self.lines[self.cy];
                 line.insert(self.cx, ch);
                 self.cx += 1;
                 self.modified = true;
+            }
+
+            _ => {}
+        }
+
+        self.clamp_scroll();
+        true
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  Visual-mode key handling
+    // ═══════════════════════════════════════════════════════════════
+
+    fn handle_visual_mode(&mut self, key: KeyEvent) -> bool {
+        // Ctrl+C/D: quit.
+        if key.modifiers == KeyModifiers::CONTROL
+            && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'))
+        {
+            return false;
+        }
+
+        match key.code {
+            // Esc or v: exit visual mode.
+            KeyCode::Esc => {
+                self.state = State::Normal;
+                self.selection_anchor = None;
+            }
+            KeyCode::Char('v') => {
+                self.state = State::Normal;
+                self.selection_anchor = None;
+            }
+
+            // Cursor motion extends (or shrinks) the selection.
+            KeyCode::Char('h') | KeyCode::Left => {
+                if self.cx > 0 {
+                    self.cx -= 1;
+                }
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if self.cy + 1 < self.lines.len() {
+                    self.cy += 1;
+                    self.cx = min(self.cx, self.lines[self.cy].len());
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if self.cy > 0 {
+                    self.cy -= 1;
+                    self.cx = min(self.cx, self.lines[self.cy].len());
+                }
+            }
+            KeyCode::Char('l') | KeyCode::Right => {
+                let max_cx = self.lines[self.cy].len();
+                if self.cx < max_cx {
+                    self.cx += 1;
+                }
+            }
+            KeyCode::Char('0') | KeyCode::Home => self.cx = 0,
+            KeyCode::Char('$') | KeyCode::End => {
+                self.cx = self.lines[self.cy].len();
+            }
+            KeyCode::Char('w') => {
+                self.cx = self.next_word_pos(self.cy, self.cx);
+            }
+            KeyCode::Char('b') => {
+                self.cx = self.prev_word_pos(self.cy, self.cx);
+            }
+
+            // Yank selection (y or c both copy).
+            KeyCode::Char('y') | KeyCode::Char('c') => {
+                self.clipboard_text = self.selection_text();
+                self.state = State::Normal;
+                self.selection_anchor = None;
+            }
+
+            // Delete selection.
+            KeyCode::Char('d') => {
+                if self.selection_anchor.is_some() {
+                    self.save_undo();
+                    self.clipboard_text = self.selection_text();
+                    let (start_y, end_y, start_x, end_x) = self.selection_bounds();
+                    if start_y == end_y {
+                        let line = &mut self.lines[start_y];
+                        let to_remove = end_x.saturating_sub(start_x);
+                        for _ in 0..to_remove {
+                            line.remove(start_x);
+                        }
+                    } else {
+                        // First line: remove from start_x to end.
+                        {
+                            let line = &mut self.lines[start_y];
+                            line.truncate(start_x);
+                        }
+                        // Middle lines: remove.
+                        for _ in (start_y + 1)..end_y {
+                            self.lines.remove(start_y + 1);
+                        }
+                        // Last line: remove from 0 to end_x.
+                        if end_y > start_y {
+                            let last = &mut self.lines[start_y + 1];
+                            let remaining = last.split_off(end_x);
+                            self.lines[start_y].push_str(&remaining);
+                            self.lines.remove(start_y + 1);
+                        }
+                    }
+                    self.cy = start_y;
+                    self.cx = start_x;
+                    self.modified = true;
+                }
+                self.state = State::Normal;
+                self.selection_anchor = None;
+            }
+
+            // Enter insert mode (exits visual mode like vim).
+            KeyCode::Char('i') => {
+                self.state = State::Normal;
+                self.selection_anchor = None;
+                self.mode = Mode::Insert;
+            }
+            KeyCode::Char('a') => {
+                self.state = State::Normal;
+                self.selection_anchor = None;
+                if self.cx < self.lines[self.cy].len() {
+                    self.cx += 1;
+                }
+                self.mode = Mode::Insert;
+            }
+            KeyCode::Char('I') => {
+                self.state = State::Normal;
+                self.selection_anchor = None;
+                self.cx = 0;
+                self.mode = Mode::Insert;
+            }
+            KeyCode::Char('A') => {
+                self.state = State::Normal;
+                self.selection_anchor = None;
+                self.cx = self.lines[self.cy].len();
+                self.mode = Mode::Insert;
             }
 
             _ => {}
@@ -1156,6 +1335,50 @@ impl Editor {
         self.redo_stack.clear();
     }
 
+    // ── visual mode helpers ─────────────────────────────────────
+
+    /// Return the text within the current selection.
+    fn selection_text(&self) -> String {
+        let Some((ay, ax)) = self.selection_anchor else {
+            return String::new();
+        };
+        let (start_y, end_y, start_x, end_x) = self.order_bounds(ay, ax, self.cy, self.cx);
+        if start_y == end_y {
+            self.lines[start_y][start_x..end_x].to_string()
+        } else {
+            let mut parts = Vec::new();
+            // First line: from start_x to end.
+            parts.push(self.lines[start_y][start_x..].to_string());
+            // Middle lines: entire lines.
+            for y in (start_y + 1)..end_y {
+                parts.push(self.lines[y].clone());
+            }
+            // Last line: from 0 to end_x.
+            parts.push(self.lines[end_y][..end_x].to_string());
+            parts.join("\n")
+        }
+    }
+
+    /// Return the ordered bounds (start_y, end_y, start_x, end_x)
+    /// of the current selection.
+    fn selection_bounds(&self) -> (usize, usize, usize, usize) {
+        let (ay, ax) = self.selection_anchor.unwrap_or((self.cy, self.cx));
+        self.order_bounds(ay, ax, self.cy, self.cx)
+    }
+
+    /// Order two cursor positions into (start_y, end_y, start_x, end_x).
+    fn order_bounds(
+        &self,
+        ay: usize, ax: usize,
+        by: usize, bx: usize,
+    ) -> (usize, usize, usize, usize) {
+        if ay < by || (ay == by && ax <= bx) {
+            (ay, by, ax, bx)
+        } else {
+            (by, ay, bx, ax)
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════
     //  Rendering
     // ═══════════════════════════════════════════════════════════════
@@ -1191,6 +1414,12 @@ impl Editor {
         let is_splash = self.filename.is_none()
             && self.lines.len() == 1
             && self.lines[0].is_empty();
+        let is_visual = self.state == State::Visual;
+        let sel_bounds = if is_visual && self.selection_anchor.is_some() {
+            Some(self.selection_bounds())
+        } else {
+            None
+        };
         if is_splash {
             self.render_splash(f, content_area, &theme);
         } else {
@@ -1202,13 +1431,23 @@ impl Editor {
             let buf_row = self.top + row;
             let style = Style::new().fg(theme.fg).bg(theme.bg);
 
+            let in_sel = sel_bounds
+                .map_or(false, |(sy, ey, _, _)| buf_row >= sy && buf_row <= ey);
+            let line_style = if in_sel {
+                Style::new().bg(theme.selection_bg)
+            } else {
+                Style::new().bg(theme.bg)
+            };
+
             if buf_row >= self.lines.len() {
                 // Past EOF: show "~" filler lines (like vim).
                 let tilde = Span::styled("~", theme.tilde);
-                lines_vec.push(Line::from(vec![
-                    Span::raw(" ".repeat(gutter + 1)),
-                    tilde,
-                ]));
+                lines_vec.push(
+                    Line::from(vec![
+                        Span::raw(" ".repeat(gutter + 1)),
+                        tilde,
+                    ]).style(line_style),
+                );
                 continue;
             }
 
@@ -1239,10 +1478,7 @@ impl Editor {
             let mut spans = vec![num_span];
             spans.extend(highlighted);
 
-            // If the cursor is on this line and we're in insert mode,
-            // we can add a visual cursor hint (but ratatui handles
-            // the real cursor via f.set_cursor_position).
-            lines_vec.push(Line::from(spans));
+            lines_vec.push(Line::from(spans).style(line_style));
         }
 
         // Wrap in Paragraph and render.  We explicitly set the width
@@ -1301,9 +1537,12 @@ impl Editor {
             format!(":{}", self.cmd_buf)
         } else {
             // Normal status:  mode | filename | modified | line:col | theme
-            let mode_str = match self.mode {
-                Mode::Normal => "NORMAL",
-                Mode::Insert => "INSERT",
+            let mode_str = match self.state {
+                State::Visual => "VISUAL",
+                _ => match self.mode {
+                    Mode::Normal => "NORMAL",
+                    Mode::Insert => "INSERT",
+                },
             };
             let fname = self
                 .filename

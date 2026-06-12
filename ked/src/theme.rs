@@ -18,6 +18,7 @@ pub struct Theme {
     // ── general UI ──
     pub fg:            Color,   // default foreground (plain text)
     pub bg:            Color,   // default background
+    pub selection_bg:  Color,   // visual selection background
     pub line_number:   Style,   // gutter line numbers
     pub tilde:         Style,   // "~" for empty rows past EOF
     pub status_bg:     Color,   // status bar background
@@ -124,6 +125,7 @@ fn default() -> Theme {
     Theme {
         fg:            Color::White,
         bg:            Color::Reset,
+        selection_bg:  Color::DarkGray,
         line_number:   Style::new().fg(Color::DarkGray),
         tilde:         Style::new().fg(Color::DarkGray),
         status_bg:     Color::DarkGray,
@@ -148,6 +150,7 @@ fn monokai() -> Theme {
     Theme {
         fg:            Color::Rgb(0xd6, 0xd6, 0xd6),
         bg:            Color::Rgb(0x27, 0x28, 0x22),
+        selection_bg:  Color::Rgb(0x49, 0x43, 0x3e),
         line_number:   Style::new().fg(Color::Rgb(0x75, 0x75, 0x5e)),
         tilde:         Style::new().fg(Color::Rgb(0x75, 0x75, 0x5e)),
         status_bg:     Color::Rgb(0x75, 0x75, 0x5e),
@@ -172,6 +175,7 @@ fn solarized() -> Theme {
     Theme {
         fg:            Color::Rgb(0x65, 0x7b, 0x83),
         bg:            Color::Rgb(0xfd, 0xf6, 0xe3),
+        selection_bg:  Color::Rgb(0xee, 0xe8, 0xd5),
         line_number:   Style::new().fg(Color::Rgb(0x93, 0xa1, 0xa1)),
         tilde:         Style::new().fg(Color::Rgb(0x93, 0xa1, 0xa1)),
         status_bg:     Color::Rgb(0x07, 0x36, 0x42),
@@ -196,6 +200,7 @@ fn nord() -> Theme {
     Theme {
         fg:            Color::Rgb(0xd8, 0xde, 0xe9),
         bg:            Color::Rgb(0x2e, 0x34, 0x40),
+        selection_bg:  Color::Rgb(0x43, 0x4c, 0x5e),
         line_number:   Style::new().fg(Color::Rgb(0x4c, 0x56, 0x6a)),
         tilde:         Style::new().fg(Color::Rgb(0x4c, 0x56, 0x6a)),
         status_bg:     Color::Rgb(0x3b, 0x42, 0x52),
@@ -220,6 +225,7 @@ fn gruvbox() -> Theme {
     Theme {
         fg:            Color::Rgb(0xeb, 0xdb, 0xb2),
         bg:            Color::Rgb(0x28, 0x28, 0x28),
+        selection_bg:  Color::Rgb(0x50, 0x49, 0x45),
         line_number:   Style::new().fg(Color::Rgb(0x50, 0x49, 0x45)),
         tilde:         Style::new().fg(Color::Rgb(0x50, 0x49, 0x45)),
         status_bg:     Color::Rgb(0x50, 0x49, 0x45),
@@ -245,6 +251,7 @@ fn bi() -> Theme {
     Theme {
         fg:            Color::Rgb(0xe6, 0xdf, 0xf0),  // light lavender
         bg:            Color::Rgb(0x0d, 0x0a, 0x14),  // deep purple-black
+        selection_bg:  Color::Rgb(0x2a, 0x1a, 0x3a),
         line_number:   Style::new().fg(Color::Rgb(0x4a, 0x3a, 0x60)),
         tilde:         Style::new().fg(Color::Rgb(0x4a, 0x3a, 0x60)),
         status_bg:     Color::Rgb(0xd7, 0x02, 0x70),  // bi-pink
@@ -269,6 +276,7 @@ fn catppuccin() -> Theme {
     Theme {
         fg:            Color::Rgb(0xcd, 0xd6, 0xf4),  // text
         bg:            Color::Rgb(0x1e, 0x1e, 0x2e),  // base
+        selection_bg:  Color::Rgb(0x45, 0x47, 0x5a),
         line_number:   Style::new().fg(Color::Rgb(0x6c, 0x70, 0x86)),  // overlay1
         tilde:         Style::new().fg(Color::Rgb(0x6c, 0x70, 0x86)),
         status_bg:     Color::Rgb(0x31, 0x32, 0x44),  // surface0
@@ -293,6 +301,7 @@ fn tokyo_night() -> Theme {
     Theme {
         fg:            Color::Rgb(0xc0, 0xca, 0xf5),  // text
         bg:            Color::Rgb(0x1a, 0x1b, 0x26),  // bg
+        selection_bg:  Color::Rgb(0x36, 0x3b, 0x54),
         line_number:   Style::new().fg(Color::Rgb(0x56, 0x5f, 0x89)),  // comment
         tilde:         Style::new().fg(Color::Rgb(0x56, 0x5f, 0x89)),
         status_bg:     Color::Rgb(0x2a, 0x2e, 0x3d),  // surface0
