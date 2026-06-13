@@ -13,12 +13,21 @@
 //!   - State::Command — typing a `:` command on the status line
 //!   - State::Finder — fuzzy file finder overlay (Ctrl+P)
 //!   - State::Run    — Python run output overlay (Ctrl+R)
+//!   - State::Shell  — pop‑up shell overlay (Ctrl+J)
+//!
+//! Multi‑buffer:
+//!   Each open file or scratch buffer is stored as a [`Buffer`] in
+//!   `Editor::buffers`.  The Editor's own `lines`, `filename`, … fields
+//!   are shortcuts that are synced with `buffers[self.current]` via
+//!   [`sync_to_buffer`]/[`sync_from_buffer`] whenever the user switches
+//!   tabs (`:bn`/`:bp`).  This avoids touching every single field access
+//!   in the codebase.
 
 use std::{
     cmp::min,
     fs,
     process::Command as ProcCmd,
-    time::SystemTime,
+    time::{Instant, SystemTime},
 };
 
 use anyhow::{Context, Result};
@@ -26,14 +35,14 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout, Position, Rect},
-    style::{Style, Modifier},
+    style::{Color, Style, Modifier},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 
 use crate::highlight;
 use crate::shell::ShellProcess;
-use crate::theme::{Theme, ThemeKind};
+use crate::theme::{hsl_to_rgb, Theme, ThemeKind};
 use crate::finder::Finder;
 use crate::music::MusicPlayer;
 
@@ -57,13 +66,49 @@ pub enum State {
     Theme,   // theme selector (Ctrl+E)
     Shell,   // pop-up shell (Ctrl+J) — handled in main.rs
     Visual,  // visual mode: selecting text with movement keys
+    Search,  // typing a / search query on the status line
+}
+
+// ── Buffer ───────────────────────────────────────────────────────
+
+/// Per‑buffer state that gets swapped when the user switches tabs.
+#[derive(Debug, Clone)]
+pub struct Buffer {
+    lines: Vec<String>,
+    cy: usize,
+    cx: usize,
+    top: usize,
+    left: usize,
+    filename: Option<String>,
+    modified: bool,
+    last_mtime: Option<SystemTime>,
+    undo_stack: Vec<Vec<String>>,
+    redo_stack: Vec<Vec<String>>,
+    selection_anchor: Option<(usize, usize)>,
+    clipboard_text: String,
+}
+
+impl Buffer {
+    fn new(lines: Vec<String>, filename: Option<String>, last_mtime: Option<SystemTime>) -> Self {
+        Buffer {
+            lines,
+            cy: 0, cx: 0, top: 0, left: 0,
+            filename,
+            modified: false,
+            last_mtime,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            selection_anchor: None,
+            clipboard_text: String::new(),
+        }
+    }
 }
 
 // ── Editor ───────────────────────────────────────────────────────
 
 /// All editor state.
 pub struct Editor {
-    // ── buffer ──
+    // ── buffer (shortcuts – kept in sync via sync_to/from_buffer) ──
     pub lines: Vec<String>,
 
     // ── cursor (0-based, absolute in buffer) ──
@@ -80,6 +125,10 @@ pub struct Editor {
 
     // ── command bar ──
     pub cmd_buf: String,
+
+    // ── search ──
+    pub search_query: String,
+    pub last_search: Option<String>,
 
     // ── fuzzy finder ──
     pub finder: Finder,
@@ -123,6 +172,14 @@ pub struct Editor {
     // ── pop-up shell (Ctrl+J) ──
     pub shell: Option<ShellProcess>,
     pub shell_reader: Option<std::thread::JoinHandle<()>>,
+
+    // ── rainbow mode (animated hue cycling from `:3`) ──
+    pub rainbow: bool,
+    pub rainbow_start: Instant,
+
+    // ── multi‑buffer ──
+    pub buffers: Vec<Buffer>,
+    pub current: usize,
 }
 
 impl Editor {
@@ -154,7 +211,11 @@ impl Editor {
             (vec![String::new()], None, None)
         };
 
+        let initial_buf = Buffer::new(lines.clone(), filename.clone(), last_mtime);
+
         Ok(Self {
+            buffers: vec![initial_buf],
+            current: 0,
             lines,
             cy: 0,
             cx: 0,
@@ -163,6 +224,8 @@ impl Editor {
             mode: Mode::Normal,
             state: State::Normal,
             cmd_buf: String::new(),
+            search_query: String::new(),
+            last_search: None,
             finder: Finder::new(),
             finder_query: String::new(),
             finder_selection: 0,
@@ -182,6 +245,8 @@ impl Editor {
             cache_h: 24,
             shell: None,
             shell_reader: None,
+            rainbow: false,
+            rainbow_start: Instant::now(),
         })
     }
 
@@ -193,6 +258,54 @@ impl Editor {
         if let Some(handle) = self.shell_reader.take() {
             let _ = handle.join();
         }
+    }
+
+    // ── multi‑buffer helpers ──
+
+    /// Copy the current Editor fields into `buffers[self.current]`.
+    fn sync_to_buffer(&mut self) {
+        if let Some(buf) = self.buffers.get_mut(self.current) {
+            buf.lines = std::mem::take(&mut self.lines);
+            buf.cy = self.cy;
+            buf.cx = self.cx;
+            buf.top = self.top;
+            buf.left = self.left;
+            buf.filename = self.filename.take();
+            buf.modified = self.modified;
+            buf.last_mtime = self.last_mtime.take();
+            buf.undo_stack = std::mem::take(&mut self.undo_stack);
+            buf.redo_stack = std::mem::take(&mut self.redo_stack);
+            buf.selection_anchor = self.selection_anchor.take();
+            buf.clipboard_text = std::mem::take(&mut self.clipboard_text);
+        }
+    }
+
+    /// Copy `buffers[idx]` into the Editor fields.
+    fn sync_from_buffer(&mut self, idx: usize) {
+        if let Some(buf) = self.buffers.get(idx) {
+            self.lines = buf.lines.clone();
+            self.cy = buf.cy;
+            self.cx = buf.cx;
+            self.top = buf.top;
+            self.left = buf.left;
+            self.filename = buf.filename.clone();
+            self.modified = buf.modified;
+            self.last_mtime = buf.last_mtime;
+            self.undo_stack = buf.undo_stack.clone();
+            self.redo_stack = buf.redo_stack.clone();
+            self.selection_anchor = buf.selection_anchor;
+            self.clipboard_text = buf.clipboard_text.clone();
+        }
+    }
+
+    /// Switch to a new buffer index after saving the current state.
+    fn switch_buffer(&mut self, idx: usize) {
+        if idx >= self.buffers.len() || idx == self.current {
+            return;
+        }
+        self.sync_to_buffer();
+        self.current = idx;
+        self.sync_from_buffer(idx);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -234,8 +347,17 @@ impl Editor {
             return true;
         }
 
-        // Ctrl+J = pop-up shell (opens from any state).
+        // Ctrl+J = pop-up shell (opens from any state *except* shell).
         if key.code == KeyCode::Char('j') && key.modifiers == KeyModifiers::CONTROL {
+            if self.state == State::Shell {
+                // Already in the shell — forward Ctrl+J (0x0A, line feed)
+                // so it works as a regular key inside the shell.
+                if let Some(ref s) = self.shell {
+                    s.force_raw_mode();
+                    s.write(&[0x0a]);
+                }
+                return true;
+            }
             match ShellProcess::spawn() {
                 Ok((shell, reader)) => {
                     shell.force_raw_mode();
@@ -265,6 +387,7 @@ impl Editor {
             State::Run => return self.handle_run_state(key),
             State::Music => return self.handle_music_state(key),
             State::Theme => return self.handle_theme_state(key),
+            State::Search => return self.handle_search_state(key),
             State::Normal => {}
             State::Shell => {}
             State::Visual => {}
@@ -513,6 +636,42 @@ impl Editor {
             KeyCode::Char(':') => {
                 self.state = State::Command;
                 self.cmd_buf.clear();
+            }
+
+            // ── enter search mode ──
+            KeyCode::Char('/') => {
+                self.state = State::Search;
+                self.search_query.clear();
+            }
+
+            // ── repeat last search ──
+            KeyCode::Char('n') => {
+                if self.last_search.is_some() {
+                    self.search_next();
+                }
+            }
+            KeyCode::Char('N') => {
+                if self.last_search.is_some() {
+                    self.search_prev();
+                }
+            }
+
+            // ── buffer switching ──
+            KeyCode::Tab => {
+                if self.buffers.len() > 1 {
+                    let next = (self.current + 1) % self.buffers.len();
+                    self.switch_buffer(next);
+                }
+            }
+            KeyCode::BackTab => {
+                if self.buffers.len() > 1 {
+                    let prev = if self.current == 0 {
+                        self.buffers.len() - 1
+                    } else {
+                        self.current - 1
+                    };
+                    self.switch_buffer(prev);
+                }
             }
 
             _ => {}
@@ -779,6 +938,125 @@ impl Editor {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    //  Search-state key handling (/)
+    // ═══════════════════════════════════════════════════════════════
+
+    fn handle_search_state(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            // Esc: cancel search.
+            KeyCode::Esc => {
+                self.state = State::Normal;
+                self.search_query.clear();
+            }
+            // Enter: execute search.
+            KeyCode::Enter => {
+                self.last_search = Some(self.search_query.clone());
+                self.search_query.clear();
+                self.state = State::Normal;
+                self.search_next();
+            }
+            // Backspace: remove last char.
+            KeyCode::Backspace => {
+                self.search_query.pop();
+            }
+            // Regular char: append to query.
+            KeyCode::Char(ch) => {
+                self.search_query.push(ch);
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// Jump to the next occurrence of the last search query.
+    fn search_next(&mut self) {
+        let query = match &self.last_search {
+            Some(q) => q.clone(),
+            None => return,
+        };
+        if query.is_empty() {
+            return;
+        }
+        if let Some((y, x)) = self.find_next(self.cy, self.cx + 1, &query) {
+            self.cy = y;
+            self.cx = x;
+        } else {
+            self.flash = Some("search: no more matches".to_string());
+        }
+    }
+
+    /// Jump to the previous occurrence of the last search query.
+    fn search_prev(&mut self) {
+        let query = match &self.last_search {
+            Some(q) => q.clone(),
+            None => return,
+        };
+        if query.is_empty() {
+            return;
+        }
+        // Search backward from just before the cursor.
+        let from_x = self.cx.saturating_sub(1);
+        if let Some((y, x)) = self.find_prev(self.cy, from_x, &query) {
+            self.cy = y;
+            self.cx = x;
+        } else {
+            self.flash = Some("search: no more matches".to_string());
+        }
+    }
+
+    /// Find the first occurrence of `query` at or after (from_y, from_x),
+    /// wrapping around to the top of the buffer if necessary.
+    fn find_next(&self, from_y: usize, from_x: usize, query: &str) -> Option<(usize, usize)> {
+        if query.is_empty() {
+            return None;
+        }
+        // Forward from current position to end.
+        for y in from_y..self.lines.len() {
+            let line = &self.lines[y];
+            let start = if y == from_y { from_x.min(line.len()) } else { 0 };
+            if let Some(x) = line[start..].find(query) {
+                return Some((y, start + x));
+            }
+        }
+        // Wrap: search from beginning to (from_y, from_x).
+        for y in 0..=from_y {
+            let line = &self.lines[y];
+            let limit = if y == from_y { from_x.min(line.len()) } else { line.len() };
+            if limit == 0 { continue; }
+            if let Some(x) = line[..limit].find(query) {
+                return Some((y, x));
+            }
+        }
+        None
+    }
+
+    /// Find the last occurrence of `query` before (from_y, from_x),
+    /// wrapping around to the bottom of the buffer if necessary.
+    fn find_prev(&self, from_y: usize, from_x: usize, query: &str) -> Option<(usize, usize)> {
+        if query.is_empty() {
+            return None;
+        }
+        // Backward from current position to beginning.
+        for y in (0..=from_y).rev() {
+            let line = &self.lines[y];
+            let limit = if y == from_y { from_x.min(line.len()) } else { line.len() };
+            if limit == 0 { continue; }
+            if let Some(x) = line[..limit].rfind(query) {
+                return Some((y, x));
+            }
+        }
+        // Wrap: search from end backward to (from_y, from_x).
+        for y in (from_y + 1..self.lines.len()).rev() {
+            let line = &self.lines[y];
+            if line.is_empty() { continue; }
+            if let Some(x) = line.rfind(query) {
+                return Some((y, x));
+            }
+        }
+        None
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     //  Command-state key handling (:command)
     // ═══════════════════════════════════════════════════════════════
 
@@ -832,18 +1110,13 @@ impl Editor {
                         .unwrap_or_default()
                         .join(path);
                     if let Ok(content) = fs::read_to_string(&full_path) {
-                        self.lines = content.lines().map(|l| l.to_string()).collect();
-                        if content.ends_with('\n') {
-                            self.lines.push(String::new());
-                        }
-                        self.filename = Some(full_path.to_string_lossy().to_string());
-                        self.modified = false;
-                        self.cy = 0;
-                        self.cx = 0;
-                        self.top = 0;
-                        self.left = 0;
-                        self.undo_stack.clear();
-                        self.redo_stack.clear();
+                        let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+                        let fname = full_path.to_string_lossy().to_string();
+                        let mtime = fs::metadata(&fname).ok().and_then(|m| m.modified().ok());
+                        self.sync_to_buffer();
+                        self.buffers.push(Buffer::new(lines, Some(fname.to_string()), mtime));
+                        self.current = self.buffers.len() - 1;
+                        self.sync_from_buffer(self.current);
                     }
                 }
                 self.state = State::Normal;
@@ -1084,16 +1357,30 @@ impl Editor {
         let cmd_name = parts[0];
 
         match cmd_name {
-            // :q — quit (refuse if modified)
+            // :q — close current buffer (quit if last)
             "q" => {
                 if self.modified {
                     self.flash = Some("No write since last change (add ! to override)".to_string());
                     return true;
                 }
-                return false;
+                self.sync_to_buffer();
+                self.buffers.remove(self.current);
+                if self.buffers.is_empty() {
+                    return false;
+                }
+                self.current = min(self.current, self.buffers.len().saturating_sub(1));
+                self.sync_from_buffer(self.current);
             }
-            // :q! — force quit
-            "q!" => return false,
+            // :q! — force close (quit if last)
+            "q!" => {
+                self.sync_to_buffer();
+                self.buffers.remove(self.current);
+                if self.buffers.is_empty() {
+                    return false;
+                }
+                self.current = min(self.current, self.buffers.len().saturating_sub(1));
+                self.sync_from_buffer(self.current);
+            }
             // :w — save
             "w" => {
                 if let Some(ref fname) = self.filename.clone() {
@@ -1110,78 +1397,57 @@ impl Editor {
                     self.flash = Some("No filename.  Use :w <name>".to_string());
                 }
             }
-            // :w <filename> — save as
-            cmd if cmd.starts_with("w ") => {
-                let fname = cmd[2..].trim();
-                if !fname.is_empty() {
-                    match self.save_to_disk(fname) {
-                        Ok(_) => {
-                            self.filename = Some(fname.to_string());
-                            self.modified = false;
-                            self.flash = Some(format!("'{}' written", fname));
-                        }
-                        Err(e) => {
-                            self.flash = Some(format!("Error: {e}"));
-                        }
-                    }
-                }
-            }
-            // :wq — save and quit
+            // :wq — save and close buffer (quit if last)
             "wq" => {
-                if let Some(ref fname) = self.filename.clone() {
-                    if self.save_to_disk(fname).is_ok() {
-                        self.modified = false;
-                        return false;
-                    }
-                } else {
+                let fname = self.filename.clone().unwrap_or_default();
+                if !fname.is_empty() && self.save_to_disk(&fname).is_err() {
+                    self.flash = Some("Error saving".to_string());
+                    return true;
+                }
+                if fname.is_empty() {
                     self.flash = Some("No filename".to_string());
                     return true;
                 }
-                return false;
+                self.modified = false;
+                self.sync_to_buffer();
+                self.buffers.remove(self.current);
+                if self.buffers.is_empty() {
+                    return false;
+                }
+                self.current = min(self.current, self.buffers.len().saturating_sub(1));
+                self.sync_from_buffer(self.current);
             }
-            // :theme <name> — switch theme
-            cmd if cmd.starts_with("theme ") || cmd == "theme" => {
-                let name = cmd.trim_start_matches("theme ").trim();
-                if name.is_empty() || name == "theme" {
-                    self.flash = Some(format!("Current theme: {}", self.theme.name()));
-                } else if let Some(t) = ThemeKind::from_str(name) {
-                    self.theme = t;
-                    self.flash = Some(format!("Theme: {}", t.name()));
+            // :bn — next buffer
+            "bn" | "bnext" => {
+                if self.buffers.len() > 1 {
+                    let next = (self.current + 1) % self.buffers.len();
+                    self.switch_buffer(next);
                 } else {
-                    self.flash = Some(format!("Unknown theme '{name}'"));
+                    self.flash = Some("Only one buffer open".to_string());
                 }
             }
-            // :themes — list available themes
-            "themes" => {
-                let names: Vec<&str> = ThemeKind::all().iter().map(|t| t.name()).collect();
-                self.flash = Some(format!("Themes: {}", names.join(", ")));
-            }
-            // :e <filename> — open a file
-            cmd if cmd.starts_with("e ") => {
-                let fname = cmd[2..].trim();
-                if !fname.is_empty() {
-                    match fs::read_to_string(fname) {
-                        Ok(content) => {
-                            let mut lines: Vec<String> =
-                                content.lines().map(|l| l.to_string()).collect();
-                            if content.ends_with('\n') {
-                                lines.push(String::new());
-                            }
-                            self.lines = lines;
-                            self.filename = Some(fname.to_string());
-                            self.modified = false;
-                            self.cy = 0;
-                            self.cx = 0;
-                            self.top = 0;
-                            self.left = 0;
-                            self.undo_stack.clear();
-                            self.redo_stack.clear();
-                        }
-                        Err(e) => {
-                            self.flash = Some(format!("Can't open {fname}: {e}"));
-                        }
-                    }
+            // :bp — previous buffer
+            "bp" | "bprev" => {
+                if self.buffers.len() > 1 {
+                    let prev = if self.current == 0 {
+                        self.buffers.len() - 1
+                    } else {
+                        self.current - 1
+                    };
+                    self.switch_buffer(prev);
+                } else {
+                    self.flash = Some("Only one buffer open".to_string());
                 }
+            }
+            // :3 — toggle rainbow mode
+            "3" => {
+                self.rainbow = !self.rainbow;
+                self.rainbow_start = Instant::now();
+                self.flash = Some(if self.rainbow {
+                    "🌈 rainbow on".to_string()
+                } else {
+                    "rainbow off".to_string()
+                });
             }
             // Unknown command.
             _ => {
@@ -1402,15 +1668,30 @@ impl Editor {
         let _height = area.height as usize;
         let width  = area.width as usize;
 
-        // Split the screen: main content + status bar (1 line at the bottom).
-        let [content_area, status_area] = Layout::vertical([
+        // Split the screen: buffer bar (top) + main content + status bar (bottom).
+        let [bufbar_area, content_area, status_area] = Layout::vertical([
+            Constraint::Length(1),
             Constraint::Min(1),
             Constraint::Length(1),
         ])
         .areas(area);
 
         // ── 1. main content / splash ────────────────────────────
-        let theme = self.theme.theme();
+        let is_default = self.theme == ThemeKind::Default;
+        let mut theme = self.theme.theme();
+        if self.rainbow {
+            let elapsed = self.rainbow_start.elapsed();
+            let hue = (elapsed.as_millis() as f64 * 0.04) % 360.0;
+            theme = theme.with_rainbow(hue);
+            if is_default {
+                // Cycle the status bar too (Default uses named colours
+                // like DarkGray which rotate_hue skips).
+                let (r, g, b) = hsl_to_rgb(hue, 0.5, 0.3);
+                theme.status_bg = Color::Rgb(r, g, b);
+                let (r, g, b) = hsl_to_rgb(hue, 0.8, 0.9);
+                theme.status_fg = Color::Rgb(r, g, b);
+            }
+        }
         let is_splash = self.filename.is_none()
             && self.lines.len() == 1
             && self.lines[0].is_empty();
@@ -1474,9 +1755,42 @@ impl Editor {
                 vec![Span::styled(raw.clone(), style)]
             };
 
-            // Build the line: gutter + content.
+            // Build the line: gutter + content, with search-match
+            // highlighting if there's an active query.
             let mut spans = vec![num_span];
-            spans.extend(highlighted);
+            if let Some(ref query) = self.last_search {
+                if !query.is_empty() && raw.contains(query.as_str()) {
+                    let mut content_spans = Vec::new();
+                    for span in highlighted {
+                        let text = span.content.to_string();
+                        let mut last = 0;
+                        for (start, m) in text.match_indices(query.as_str()) {
+                            if start > last {
+                                content_spans.push(Span::styled(
+                                    text[last..start].to_string(),
+                                    span.style,
+                                ));
+                            }
+                            let match_style = Style::default()
+                                .bg(theme.selection_bg)
+                                .patch(span.style);
+                            content_spans.push(Span::styled(m.to_string(), match_style));
+                            last = start + m.len();
+                        }
+                        if last < text.len() {
+                            content_spans.push(Span::styled(
+                                text[last..].to_string(),
+                                span.style,
+                            ));
+                        }
+                    }
+                    spans.extend(content_spans);
+                } else {
+                    spans.extend(highlighted);
+                }
+            } else {
+                spans.extend(highlighted);
+            }
 
             lines_vec.push(Line::from(spans).style(line_style));
         }
@@ -1492,10 +1806,13 @@ impl Editor {
         f.render_widget(paragraph, content_area);
         } // end else (normal content)
 
-        // ── 2. status bar ────────────────────────────────────────
-        self.render_status(f, status_area, width);
+        // ── 2. buffer bar ──────────────────────────────────────────
+        self.render_buffer_bar(f, bufbar_area, &theme);
 
-        // ── 3. cursor position ───────────────────────────────────
+        // ── 3. status bar ────────────────────────────────────────
+        self.render_status(f, status_area, width, &theme);
+
+        // ── 4. cursor position ───────────────────────────────────
         if is_splash {
             f.set_cursor_position(Position::new(0, 0));
         } else if let Some(gutter) = self.gutter_width().checked_add(1) {
@@ -1514,9 +1831,9 @@ impl Editor {
                 // Command is shown in the status bar already;
                 // no separate overlay needed.
             }
-            State::Finder => self.render_finder(f, area),
-            State::Music => self.render_music(f, area),
-            State::Theme => self.render_theme(f, area),
+            State::Finder => self.render_finder(f, area, &theme),
+            State::Music => self.render_music(f, area, &theme),
+            State::Theme => self.render_theme(f, area, &theme),
             State::Run => self.render_run(f, area, &theme),
             State::Shell => self.render_shell(f, area),
             _ => {}
@@ -1525,9 +1842,42 @@ impl Editor {
 
     // ── status bar ───────────────────────────────────────────────
 
+    /// Render a one‑line buffer (tab) bar at the top of the screen.
+    fn render_buffer_bar(&self, f: &mut Frame, area: Rect, theme: &Theme) {
+        let items: Vec<Span> = self
+            .buffers
+            .iter()
+            .enumerate()
+            .flat_map(|(i, buf)| {
+                let is_current = i == self.current;
+                let name = buf
+                    .filename
+                    .as_deref()
+                    .map(|p| p.rsplit('/').next().unwrap_or(p))
+                    .unwrap_or("[No Name]");
+                let mod_flag = if buf.modified { " +" } else { "" };
+                let label = format!(" {name}{mod_flag} ");
+                let style = if is_current {
+                    Style::new().fg(theme.status_fg).bg(theme.status_bg)
+                } else {
+                    Style::new().fg(theme.comment.fg.unwrap_or(theme.fg)).bg(theme.bg)
+                };
+                vec![Span::styled(label, style), Span::raw("│")]
+            })
+            .collect::<Vec<_>>();
+
+        // Remove the trailing "│".
+        let last_idx = items.len().saturating_sub(1);
+        let spans: Vec<Span> = items.into_iter().take(last_idx).collect();
+
+        f.render_widget(
+            Paragraph::new(Line::from(spans)).style(Style::new().bg(theme.bg)),
+            area,
+        );
+    }
+
     /// Render the status bar at the bottom of the screen.
-    fn render_status(&self, f: &mut Frame, area: Rect, _width: usize) {
-        let theme = self.theme.theme();
+    fn render_status(&self, f: &mut Frame, area: Rect, _width: usize, theme: &Theme) {
 
         // Build the status text depending on state.
         let text: String = if let Some(ref msg) = self.flash {
@@ -1535,6 +1885,9 @@ impl Editor {
         } else if self.state == State::Command {
             // Show the command being typed.
             format!(":{}", self.cmd_buf)
+        } else if self.state == State::Search {
+            // Show the search query being typed.
+            format!("/{}", self.search_query)
         } else {
             // Normal status:  mode | filename | modified | line:col | theme
             let mode_str = match self.state {
@@ -1575,8 +1928,7 @@ impl Editor {
 
     // ── finder overlay ───────────────────────────────────────────
 
-    fn render_finder(&self, f: &mut Frame, area: Rect) {
-        let theme = self.theme.theme();
+    fn render_finder(&self, f: &mut Frame, area: Rect, theme: &Theme) {
 
         // Centered popup: ~60% width, ~50% height.
         let popup_w = (area.width as f32 * 0.6) as u16;
@@ -1665,8 +2017,7 @@ impl Editor {
 
     // ── music player overlay (Ctrl+M) ──────────────────────────
 
-    fn render_music(&self, f: &mut Frame, area: Rect) {
-        let theme = self.theme.theme();
+    fn render_music(&self, f: &mut Frame, area: Rect, theme: &Theme) {
 
         let popup_w = (area.width as f32 * 0.6) as u16;
         let popup_h = (area.height as f32 * 0.5) as u16;
@@ -1766,8 +2117,7 @@ impl Editor {
 
     // ── theme-selector overlay ─────────────────────────────────
 
-    fn render_theme(&self, f: &mut Frame, area: Rect) {
-        let theme = self.theme.theme();
+    fn render_theme(&self, f: &mut Frame, area: Rect, theme: &Theme) {
 
         let popup_w = (area.width as f32 * 0.45) as u16;
         let popup_h = (area.height as f32 * 0.4) as u16;
@@ -1857,7 +2207,7 @@ impl Editor {
         f.render_widget(output_paragraph, popup);
     }
 
-    fn render_shell(&self, f: &mut Frame, area: Rect) {
+    fn render_shell(&mut self, f: &mut Frame, area: Rect) {
         let theme = self.theme.theme();
         let popup_w = (area.width as f32 * 0.92) as u16;
         let popup_h = (area.height as f32 * 0.85) as u16;
@@ -1888,21 +2238,15 @@ impl Editor {
         if inner.height < 1 {
             return;
         }
-
-        let output_str = self.shell.as_ref().map(|s| s.output());
-        let text = output_str.as_deref().unwrap_or("");
-        let lines: Vec<&str> = text.lines().collect();
         let max_rows = inner.height as usize;
-        let start = lines.len().saturating_sub(max_rows);
-        let visible: Vec<&str> = lines[start..].to_vec();
 
-        let mut styled_lines: Vec<Line> = Vec::with_capacity(visible.len());
-        for line in &visible {
-            styled_lines.push(Line::from(Span::styled(
-                *line,
-                Style::new().fg(theme.fg).bg(theme.bg),
-            )));
-        }
+        let output_lines = self.shell.as_mut().map(|s| {
+            let default_style = Style::new().fg(theme.fg).bg(theme.bg);
+            let lines: &[Line] = s.output_styled(default_style);
+            let start = lines.len().saturating_sub(max_rows);
+            lines[start..].to_vec()
+        });
+        let mut styled_lines = output_lines.unwrap_or_default();
         // Pad empty lines so the cursor stays in place visually.
         while styled_lines.len() < max_rows {
             styled_lines.push(Line::from(Span::styled(
@@ -1929,19 +2273,24 @@ impl Editor {
         ];
 
         let keybinds = [
-            ("Ctrl+P", "  find file    "),
-            ("Ctrl+J", "  shell        "),
-            ("Ctrl+R", "  run python   "),
-            ("Ctrl+T", "  music        "),
-            ("Ctrl+E", "  theme        "),
-            ("Ctrl+S", "  save         "),
-            (":wq",    "  save & quit  "),
-            (":q!",    "  quit         "),
+            ("Ctrl+P", "find file"),
+            ("Ctrl+J", "shell"),
+            ("Ctrl+R", "run python"),
+            ("Ctrl+T", "music"),
+            ("Ctrl+E", "theme"),
+            ("/",      "search"),
+            ("Tab",    "switch buf"),
+            ("Ctrl+S", "save"),
+            (":wq",    "save & quit"),
+            (":q!",    "quit"),
         ];
+
+        // Compute column widths for alignment.
+        let key_w = keybinds.iter().map(|(k, _)| k.len()).max().unwrap_or(6);
 
         let mut lines: Vec<Line> = Vec::new();
 
-        let total_h = figlet.len() + 2 + (keybinds.len() + 1) / 2;
+        let total_h = figlet.len() + 3 + (keybinds.len() + 1) / 2;
         let pad_top = (area.height as usize).saturating_sub(total_h) / 2;
         for _ in 0..pad_top {
             lines.push(Line::from(""));
@@ -1953,15 +2302,25 @@ impl Editor {
 
         lines.push(Line::from(""));
 
+        // Subtitle
+        lines.push(Line::from(Span::styled(
+            "kayden's editor",
+            Style::new().fg(theme.comment.fg.unwrap_or(theme.fg)),
+        )));
+
+        lines.push(Line::from(""));
+
         for chunk in keybinds.chunks(2) {
-            let left = Span::styled(chunk[0].0.to_string(), theme.builtin);
-            let left_desc = Span::styled(chunk[0].1.to_string(), Style::new().fg(theme.fg));
-            let mut spans = vec![left, left_desc];
-            if chunk.len() > 1 {
-                let right = Span::styled(chunk[1].0.to_string(), theme.builtin);
-                let right_desc = Span::styled(chunk[1].1.to_string(), Style::new().fg(theme.fg));
-                spans.push(right);
-                spans.push(right_desc);
+            let mut spans = Vec::new();
+            for (i, (key, desc)) in chunk.iter().enumerate() {
+                if i > 0 {
+                    // Gap between left cell and right cell.
+                    spans.push(Span::raw(" ".repeat(3)));
+                }
+                spans.push(Span::styled(*key, theme.builtin));
+                let pad = key_w + 2 - key.len();
+                spans.push(Span::raw(" ".repeat(pad)));
+                spans.push(Span::styled(*desc, Style::new().fg(theme.fg)));
             }
             lines.push(Line::from(spans));
         }

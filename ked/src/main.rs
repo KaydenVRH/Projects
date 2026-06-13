@@ -70,7 +70,7 @@ fn main() -> Result<()> {
 
         // Poll with a 100 ms timeout so keyboard feels snappy
         // while the music player thread can still auto-advance.
-        let timeout = Duration::from_millis(100);
+        let timeout = Duration::from_millis(16);
         if poll(timeout)? {
             if let Event::Key(key) = read()? {
                 if key.kind == KeyEventKind::Press {

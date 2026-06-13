@@ -2,10 +2,11 @@
 //!
 //! Each theme defines a palette of styles used by the editor and the
 //! syntax highlighter.  The [`Theme`] struct holds a colour for every
-//! token / UI element.  [`ThemeKind`] is an enum over the five
+//! token / UI element.  [`ThemeKind`] is an enum over the nine
 //! built-in themes:
 //!
-//!   Default, Monokai, Solarized, Nord, Gruvbox
+//!   Default, Monokai, Solarized, Nord, Gruvbox, Bi, Catppuccin,
+//!   TokyoNight, Amber
 //!
 //! All colours use ratatui's [`Color`] type, which supports named
 //! colours, indexed (256-colour) codes, and true-colour RGB.
@@ -39,7 +40,7 @@ pub struct Theme {
     pub punctuation:   Style,   // `(`, `)`, `:`, `,`
 }
 
-/// The eight built-in theme variants.
+/// The nine built-in theme variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeKind {
     Default,
@@ -50,6 +51,7 @@ pub enum ThemeKind {
     Bi,
     Catppuccin,
     TokyoNight,
+    Amber,
 }
 
 impl ThemeKind {
@@ -64,6 +66,7 @@ impl ThemeKind {
             ThemeKind::Bi         => bi(),
             ThemeKind::Catppuccin => catppuccin(),
             ThemeKind::TokyoNight => tokyo_night(),
+            ThemeKind::Amber      => amber(),
         }
     }
 
@@ -78,6 +81,7 @@ impl ThemeKind {
             ThemeKind::Bi         => "bi",
             ThemeKind::Catppuccin => "catppuccin",
             ThemeKind::TokyoNight => "tokyonight",
+            ThemeKind::Amber      => "amber",
         }
     }
 
@@ -92,6 +96,7 @@ impl ThemeKind {
             ThemeKind::Bi,
             ThemeKind::Catppuccin,
             ThemeKind::TokyoNight,
+            ThemeKind::Amber,
         ]
     }
 
@@ -106,6 +111,7 @@ impl ThemeKind {
             "bi"         => Some(ThemeKind::Bi),
             "catppuccin" => Some(ThemeKind::Catppuccin),
             "tokyonight" => Some(ThemeKind::TokyoNight),
+            "amber"      => Some(ThemeKind::Amber),
             _           => None,
         }
     }
@@ -318,5 +324,205 @@ fn tokyo_night() -> Theme {
         decorator:     fg(Color::Rgb(0xf7, 0x76, 0x8e)),  // red
         operator:      fg(Color::Rgb(0x7d, 0xcf, 0xff)),  // cyan
         punctuation:   fg(Color::Rgb(0xc0, 0xca, 0xf5)),
+    }
+}
+
+fn amber() -> Theme {
+    // Amber Amethyst: deep purple base, warm gold accent
+    // Mirrors the kitty amber-amethyst theme.
+    Theme {
+        fg:            Color::Rgb(0xdd, 0xd6, 0xf0),  // lavender
+        bg:            Color::Rgb(0x18, 0x14, 0x25),  // deep purple
+        selection_bg:  Color::Rgb(0xf5, 0xc8, 0x42),  // gold
+        line_number:   Style::new().fg(Color::Rgb(0x88, 0x80, 0xa0)),
+        tilde:         Style::new().fg(Color::Rgb(0x88, 0x80, 0xa0)),
+        status_bg:     Color::Rgb(0xf5, 0xc8, 0x42),  // gold
+        status_fg:     Color::Rgb(0x18, 0x14, 0x25),  // bg
+        keyword:       fg(Color::Rgb(0xf5, 0xc8, 0x42)),  // gold
+        builtin:       fg(Color::Rgb(0xb8, 0x9c, 0xf0)),  // medium purple
+        rstype:        fg(Color::Rgb(0x9b, 0x7d, 0xd6)),  // medium purple
+        function:      fg(Color::Rgb(0xdd, 0xd6, 0xf0)),  // lavender
+        lifetime:      fg(Color::Rgb(0xc4, 0xa9, 0xf8)),  // light purple
+        string:        fg(Color::Rgb(0xa8, 0x8a, 0xe0)),  // purple
+        fstring_prefix:fg_bold(Color::Rgb(0xf5, 0xc8, 0x42)),  // gold
+        comment:       fg(Color::Rgb(0x88, 0x80, 0xa0)),
+        number:        fg(Color::Rgb(0xc4, 0xa9, 0xf8)),
+        decorator:     fg(Color::Rgb(0x7b, 0x5d, 0xb8)),  // deep purple
+        operator:      fg(Color::Rgb(0xdd, 0xd6, 0xf0)),
+        punctuation:   fg(Color::Rgb(0xdd, 0xd6, 0xf0)),
+    }
+}
+
+impl Theme {
+    /// Return a copy of this theme with every colour's hue rotated by
+    /// `hue_offset` degrees (0.0–360.0).  White, black, grey, and
+    /// `Color::Reset` are left untouched.
+    pub fn with_rainbow(&self, hue_offset: f64) -> Theme {
+        let mut t = self.clone();
+        t.fg            = rotate_hue(self.fg, hue_offset);
+        t.bg            = self.bg; // keep background static
+        t.selection_bg  = rotate_hue(self.selection_bg, hue_offset);
+        t.line_number   = rot_style(&self.line_number, hue_offset);
+        t.tilde         = rot_style(&self.tilde, hue_offset);
+        t.status_bg     = rotate_hue(self.status_bg, hue_offset);
+        t.status_fg     = rotate_hue(self.status_fg, hue_offset);
+        t.keyword       = rot_style(&self.keyword, hue_offset);
+        t.builtin       = rot_style(&self.builtin, hue_offset);
+        t.rstype        = rot_style(&self.rstype, hue_offset);
+        t.function      = rot_style(&self.function, hue_offset);
+        t.lifetime      = rot_style(&self.lifetime, hue_offset);
+        t.string        = rot_style(&self.string, hue_offset);
+        t.fstring_prefix= rot_style(&self.fstring_prefix, hue_offset);
+        t.comment       = rot_style(&self.comment, hue_offset);
+        t.number        = rot_style(&self.number, hue_offset);
+        t.decorator     = rot_style(&self.decorator, hue_offset);
+        t.operator      = rot_style(&self.operator, hue_offset);
+        t.punctuation   = rot_style(&self.punctuation, hue_offset);
+        t
+    }
+}
+
+fn rot_style(s: &Style, hue: f64) -> Style {
+    let fg = s.fg.map(|c| rotate_hue(c, hue));
+    let bg = s.bg.map(|c| rotate_hue(c, hue));
+    let mut out = *s;
+    if let Some(c) = fg { out = out.fg(c); }
+    if let Some(c) = bg { out = out.bg(c); }
+    out
+}
+
+/// Convert HSL to RGB, each 0‑255.  `h` in degrees, `s`/`l` in 0..1.
+pub fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let m = l - c / 2.0;
+
+    let (r1, g1, b1) = if h < 60.0 {
+        (c, x, 0.0)
+    } else if h < 120.0 {
+        (x, c, 0.0)
+    } else if h < 180.0 {
+        (0.0, c, x)
+    } else if h < 240.0 {
+        (0.0, x, c)
+    } else if h < 300.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
+
+    (
+        ((r1 + m) * 255.0).round() as u8,
+        ((g1 + m) * 255.0).round() as u8,
+        ((b1 + m) * 255.0).round() as u8,
+    )
+}
+
+/// Rotate the hue of an RGB colour by `deg` degrees.  Named and
+/// indexed colours are converted to true-colour RGB first so the
+/// rotation is visible even for named colours like White, Blue, etc.
+fn rotate_hue(c: Color, deg: f64) -> Color {
+    let rgb = named_to_rgb(c);
+    let (r, g, b) = match rgb {
+        Some(x) => x,
+        None => return c, // Reset or un-mapped named colour
+    };
+    let (r, g, b) = (r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0);
+
+    // RGB → HSL
+    let mx = r.max(g).max(b);
+    let mn = r.min(g).min(b);
+    let l = (mx + mn) / 2.0;
+
+    // For achromatic colours (white, black, grey) we invent a
+    // moderate saturation so the hue rotation shows up.
+    let (s, d) = if mx == mn {
+        (0.7, 0.7) // d doesn't matter, we compute h from deg directly
+    } else {
+        let d = mx - mn;
+        let s = if l > 0.5 { d / (2.0 - mx - mn) } else { d / (mx + mn) };
+        (s, d)
+    };
+
+    let h = if mx == mn {
+        deg // pure grey – start hue at the rotation angle itself
+    } else {
+        let h = if mx == r {
+            (g - b) / d + if g < b { 6.0 } else { 0.0 }
+        } else if mx == g {
+            (b - r) / d + 2.0
+        } else {
+            (r - g) / d + 4.0
+        };
+        (h * 60.0 + deg) % 360.0
+    };
+    let h = if h < 0.0 { h + 360.0 } else { h };
+
+    // HSL → RGB
+    let (r, g, b) = hsl_to_rgb(h, s, l);
+
+    Color::Rgb(r, g, b)
+}
+
+/// Map a named colour or indexed colour to its conventional 8‑bit RGB
+/// value.  Returns `None` for `Color::Reset` (leave untouched).
+fn named_to_rgb(c: Color) -> Option<(u8, u8, u8)> {
+    Some(match c {
+        Color::Rgb(r, g, b) => (r, g, b),
+        Color::Black => (0, 0, 0),
+        Color::Red => (255, 0, 0),
+        Color::Green => (0, 255, 0),
+        Color::Yellow => (255, 255, 0),
+        Color::Blue => (0, 0, 255),
+        Color::Magenta => (255, 0, 255),
+        Color::Cyan => (0, 255, 255),
+        Color::Gray => (192, 192, 192),
+        Color::DarkGray => (128, 128, 128),
+        Color::LightRed => (255, 128, 128),
+        Color::LightGreen => (128, 255, 128),
+        Color::LightYellow => (255, 255, 128),
+        Color::LightBlue => (128, 128, 255),
+        Color::LightMagenta => (255, 128, 255),
+        Color::LightCyan => (128, 255, 255),
+        Color::White => (255, 255, 255),
+        Color::Indexed(i) => ansi_256_to_rgb(i),
+        _ => return None,
+    })
+}
+
+/// Map an ANSI 256‑colour index to its RGB value.
+fn ansi_256_to_rgb(i: u8) -> (u8, u8, u8) {
+    // 0–7: standard ANSI colours
+    // 8–15: bright ANSI colours
+    // 16–231: 6×6×6 colour cube
+    // 232–255: grey ramp
+    match i {
+        0   => (0, 0, 0),
+        1   => (128, 0, 0),
+        2   => (0, 128, 0),
+        3   => (128, 128, 0),
+        4   => (0, 0, 128),
+        5   => (128, 0, 128),
+        6   => (0, 128, 128),
+        7   => (192, 192, 192),
+        8   => (128, 128, 128),
+        9   => (255, 0, 0),
+        10  => (0, 255, 0),
+        11  => (255, 255, 0),
+        12  => (0, 0, 255),
+        13  => (255, 0, 255),
+        14  => (0, 255, 255),
+        15  => (255, 255, 255),
+        16..=231 => {
+            let n = i - 16;
+            let r = (n / 36) * 51 + 0;  // multiply by 255/5
+            let g = ((n % 36) / 6) * 51 + 0;
+            let b = (n % 6) * 51 + 0;
+            (r as u8, g as u8, b as u8)
+        }
+        232..=255 => {
+            let grey = (i - 232) * 11 + 8;
+            (grey, grey, grey)
+        }
     }
 }
