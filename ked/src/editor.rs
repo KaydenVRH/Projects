@@ -45,6 +45,7 @@ use crate::shell::ShellProcess;
 use crate::theme::{hsl_to_rgb, Theme, ThemeKind};
 use crate::finder::Finder;
 use crate::music::MusicPlayer;
+use crate::filetree::FileTree;
 
 // ── Mode & State ─────────────────────────────────────────────────
 
@@ -67,6 +68,7 @@ pub enum State {
     Shell,   // pop-up shell (Ctrl+J) — handled in main.rs
     Visual,  // visual mode: selecting text with movement keys
     Search,  // typing a / search query on the status line
+    FileTree,// file tree panel (Ctrl+F)
 }
 
 // ── Buffer ───────────────────────────────────────────────────────
@@ -132,6 +134,9 @@ pub struct Editor {
 
     // ── fuzzy finder ──
     pub finder: Finder,
+
+    // ── file tree (Ctrl+F) ──
+    pub filetree: FileTree,
     pub finder_query: String,
     pub finder_selection: usize,
 
@@ -229,6 +234,7 @@ impl Editor {
             finder: Finder::new(),
             finder_query: String::new(),
             finder_selection: 0,
+            filetree: FileTree::new(),
             run_output: String::new(),
             music_player: MusicPlayer::new(),
             filename,
@@ -347,6 +353,17 @@ impl Editor {
             return true;
         }
 
+        // Ctrl+F = file tree (opens from any state).
+        if key.code == KeyCode::Char('f') && key.modifiers == KeyModifiers::CONTROL {
+            if self.state == State::FileTree {
+                self.state = State::Normal;
+            } else {
+                self.filetree.refresh();
+                self.state = State::FileTree;
+            }
+            return true;
+        }
+
         // Ctrl+J = pop-up shell (opens from any state *except* shell).
         if key.code == KeyCode::Char('j') && key.modifiers == KeyModifiers::CONTROL {
             if self.state == State::Shell {
@@ -388,6 +405,7 @@ impl Editor {
             State::Music => return self.handle_music_state(key),
             State::Theme => return self.handle_theme_state(key),
             State::Search => return self.handle_search_state(key),
+            State::FileTree => return self.handle_filetree_state(key),
             State::Normal => {}
             State::Shell => {}
             State::Visual => {}
@@ -449,7 +467,7 @@ impl Editor {
             // ── cursor motion ──
             KeyCode::Char('h') | KeyCode::Left => {
                 if self.cx > 0 {
-                    self.cx -= 1;
+                    self.cx = self.left_cx();
                 }
             }
             KeyCode::Char('j') | KeyCode::Down => {
@@ -467,7 +485,7 @@ impl Editor {
             KeyCode::Char('l') | KeyCode::Right => {
                 let max_cx = self.lines[self.cy].len();
                 if self.cx < max_cx {
-                    self.cx += 1;
+                    self.cx = self.right_cx();
                 }
             }
             KeyCode::Char('0') | KeyCode::Home => self.cx = 0,
@@ -521,7 +539,7 @@ impl Editor {
             KeyCode::Char('i') => self.mode = Mode::Insert,
             KeyCode::Char('a') => {
                 if self.cx < self.lines[self.cy].len() {
-                    self.cx += 1;
+                    self.cx = self.right_cx();
                 }
                 self.mode = Mode::Insert;
             }
@@ -556,7 +574,11 @@ impl Editor {
                 self.save_undo();
                 let line = &mut self.lines[self.cy];
                 if self.cx < line.len() {
-                    line.remove(self.cx);
+                    let pos = line.floor_char_boundary(self.cx);
+                    let ch = line[pos..].chars().next().unwrap();
+                    for _ in 0..ch.len_utf8() {
+                        line.remove(pos);
+                    }
                     self.modified = true;
                 }
             }
@@ -719,9 +741,13 @@ impl Editor {
             // Backspace: delete character before cursor.
             KeyCode::Backspace => {
                 if self.cx > 0 {
+                    let left = self.left_cx();
+                    let char_len = self.cx - left;
                     let line = &mut self.lines[self.cy];
-                    line.remove(self.cx - 1);
-                    self.cx -= 1;
+                    for _ in 0..char_len {
+                        line.remove(left);
+                    }
+                    self.cx = left;
                     self.modified = true;
                 } else if self.cy > 0 {
                     // Join with previous line.
@@ -738,7 +764,11 @@ impl Editor {
             KeyCode::Delete => {
                 let line = &mut self.lines[self.cy];
                 if self.cx < line.len() {
-                    line.remove(self.cx);
+                    let pos = line.floor_char_boundary(self.cx);
+                    let ch = line[pos..].chars().next().unwrap();
+                    for _ in 0..ch.len_utf8() {
+                        line.remove(pos);
+                    }
                     self.modified = true;
                 } else if self.cy + 1 < self.lines.len() {
                     let next = self.lines.remove(self.cy + 1);
@@ -757,10 +787,10 @@ impl Editor {
 
             // Arrow keys: move cursor (don't exit insert mode).
             KeyCode::Left => {
-                if self.cx > 0 { self.cx -= 1; }
+                if self.cx > 0 { self.cx = self.left_cx(); }
             }
             KeyCode::Right => {
-                if self.cx < self.lines[self.cy].len() { self.cx += 1; }
+                if self.cx < self.lines[self.cy].len() { self.cx = self.right_cx(); }
             }
             KeyCode::Up => {
                 if self.cy > 0 {
@@ -788,8 +818,9 @@ impl Editor {
             // Regular character: insert at cursor.
             KeyCode::Char(ch) => {
                 let line = &mut self.lines[self.cy];
-                line.insert(self.cx, ch);
-                self.cx += 1;
+                let pos = line.floor_char_boundary(self.cx);
+                line.insert(pos, ch);
+                self.cx = pos + ch.len_utf8();
                 self.modified = true;
             }
 
@@ -826,7 +857,7 @@ impl Editor {
             // Cursor motion extends (or shrinks) the selection.
             KeyCode::Char('h') | KeyCode::Left => {
                 if self.cx > 0 {
-                    self.cx -= 1;
+                    self.cx = self.left_cx();
                 }
             }
             KeyCode::Char('j') | KeyCode::Down => {
@@ -844,7 +875,7 @@ impl Editor {
             KeyCode::Char('l') | KeyCode::Right => {
                 let max_cx = self.lines[self.cy].len();
                 if self.cx < max_cx {
-                    self.cx += 1;
+                    self.cx = self.right_cx();
                 }
             }
             KeyCode::Char('0') | KeyCode::Home => self.cx = 0,
@@ -913,7 +944,7 @@ impl Editor {
                 self.state = State::Normal;
                 self.selection_anchor = None;
                 if self.cx < self.lines[self.cy].len() {
-                    self.cx += 1;
+                    self.cx = self.right_cx();
                 }
                 self.mode = Mode::Insert;
             }
@@ -1257,6 +1288,82 @@ impl Editor {
         true
     }
 
+    // ── file-tree state (Ctrl+F) ───────────────────────────────
+
+    fn handle_filetree_state(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('f') if key.modifiers == KeyModifiers::CONTROL => {
+                self.state = State::Normal;
+            }
+            KeyCode::Enter => {
+                let entry = self.filetree.selected_entry().cloned();
+                if let Some(e) = entry {
+                    if e.is_dir {
+                        self.filetree.toggle_expand();
+                    } else {
+                        // Open file in new buffer
+                        if let Ok(content) = fs::read_to_string(&e.path) {
+                            let lines: Vec<String> =
+                                content.lines().map(|l| l.to_string()).collect();
+                            let mtime =
+                                fs::metadata(&e.path).ok().and_then(|m| m.modified().ok());
+                            self.sync_to_buffer();
+                            self.buffers.push(Buffer::new(
+                                lines,
+                                Some(e.path.clone()),
+                                mtime,
+                            ));
+                            self.current = self.buffers.len() - 1;
+                            self.sync_from_buffer(self.current);
+                        } else {
+                            self.flash = Some(format!("can't read {}", e.path));
+                        }
+                        self.state = State::Normal;
+                    }
+                }
+            }
+            // Navigation
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.filetree.selected = self.filetree.selected.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let max = self.filetree.entries.len().saturating_sub(1);
+                self.filetree.selected = (self.filetree.selected + 1).min(max);
+            }
+            KeyCode::PageUp => {
+                self.filetree.selected = self.filetree.selected.saturating_sub(10);
+            }
+            KeyCode::PageDown => {
+                let max = self.filetree.entries.len().saturating_sub(1);
+                self.filetree.selected = (self.filetree.selected + 10).min(max);
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                let entry = self.filetree.selected_entry().cloned();
+                if let Some(e) = entry {
+                    if e.is_dir && e.expanded {
+                        self.filetree.toggle_expand();
+                    }
+                }
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                let entry = self.filetree.selected_entry().cloned();
+                if let Some(e) = entry {
+                    if e.is_dir && !e.expanded {
+                        self.filetree.toggle_expand();
+                    }
+                }
+            }
+            // Ctrl+C/D: quit
+            KeyCode::Char('c') | KeyCode::Char('d')
+                if key.modifiers == KeyModifiers::CONTROL =>
+            {
+                return false;
+            }
+            _ => {}
+        }
+        true
+    }
+
     fn handle_shell_state(&mut self, key: KeyEvent) -> bool {
         let shell = match self.shell.as_ref() {
             Some(s) => s,
@@ -1535,6 +1642,27 @@ impl Editor {
         if total == 0 { 1 } else { total.to_string().len().max(2) }
     }
 
+    /// Advance `cx` one full UTF‑8 character to the right (or to end of line).
+    fn right_cx(&self) -> usize {
+        let line = &self.lines[self.cy];
+        if self.cx >= line.len() { return self.cx; }
+        let pos = if line.is_char_boundary(self.cx) { self.cx } else { line.floor_char_boundary(self.cx) };
+        let ch = line[pos..].chars().next().unwrap();
+        (pos + ch.len_utf8()).min(line.len())
+    }
+
+    /// Retreat `cx` one full UTF‑8 character to the left (or to column 0).
+    fn left_cx(&self) -> usize {
+        if self.cx == 0 { return 0; }
+        let line = &self.lines[self.cy];
+        let pos = if line.is_char_boundary(self.cx) { self.cx } else { line.floor_char_boundary(self.cx) };
+        if let Some(ch) = line[..pos].chars().next_back() {
+            pos - ch.len_utf8()
+        } else {
+            0
+        }
+    }
+
     /// Height of the terminal (from the last rendered frame or default).
     fn terminal_height(&self) -> u16 {
         self.cache_h
@@ -1676,6 +1804,18 @@ impl Editor {
         ])
         .areas(area);
 
+        // When the file tree is open, split content area horizontally.
+        let (editor_area, tree_area) = if self.state == State::FileTree {
+            let [t, e] = Layout::horizontal([
+                Constraint::Length(30),
+                Constraint::Min(1),
+            ])
+            .areas(content_area);
+            (e, Some(t))
+        } else {
+            (content_area, None)
+        };
+
         // ── 1. main content / splash ────────────────────────────
         let is_default = self.theme == ThemeKind::Default;
         let mut theme = self.theme.theme();
@@ -1702,11 +1842,11 @@ impl Editor {
             None
         };
         if is_splash {
-            self.render_splash(f, content_area, &theme);
+            self.render_splash(f, editor_area, &theme);
         } else {
         let gutter = self.gutter_width() + 1;
         let mut lines_vec: Vec<Line> = Vec::new();
-        let visible_lines = content_area.height as usize;
+        let visible_lines = editor_area.height as usize;
 
         for row in 0..visible_lines {
             let buf_row = self.top + row;
@@ -1801,10 +1941,10 @@ impl Editor {
         let content = Text::from(lines_vec);
         // Clear the entire content area first so shell-overlay artifacts
         // (text that rendered past the line-number gutter) don't ghost.
-        f.render_widget(ratatui::widgets::Clear, content_area);
+        f.render_widget(ratatui::widgets::Clear, editor_area);
         let paragraph = Paragraph::new(content)
             .style(Style::new().bg(theme.bg));
-        f.render_widget(paragraph, content_area);
+        f.render_widget(paragraph, editor_area);
         } // end else (normal content)
 
         // ── 2. buffer bar ──────────────────────────────────────────
@@ -1819,9 +1959,9 @@ impl Editor {
         } else if let Some(gutter) = self.gutter_width().checked_add(1) {
             let cy_screen = (self.cy.saturating_sub(self.top)) as u16;
             let cx_screen = (self.cx.saturating_sub(self.left)) as u16 + gutter as u16;
-            if cy_screen < content_area.height {
-                let cursor_x = content_area.x + cx_screen;
-                let cursor_y = content_area.y + cy_screen;
+            if cy_screen < editor_area.height {
+                let cursor_x = editor_area.x + cx_screen;
+                let cursor_y = editor_area.y + cy_screen;
                 f.set_cursor_position(Position::new(cursor_x, cursor_y));
             }
         }
@@ -1837,6 +1977,11 @@ impl Editor {
             State::Theme => self.render_theme(f, area, &theme),
             State::Run => self.render_run(f, area, &theme),
             State::Shell => self.render_shell(f, area),
+            State::FileTree => {
+                if let Some(tree_area) = tree_area {
+                    self.render_filetree(f, tree_area, &theme);
+                }
+            }
             _ => {}
         }
     }
@@ -2275,6 +2420,7 @@ impl Editor {
 
         let keybinds = [
             ("Ctrl+P", "find file"),
+            ("Ctrl+F", "file tree"),
             ("Ctrl+J", "shell"),
             ("Ctrl+R", "run python"),
             ("Ctrl+T", "music"),
@@ -2330,6 +2476,64 @@ impl Editor {
             .alignment(Alignment::Center)
             .style(Style::new().bg(theme.bg));
         f.render_widget(paragraph, area);
+    }
+
+    // ── file tree panel ─────────────────────────────────────────
+
+    fn render_filetree(&mut self, f: &mut Frame, area: Rect, theme: &Theme) {
+        let block = Block::default()
+            .borders(Borders::RIGHT)
+            .title(" Files ")
+            .title_style(Style::new().fg(theme.comment.fg.unwrap_or(theme.fg)))
+            .border_style(Style::new().fg(theme.comment.fg.unwrap_or(theme.fg)));
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+
+        if inner.height < 1 {
+            return;
+        }
+
+        let max_idx = self.filetree.entries.len().saturating_sub(1);
+        let selected = self.filetree.selected.min(max_idx);
+
+        // Auto-scroll: keep selected in view.
+        self.filetree.scroll = if selected < self.filetree.scroll {
+            selected
+        } else if selected >= self.filetree.scroll + inner.height as usize {
+            selected.saturating_sub(inner.height as usize - 1)
+        } else {
+            self.filetree.scroll
+        };
+        let scroll = self.filetree.scroll;
+
+        let visible: Vec<ListItem> = self.filetree.entries
+            .iter()
+            .enumerate()
+            .skip(scroll)
+            .take(inner.height as usize)
+            .map(|(i, entry)| {
+                let prefix = if entry.is_dir {
+                    if entry.expanded { "▾ " } else { "▸ " }
+                } else {
+                    "  "
+                };
+                let indent = "  ".repeat(entry.depth);
+                let label = format!("{indent}{prefix}{}", entry.name);
+                let style = if i == selected {
+                    Style::new().fg(theme.status_bg).bg(theme.status_fg)
+                } else if entry.is_dir {
+                    Style::new().fg(theme.function.fg.unwrap_or(theme.fg))
+                } else {
+                    Style::new().fg(theme.fg)
+                };
+                ListItem::new(Line::from(Span::styled(label, style)))
+            })
+            .collect();
+
+        f.render_widget(
+            List::new(visible).style(Style::new().bg(theme.bg)),
+            inner,
+        );
     }
 }
 

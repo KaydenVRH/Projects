@@ -666,7 +666,6 @@ fn tokenize_markdown(line: &str) -> Vec<Token> {
             let start = i;
             while i < n && chars[i] == '#' { i += 1; }
             if i < n && chars[i] == ' ' { i += 1; }
-            let heading_len = i - start;
             // rest of line as heading
             tokens.push(Token {
                 kind: TokenKind::Decorator,

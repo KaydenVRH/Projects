@@ -17,6 +17,7 @@
 //!   ked                  # empty buffer
 
 mod editor;
+mod filetree;
 mod finder;
 mod highlight;
 mod music;

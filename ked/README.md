@@ -21,7 +21,7 @@
 - **Music player** — `Ctrl+T` scans `~/Music` for MP3s, plays with
   `afplay` (macOS)
 - **Run Python** — `Ctrl+R` runs the current file through `python3`
-- **9 themes** — `Ctrl+E` or `:theme <name>`.  Rainbow mode with `:3`
+- **9 themes** — `Ctrl+E` or `:theme <name>`. 
 - **Search** — `/` to query, `n` / `N` to repeat, all matches highlighted
 - **Undo / redo** — `u` / `Ctrl+R`
 - **Yank / paste** — `yy`, `dd`, `p` / `P` (works across buffers)
@@ -49,11 +49,12 @@ ked file.rs      # open a specific file
 
 | Key       | Action          | Key       | Action          |
 |-----------|-----------------|-----------|-----------------|
-| `Ctrl+P`  | find file       | `Ctrl+J`  | shell           |
-| `Ctrl+R`  | run python      | `Ctrl+T`  | music           |
-| `Ctrl+E`  | theme           | `/`       | search          |
-| `Tab`     | switch buf      | `Ctrl+S`  | save            |
-| `:wq`     | save & quit     | `:q!`     | quit            |
+| `Ctrl+P`  | find file       | `Ctrl+F`  | file tree       |
+| `Ctrl+J`  | shell           | `Ctrl+R`  | run python      |
+| `Ctrl+T`  | music           | `Ctrl+E`  | theme           |
+| `/`       | search          | `Tab`     | switch buf      |
+| `Ctrl+S`  | save            | `:wq`     | save & quit     |
+| `:q!`     | quit            |           |                 |
 
 ## Dependencies
 
