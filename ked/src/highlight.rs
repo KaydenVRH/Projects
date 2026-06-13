@@ -30,6 +30,7 @@ pub enum Lang {
     Python,
     Rust,
     Conf,
+    Md,
     Plain,
 }
 
@@ -128,6 +129,7 @@ pub fn highlight_line(line: &str, theme: &Theme, lang: Lang) -> Vec<Span<'static
         Lang::Python => tokenize_python(line),
         Lang::Rust => tokenize_rust(line),
         Lang::Conf => tokenize_conf(line),
+        Lang::Md => tokenize_markdown(line),
         Lang::Plain => vec![Token { kind: TokenKind::Plain, text: line.to_string() }],
     };
     tokens
@@ -635,6 +637,209 @@ fn tokenize_rust(line: &str) -> Vec<Token> {
         }
 
         // ── anything else: whitespace, etc. ──
+        let start = i;
+        i += 1;
+        tokens.push(Token {
+            kind: TokenKind::Plain,
+            text: chars[start..i].iter().collect(),
+        });
+    }
+
+    tokens
+}
+
+// ── Markdown tokeniser ────────────────────────────────────────────
+
+fn tokenize_markdown(line: &str) -> Vec<Token> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut tokens: Vec<Token> = Vec::new();
+    let mut i = 0;
+    let n = chars.len();
+
+    while i < n {
+        let ch = chars[i];
+
+        // ATX heading: `# ` … `###### `
+        if (ch == '#' && i == 0)
+            || (ch == '#' && i > 0 && tokens.is_empty() && chars[..i].iter().all(|c| c.is_whitespace()))
+        {
+            let start = i;
+            while i < n && chars[i] == '#' { i += 1; }
+            if i < n && chars[i] == ' ' { i += 1; }
+            let heading_len = i - start;
+            // rest of line as heading
+            tokens.push(Token {
+                kind: TokenKind::Decorator,
+                text: chars[start..i].iter().collect(),
+            });
+            if i < n {
+                tokens.push(Token {
+                    kind: TokenKind::Function,
+                    text: chars[i..].iter().collect(),
+                });
+            }
+            break;
+        }
+
+        // Blockquote: `> ` at line start
+        if ch == '>' && (i == 0 || chars[..i].iter().all(|c| c.is_whitespace())) {
+            let start = i;
+            i += 1;
+            while i < n && chars[i] == ' ' { i += 1; }
+            tokens.push(Token {
+                kind: TokenKind::Comment,
+                text: chars[start..i].iter().collect(),
+            });
+            if i < n {
+                tokens.push(Token {
+                    kind: TokenKind::Plain,
+                    text: chars[i..].iter().collect(),
+                });
+            }
+            break;
+        }
+
+        // Horizontal rule: `---`, `***`, `___` (3+ chars, only those)
+        if (ch == '-' || ch == '*' || ch == '_')
+            && (i == 0 || chars[..i].iter().all(|c| c.is_whitespace()))
+        {
+            let c = ch;
+            let start = i;
+            let mut count = 0;
+            while i < n && chars[i] == c { count += 1; i += 1; }
+            while i < n && chars[i] == ' ' { i += 1; }
+            if count >= 3 && (i == n || chars[i] == '\n' || chars[i] == '\r') {
+                tokens.push(Token {
+                    kind: TokenKind::Operator,
+                    text: chars[start..i].iter().collect(),
+                });
+                break;
+            }
+            i = start; // not a HR — fall through
+        }
+
+        // List marker: `- `, `* `, `+ `, `N. ` at line start
+        if (ch == '-' || ch == '*' || ch == '+')
+            && (i == 0 || chars[..i].iter().all(|c| c.is_whitespace()))
+            && i + 1 < n && chars[i + 1] == ' '
+        {
+            tokens.push(Token {
+                kind: TokenKind::Operator,
+                text: ch.to_string(),
+            });
+            i += 1;
+            continue;
+        }
+        if ch.is_ascii_digit()
+            && i + 1 < n && chars[i + 1] == '.'
+            && i + 2 < n && chars[i + 2] == ' '
+            && (i == 0 || chars[..i].iter().all(|c| c.is_whitespace()))
+        {
+            let start = i;
+            while i < n && chars[i].is_ascii_digit() { i += 1; }
+            i += 1; // skip '.'
+            tokens.push(Token {
+                kind: TokenKind::Operator,
+                text: chars[start..i].iter().collect(),
+            });
+            continue;
+        }
+
+        // Inline code: backtick pair
+        if ch == '`' {
+            let start = i;
+            i += 1;
+            while i < n && chars[i] != '`' { i += 1; }
+            if i < n { i += 1; } // skip closing backtick
+            tokens.push(Token {
+                kind: TokenKind::String,
+                text: chars[start..i].iter().collect(),
+            });
+            continue;
+        }
+
+        // Link: `[text](url)`
+        if ch == '[' {
+            let start = i;
+            i += 1;
+            while i < n && chars[i] != ']' { i += 1; }
+            if i < n {
+                i += 1; // skip ']'
+                if i < n && chars[i] == '(' {
+                    // link text
+                    tokens.push(Token {
+                        kind: TokenKind::Function,
+                        text: chars[start..i].iter().collect(),
+                    });
+                    let url_start = i;
+                    i += 1;
+                    while i < n && chars[i] != ')' { i += 1; }
+                    if i < n { i += 1; }
+                    tokens.push(Token {
+                        kind: TokenKind::Operator,
+                        text: chars[url_start..i].iter().collect(),
+                    });
+                    continue;
+                }
+            }
+            i = start; // not a link — fall through
+        }
+
+        // Image: `![alt](url)`
+        if ch == '!' && i + 1 < n && chars[i + 1] == '[' {
+            let start = i;
+            i += 2;
+            while i < n && chars[i] != ']' { i += 1; }
+            if i < n {
+                i += 1;
+                if i < n && chars[i] == '(' {
+                    tokens.push(Token {
+                        kind: TokenKind::Decorator,
+                        text: chars[start..i].iter().collect(),
+                    });
+                    let url_start = i;
+                    i += 1;
+                    while i < n && chars[i] != ')' { i += 1; }
+                    if i < n { i += 1; }
+                    tokens.push(Token {
+                        kind: TokenKind::String,
+                        text: chars[url_start..i].iter().collect(),
+                    });
+                    continue;
+                }
+            }
+            i = start;
+        }
+
+        // Bold `**` or `__`
+        if (ch == '*' || ch == '_') && i + 1 < n && chars[i + 1] == ch {
+            let c = ch;
+            let start = i;
+            i += 2;
+            while i + 1 < n && !(chars[i] == c && chars[i + 1] == c) { i += 1; }
+            if i + 1 < n { i += 2; }
+            tokens.push(Token {
+                kind: TokenKind::Builtin,
+                text: chars[start..i].iter().collect(),
+            });
+            continue;
+        }
+
+        // Italic `*` or `_`
+        if ch == '*' || ch == '_' {
+            let c = ch;
+            let start = i;
+            i += 1;
+            while i < n && chars[i] != c { i += 1; }
+            if i < n { i += 1; }
+            tokens.push(Token {
+                kind: TokenKind::String,
+                text: chars[start..i].iter().collect(),
+            });
+            continue;
+        }
+
+        // ── fallthrough: plain text ──
         let start = i;
         i += 1;
         tokens.push(Token {

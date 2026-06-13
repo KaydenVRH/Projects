@@ -1744,6 +1744,7 @@ impl Editor {
                     match ext {
                         "rs" => Some(highlight::Lang::Rust),
                         "py" => Some(highlight::Lang::Python),
+                        "md" | "markdown" => Some(highlight::Lang::Md),
                         "conf" | "ini" | "cfg" => Some(highlight::Lang::Conf),
                         _ => None,
                     }
