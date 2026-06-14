@@ -16,6 +16,7 @@
 //!   ked main.py          # open a file
 //!   ked                  # empty buffer
 
+mod config;
 mod editor;
 mod filetree;
 mod finder;
@@ -57,8 +58,9 @@ fn main() -> Result<()> {
         prev_hook(info);
     }));
 
-    // ---- editor initialisation (load file if given) ----
-    let mut editor = editor::Editor::new(filename)?;
+    // ---- load config + editor initialisation ----
+    let config = config::Config::load();
+    let mut editor = editor::Editor::new(filename, &config)?;
 
     // ---- main event loop ----
     loop {

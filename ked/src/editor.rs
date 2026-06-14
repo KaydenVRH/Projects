@@ -42,6 +42,7 @@ use ratatui::{
 
 use crate::highlight;
 use crate::shell::ShellProcess;
+use crate::config::Config;
 use crate::theme::{hsl_to_rgb, Theme, ThemeKind};
 use crate::finder::Finder;
 use crate::music::MusicPlayer;
@@ -182,7 +183,9 @@ pub struct Editor {
     pub rainbow: bool,
     pub rainbow_start: Instant,
 
-    // ── multi‑buffer ──
+    pub filetree_width: u16,
+    pub music_dir: String,
+
     pub buffers: Vec<Buffer>,
     pub current: usize,
 }
@@ -196,7 +199,7 @@ impl Editor {
     ///
     /// If `filename` is `None`, start with a single empty line
     /// (like vim's empty buffer).
-    pub fn new(filename: Option<&str>) -> Result<Self> {
+    pub fn new(filename: Option<&str>, cfg: &Config) -> Result<Self> {
         let (lines, filename, last_mtime) = if let Some(path) = filename {
             let content =
                 fs::read_to_string(path).with_context(|| format!("can't read {path}"))?;
@@ -215,6 +218,8 @@ impl Editor {
         } else {
             (vec![String::new()], None, None)
         };
+
+        let theme = ThemeKind::from_str(&cfg.theme).unwrap_or(ThemeKind::Default);
 
         let initial_buf = Buffer::new(lines.clone(), filename.clone(), last_mtime);
 
@@ -244,8 +249,8 @@ impl Editor {
             redo_stack: Vec::new(),
             selection_anchor: None,
             clipboard_text: String::new(),
-            theme: ThemeKind::Default,
-            theme_selected: 0,
+            theme,
+            theme_selected: ThemeKind::all().iter().position(|t| *t == theme).unwrap_or(0),
             flash: None,
             cache_w: 80,
             cache_h: 24,
@@ -253,6 +258,14 @@ impl Editor {
             shell_reader: None,
             rainbow: false,
             rainbow_start: Instant::now(),
+            filetree_width: cfg.filetree_width.max(10),
+            music_dir: if cfg.music_dir.is_empty() {
+                std::env::var("HOME")
+                    .map(|h| format!("{h}/Music"))
+                    .unwrap_or_else(|_| ".".to_string())
+            } else {
+                cfg.music_dir.clone()
+            },
         })
     }
 
@@ -337,12 +350,7 @@ impl Editor {
         if key.code == KeyCode::Char('t') && key.modifiers == KeyModifiers::CONTROL {
             self.state = State::Music;
             self.music_player.selected = 0;
-            // Scan ~/Music (recursively).  Fall back to cwd if HOME
-            // isn't set (very unlikely on macOS).
-            let music_dir = std::env::var("HOME")
-                .map(|h| format!("{h}/Music"))
-                .unwrap_or_else(|_| ".".to_string());
-            self.music_player.scan(&music_dir);
+            self.music_player.scan(&self.music_dir);
             return true;
         }
 
@@ -1807,7 +1815,7 @@ impl Editor {
         // When the file tree is open, split content area horizontally.
         let (editor_area, tree_area) = if self.state == State::FileTree {
             let [t, e] = Layout::horizontal([
-                Constraint::Length(30),
+                Constraint::Length(self.filetree_width),
                 Constraint::Min(1),
             ])
             .areas(content_area);
