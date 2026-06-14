@@ -29,6 +29,7 @@ pub struct Token {
 pub enum Lang {
     Python,
     Rust,
+    C,
     Conf,
     Md,
     Plain,
@@ -128,6 +129,7 @@ pub fn highlight_line(line: &str, theme: &Theme, lang: Lang) -> Vec<Span<'static
     let tokens = match lang {
         Lang::Python => tokenize_python(line),
         Lang::Rust => tokenize_rust(line),
+        Lang::C => tokenize_c(line),
         Lang::Conf => tokenize_conf(line),
         Lang::Md => tokenize_markdown(line),
         Lang::Plain => vec![Token { kind: TokenKind::Plain, text: line.to_string() }],
@@ -633,6 +635,276 @@ fn tokenize_rust(line: &str) -> Vec<Token> {
                 });
                 i += 1;
             }
+            continue;
+        }
+
+        // ── anything else: whitespace, etc. ──
+        let start = i;
+        i += 1;
+        tokens.push(Token {
+            kind: TokenKind::Plain,
+            text: chars[start..i].iter().collect(),
+        });
+    }
+
+    tokens
+}
+
+// ── C tokeniser ──────────────────────────────────────────────────
+
+const C_KEYWORDS: &[&str] = &[
+    "auto", "break", "case", "char", "const", "continue", "default", "do",
+    "double", "else", "enum", "extern", "float", "for", "goto", "if",
+    "inline", "int", "long", "register", "restrict", "return", "short",
+    "signed", "sizeof", "static", "struct", "switch", "typedef", "union",
+    "unsigned", "void", "volatile", "while",
+    // C11
+    "_Alignas", "_Alignof", "_Atomic", "_Bool", "_Complex", "_Generic",
+    "_Imaginary", "_Noreturn", "_Static_assert", "_Thread_local",
+    // C23
+    "alignas", "alignof", "bool", "constexpr", "false", "nullptr",
+    "static_assert", "thread_local", "true", "typeof", "typeof_unqual",
+];
+
+const C_TYPES: &[&str] = &[
+    "size_t", "ssize_t", "int8_t", "int16_t", "int32_t", "int64_t",
+    "uint8_t", "uint16_t", "uint32_t", "uint64_t",
+    "intptr_t", "uintptr_t", "ptrdiff_t", "wchar_t",
+    "FILE", "fpos_t", "time_t", "clock_t", "va_list", "jmp_buf",
+    "sig_atomic_t", "div_t", "ldiv_t", "lldiv_t",
+];
+
+const C_BUILTINS: &[&str] = &[
+    "printf", "fprintf", "sprintf", "snprintf",
+    "scanf", "fscanf", "sscanf",
+    "puts", "gets", "putchar", "getchar",
+    "fopen", "fclose", "fread", "fwrite", "fseek", "ftell", "rewind",
+    "fgetc", "fputc", "fgets", "fputs", "fflush",
+    "malloc", "calloc", "realloc", "free",
+    "memcpy", "memmove", "memset", "memcmp", "memchr",
+    "strlen", "strcpy", "strncpy", "strcat", "strncat",
+    "strcmp", "strncmp", "strchr", "strrchr", "strstr",
+    "strtok", "strdup", "strndup",
+    "atoi", "atol", "atof", "strtol", "strtoul", "strtod",
+    "abs", "labs", "llabs",
+    "qsort", "bsearch",
+    "rand", "srand",
+    "exit", "abort", "atexit",
+    "assert",
+    "perror",
+    "offsetof",
+    "main",
+];
+
+fn tokenize_c(line: &str) -> Vec<Token> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut tokens: Vec<Token> = Vec::new();
+    let mut i = 0;
+    let n = chars.len();
+
+    while i < n {
+        let ch = chars[i];
+
+        // ── preprocessor directive: `#` at column 0 ──
+        if ch == '#' && i == 0 {
+            tokens.push(Token {
+                kind: TokenKind::Decorator,
+                text: chars[i..].iter().collect(),
+            });
+            break;
+        }
+
+        // ── block comment: `/* ... */` ──
+        if ch == '/' && i + 1 < n && chars[i + 1] == '*' {
+            let start = i;
+            i += 2;
+            while i + 1 < n && !(chars[i] == '*' && chars[i + 1] == '/') {
+                i += 1;
+            }
+            if i + 1 < n { i += 2; }
+            tokens.push(Token {
+                kind: TokenKind::Comment,
+                text: chars[start..i].iter().collect(),
+            });
+            continue;
+        }
+
+        // ── line comment: `//` ──
+        if ch == '/' && i + 1 < n && chars[i + 1] == '/' {
+            tokens.push(Token {
+                kind: TokenKind::Comment,
+                text: chars[i..].iter().collect(),
+            });
+            break;
+        }
+
+        // ── string literals: `"..."` ──
+        if ch == '"' {
+            let start = i;
+            i += 1;
+            while i < n {
+                if chars[i] == '\\' && i + 1 < n {
+                    i += 2;
+                    continue;
+                }
+                if chars[i] == '"' {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            tokens.push(Token {
+                kind: TokenKind::String,
+                text: chars[start..i].iter().collect(),
+            });
+            continue;
+        }
+
+        // ── char literal: `'x'` ──
+        if ch == '\'' {
+            let start = i;
+            i += 1;
+            if i < n && chars[i] == '\\' && i + 1 < n {
+                i += 2;
+            } else if i < n {
+                i += 1;
+            }
+            if i < n && chars[i] == '\'' {
+                i += 1;
+                tokens.push(Token {
+                    kind: TokenKind::String,
+                    text: chars[start..i].iter().collect(),
+                });
+                continue;
+            }
+            // not a char literal — emit `'` as punctuation
+            i = start + 1;
+            tokens.push(Token {
+                kind: TokenKind::Punctuation,
+                text: "'".to_string(),
+            });
+            continue;
+        }
+
+        // ── numbers ──
+        if ch.is_ascii_digit()
+            || (ch == '.' && i + 1 < n && chars[i + 1].is_ascii_digit())
+        {
+            let start = i;
+            if ch == '0' && i + 1 < n {
+                let nxt = chars[i + 1];
+                if nxt == 'x' || nxt == 'X' || nxt == 'b' || nxt == 'B' {
+                    i += 2;
+                    while i < n && chars[i].is_ascii_hexdigit() {
+                        i += 1;
+                    }
+                    tokens.push(Token {
+                        kind: TokenKind::Number,
+                        text: chars[start..i].iter().collect(),
+                    });
+                    continue;
+                }
+            }
+            while i < n
+                && (chars[i].is_ascii_digit()
+                    || chars[i] == '.'
+                    || chars[i] == 'e' || chars[i] == 'E'
+                    || chars[i] == 'x' || chars[i] == 'X'
+                    || chars[i] == 'f' || chars[i] == 'F'
+                    || chars[i] == 'u' || chars[i] == 'U'
+                    || chars[i] == 'l' || chars[i] == 'L')
+            {
+                i += 1;
+            }
+            tokens.push(Token {
+                kind: TokenKind::Number,
+                text: chars[start..i].iter().collect(),
+            });
+            continue;
+        }
+
+        // ── two-char operators ──
+        if i + 1 < n {
+            let two = format!("{}{}", ch, chars[i + 1]);
+            let op2 = matches!(
+                two.as_str(),
+                "==" | "!=" | "<=" | ">=" | "&&" | "||"
+                    | "->" | "++" | "--"
+                    | "+=" | "-=" | "*=" | "/=" | "%="
+                    | "&=" | "|=" | "^=" | "<<"
+                    | ">>" | "##"
+            );
+            if op2 {
+                tokens.push(Token {
+                    kind: TokenKind::Operator,
+                    text: two,
+                });
+                i += 2;
+                continue;
+            }
+        }
+
+        // ── three-char operators ──
+        if i + 2 < n {
+            let three = format!("{}{}{}", ch, chars[i + 1], chars[i + 2]);
+            let op3 = matches!(
+                three.as_str(),
+                "<<=" | ">>=" | "..."
+            );
+            if op3 {
+                tokens.push(Token {
+                    kind: TokenKind::Operator,
+                    text: three,
+                });
+                i += 3;
+                continue;
+            }
+        }
+
+        // ── single-char operators ──
+        if matches!(
+            ch,
+            '+' | '-' | '*' | '/' | '%' | '=' | '!' | '<' | '>'
+                | '&' | '|' | '^' | '~' | ':' | '.' | '?'
+        ) {
+            tokens.push(Token {
+                kind: TokenKind::Operator,
+                text: ch.to_string(),
+            });
+            i += 1;
+            continue;
+        }
+
+        // ── punctuation ──
+        if matches!(
+            ch,
+            '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';' | '\\'
+        ) {
+            tokens.push(Token {
+                kind: TokenKind::Punctuation,
+                text: ch.to_string(),
+            });
+            i += 1;
+            continue;
+        }
+
+        // ── identifiers / words ──
+        if ch.is_alphanumeric() || ch == '_' {
+            let start = i;
+            while i < n && (chars[i].is_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            let kind = if C_KEYWORDS.contains(&word.as_str()) {
+                TokenKind::Keyword
+            } else if C_TYPES.contains(&word.as_str()) {
+                TokenKind::Type
+            } else if C_BUILTINS.contains(&word.as_str()) {
+                TokenKind::Builtin
+            } else {
+                TokenKind::Plain
+            };
+            tokens.push(Token { kind, text: word });
             continue;
         }
 

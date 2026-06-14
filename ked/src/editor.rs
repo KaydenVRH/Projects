@@ -435,10 +435,10 @@ impl Editor {
                 KeyCode::Char('r') => {
                     if let Some(ref fname) = self.filename.clone() {
                         let _ = self.save_to_disk(fname);
-                        self.run_output = self.run_python(fname);
+                        self.run_output = self.run_file(fname);
                     } else {
                         self.run_output =
-                            "No filename set.  Use :w filename.py first.".to_string();
+                            "No filename set.  Use :w <file> first.".to_string();
                     }
                     self.state = State::Run;
                     return true;
@@ -1584,30 +1584,130 @@ impl Editor {
         Ok(())
     }
 
-    /// Run a Python file and capture its stdout + stderr.
-    fn run_python(&self, path: &str) -> String {
-        let output = ProcCmd::new("python3")
-            .arg(path)
+    /// Run a file and capture its stdout + stderr.
+    /// Python files (`.py`) run via `python3`, C files (`.c`/`.h`)
+    /// compile with `cc` then run the resulting binary.
+    fn run_file(&self, path: &str) -> String {
+        let ext = path.rsplit('.').next().unwrap_or("");
+        match ext {
+            "c" | "h" => self.run_c(path),
+            "rs" => self.run_rust(path),
+            "py" => run_python(path),
+            _ => format!("Don't know how to run .{ext} files.  Use .py, .rs, .c, or .h."),
+        }
+    }
+
+    /// Compile and run a C source file.
+    fn run_c(&self, path: &str) -> String {
+        let bin = "/tmp/ked_c_bin";
+
+        // Compile
+        let comp = ProcCmd::new("cc")
+            .args(["-o", bin, "-Wall", "-Wextra", path])
             .output();
-        match output {
+        let comp_out = match comp {
             Ok(out) => {
-                let mut result = String::new();
+                let mut s = String::new();
                 if !out.stdout.is_empty() {
-                    result.push_str(&String::from_utf8_lossy(&out.stdout));
+                    s.push_str(&String::from_utf8_lossy(&out.stdout));
                 }
                 if !out.stderr.is_empty() {
-                    if !result.is_empty() {
-                        result.push('\n');
-                    }
-                    result.push_str(&String::from_utf8_lossy(&out.stderr));
+                    if !s.is_empty() { s.push('\n'); }
+                    s.push_str(&String::from_utf8_lossy(&out.stderr));
                 }
-                if result.is_empty() {
-                    result = "(no output)".to_string();
-                }
-                result
+                s
             }
-            Err(e) => format!("Error running python3: {e}"),
+            Err(e) => return format!("Error running cc: {e}"),
+        };
+
+        // Check if compilation succeeded (binary exists).
+        if !std::path::Path::new(bin).exists() {
+            let mut result = String::from("── Compilation failed ──\n");
+            result.push_str(&comp_out);
+            return result;
         }
+
+        // Run
+        let run = ProcCmd::new(bin).output();
+        let run_out = match run {
+            Ok(out) => {
+                let mut s = String::new();
+                if !out.stdout.is_empty() {
+                    s.push_str(&String::from_utf8_lossy(&out.stdout));
+                }
+                if !out.stderr.is_empty() {
+                    if !s.is_empty() { s.push('\n'); }
+                    s.push_str(&String::from_utf8_lossy(&out.stderr));
+                }
+                s
+            }
+            Err(e) => format!("Error running binary: {e}"),
+        };
+
+        let mut result = String::new();
+        if !comp_out.is_empty() {
+            result.push_str("── Compilation ──\n");
+            result.push_str(&comp_out);
+            result.push('\n');
+        }
+        result.push_str("── Output ──\n");
+        result.push_str(&run_out);
+        result
+    }
+
+    /// Compile and run a Rust source file.
+    fn run_rust(&self, path: &str) -> String {
+        let bin = "/tmp/ked_rust_bin";
+
+        let comp = ProcCmd::new("rustup")
+            .args(["run", "stable", "rustc", "-o", bin, path])
+            .output();
+        let comp_out = match comp {
+            Ok(out) => {
+                let mut s = String::new();
+                if !out.stdout.is_empty() {
+                    s.push_str(&String::from_utf8_lossy(&out.stdout));
+                }
+                if !out.stderr.is_empty() {
+                    if !s.is_empty() { s.push('\n'); }
+                    s.push_str(&String::from_utf8_lossy(&out.stderr));
+                }
+                s
+            }
+            Err(e) => return format!("Error running rustc: {e}"),
+        };
+
+        if !std::path::Path::new(bin).exists() {
+            let mut result = String::from("── Compilation failed ──\n");
+            result.push_str(&comp_out);
+            return result;
+        }
+
+        let run = ProcCmd::new(bin).output();
+        let run_out = match run {
+            Ok(out) => {
+                let mut s = String::new();
+                if !out.stdout.is_empty() {
+                    s.push_str(&String::from_utf8_lossy(&out.stdout));
+                }
+                if !out.stderr.is_empty() {
+                    if !s.is_empty() { s.push('\n'); }
+                    s.push_str(&String::from_utf8_lossy(&out.stderr));
+                }
+                s
+            }
+            Err(e) => format!("Error running binary: {e}"),
+        };
+
+        let mut result = String::new();
+        if !comp_out.is_empty() {
+            result.push_str("── Compilation ──\n");
+            result.push_str(&comp_out);
+            result.push('\n');
+        }
+        result.push_str("── Output ──\n");
+        result.push_str(&run_out);
+        result
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1844,8 +1944,9 @@ impl Editor {
             && self.lines.len() == 1
             && self.lines[0].is_empty();
         let is_visual = self.state == State::Visual;
-        let sel_bounds = if is_visual && self.selection_anchor.is_some() {
-            Some(self.selection_bounds())
+        let sel_bounds = if is_visual {
+            self.selection_anchor.filter(|&(ay, ax)| ay != self.cy || ax != self.cx)
+                .map(|_| self.selection_bounds())
         } else {
             None
         };
@@ -1859,14 +1960,7 @@ impl Editor {
         for row in 0..visible_lines {
             let buf_row = self.top + row;
             let style = Style::new().fg(theme.fg).bg(theme.bg);
-
-            let in_sel = sel_bounds
-                .map_or(false, |(sy, ey, _, _)| buf_row >= sy && buf_row <= ey);
-            let line_style = if in_sel {
-                Style::new().bg(theme.selection_bg)
-            } else {
-                Style::new().bg(theme.bg)
-            };
+            let line_style = Style::new().bg(theme.bg);
 
             if buf_row >= self.lines.len() {
                 // Past EOF: show "~" filler lines (like vim).
@@ -1892,6 +1986,7 @@ impl Editor {
                     match ext {
                         "rs" => Some(highlight::Lang::Rust),
                         "py" => Some(highlight::Lang::Python),
+                        "c" | "h" => Some(highlight::Lang::C),
                         "md" | "markdown" => Some(highlight::Lang::Md),
                         "conf" | "ini" | "cfg" => Some(highlight::Lang::Conf),
                         _ => None,
@@ -1939,6 +2034,62 @@ impl Editor {
                 }
             } else {
                 spans.extend(highlighted);
+            }
+
+            // Visual mode selection highlighting (character-granular).
+            if let Some((sy, ey, sx, ex)) = sel_bounds {
+                if buf_row >= sy && buf_row <= ey {
+                    let fully = buf_row > sy && buf_row < ey;
+                    let sel_start = if buf_row == sy { sx } else { 0 };
+                    let sel_end = if buf_row == ey { ex } else { raw.len() };
+                    if fully || (sel_start <= 0 && sel_end >= raw.len()) {
+                        // Entire content row selected — paint every span.
+                        for span in spans.iter_mut().skip(1) {
+                            span.style = span.style.patch(
+                                Style::new().bg(theme.selection_bg));
+                        }
+                    } else {
+                        // Partially selected row — split at selection edges.
+                        let mut rebuilt = vec![spans[0].clone()];
+                        let mut offset = 0usize;
+                        for span in spans.drain(1..) {
+                            let text = span.content.to_string();
+                            let span_end = offset + text.len();
+                            if span_end <= sel_start || offset >= sel_end {
+                                rebuilt.push(span);
+                            } else if offset >= sel_start && span_end <= sel_end {
+                                let mut s = span;
+                                s.style = s.style.patch(
+                                    Style::new().bg(theme.selection_bg));
+                                rebuilt.push(s);
+                            } else {
+                                // Span straddles a selection edge — split.
+                                let s = span;
+                                // part before selection
+                                if sel_start > offset {
+                                    let end = sel_start - offset;
+                                    rebuilt.push(Span::styled(
+                                        text[..end].to_string(), s.style));
+                                }
+                                // selected part
+                                let m_start = offset.max(sel_start) - offset;
+                                let m_end = span_end.min(sel_end) - offset;
+                                if m_start < m_end {
+                                    rebuilt.push(Span::styled(
+                                        text[m_start..m_end].to_string(),
+                                        s.style.patch(Style::new().bg(theme.selection_bg))));
+                                }
+                                // part after selection
+                                if sel_end < span_end {
+                                    rebuilt.push(Span::styled(
+                                        text[(sel_end - offset)..].to_string(), s.style));
+                                }
+                            }
+                            offset = span_end;
+                        }
+                        spans = rebuilt;
+                    }
+                }
             }
 
             lines_vec.push(Line::from(spans).style(line_style));
@@ -2578,5 +2729,31 @@ fn key_to_bytes(key: KeyEvent) -> Vec<u8> {
         KeyCode::PageUp => vec![0x1b, b'[', b'5', b'~'],
         KeyCode::PageDown => vec![0x1b, b'[', b'6', b'~'],
         _ => vec![],
+    }
+}
+
+/// Run a Python file and capture its stdout + stderr.
+fn run_python(path: &str) -> String {
+    let output = ProcCmd::new("python3")
+        .arg(path)
+        .output();
+    match output {
+        Ok(out) => {
+            let mut result = String::new();
+            if !out.stdout.is_empty() {
+                result.push_str(&String::from_utf8_lossy(&out.stdout));
+            }
+            if !out.stderr.is_empty() {
+                if !result.is_empty() {
+                    result.push('\n');
+                }
+                result.push_str(&String::from_utf8_lossy(&out.stderr));
+            }
+            if result.is_empty() {
+                result = "(no output)".to_string();
+            }
+            result
+        }
+        Err(e) => format!("Error running python3: {e}"),
     }
 }
