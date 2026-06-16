@@ -32,6 +32,8 @@ pub enum Lang {
     C,
     Conf,
     Md,
+    JavaScript,
+    Html,
     Plain,
 }
 
@@ -132,6 +134,8 @@ pub fn highlight_line(line: &str, theme: &Theme, lang: Lang) -> Vec<Span<'static
         Lang::C => tokenize_c(line),
         Lang::Conf => tokenize_conf(line),
         Lang::Md => tokenize_markdown(line),
+        Lang::JavaScript => tokenize_javascript(line),
+        Lang::Html => tokenize_html(line),
         Lang::Plain => vec![Token { kind: TokenKind::Plain, text: line.to_string() }],
     };
     tokens
@@ -1247,6 +1251,314 @@ fn tokenize_conf(line: &str) -> Vec<Token> {
         }
 
         // ── anything else: whitespace, etc. ──
+        let start = i;
+        i += 1;
+        tokens.push(Token {
+            kind: TokenKind::Plain,
+            text: chars[start..i].iter().collect(),
+        });
+    }
+
+    tokens
+}
+
+// ── JavaScript / TypeScript tokeniser ─────────────────────────────
+
+const JS_KEYWORDS: &[&str] = &[
+    "function", "var", "let", "const", "if", "else", "for", "while",
+    "do", "switch", "case", "break", "continue", "return", "import",
+    "export", "from", "class", "extends", "new", "this", "super",
+    "try", "catch", "finally", "throw", "typeof", "instanceof",
+    "in", "of", "async", "await", "yield", "delete", "void",
+    "true", "false", "null", "undefined",
+    "type", "interface", "enum", "implements", "namespace", "declare",
+    "abstract", "private", "protected", "public", "readonly", "static",
+    "keyof", "as", "is", "infer", "never", "unknown", "any",
+];
+
+const JS_BUILTINS: &[&str] = &[
+    "console", "document", "window", "Math", "JSON", "Array",
+    "Object", "String", "Number", "Boolean", "Date", "RegExp",
+    "Map", "Set", "Promise", "setTimeout", "setInterval",
+    "parseInt", "parseFloat", "isNaN", "fetch", "require",
+];
+
+fn tokenize_javascript(line: &str) -> Vec<Token> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut tokens: Vec<Token> = Vec::new();
+    let mut i = 0;
+    let n = chars.len();
+
+    while i < n {
+        let ch = chars[i];
+
+        // ── block comment: `/* ... */` ──
+        if ch == '/' && i + 1 < n && chars[i + 1] == '*' {
+            let start = i;
+            i += 2;
+            while i + 1 < n && !(chars[i] == '*' && chars[i + 1] == '/') {
+                i += 1;
+            }
+            if i + 1 < n { i += 2; }
+            tokens.push(Token {
+                kind: TokenKind::Comment,
+                text: chars[start..i].iter().collect(),
+            });
+            continue;
+        }
+
+        // ── line comment: `//` ──
+        if ch == '/' && i + 1 < n && chars[i + 1] == '/' {
+            tokens.push(Token {
+                kind: TokenKind::Comment,
+                text: chars[i..].iter().collect(),
+            });
+            break;
+        }
+
+        // ── template literal: `` `...` `` ──
+        if ch == '`' {
+            let start = i;
+            i += 1;
+            while i < n {
+                if chars[i] == '\\' && i + 1 < n {
+                    i += 2;
+                    continue;
+                }
+                if chars[i] == '`' {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            tokens.push(Token {
+                kind: TokenKind::String,
+                text: chars[start..i].iter().collect(),
+            });
+            continue;
+        }
+
+        // ── strings: "..." or '...' ──
+        if ch == '"' || ch == '\'' {
+            let quote = ch;
+            let start = i;
+            i += 1;
+            while i < n {
+                if chars[i] == '\\' && i + 1 < n {
+                    i += 2;
+                    continue;
+                }
+                if chars[i] == quote {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            tokens.push(Token {
+                kind: TokenKind::String,
+                text: chars[start..i].iter().collect(),
+            });
+            continue;
+        }
+
+        // ── numbers ──
+        if ch.is_ascii_digit()
+            || (ch == '.' && i + 1 < n && chars[i + 1].is_ascii_digit())
+        {
+            let start = i;
+            while i < n
+                && (chars[i].is_ascii_digit()
+                    || chars[i] == '.'
+                    || chars[i] == 'e' || chars[i] == 'E'
+                    || chars[i] == 'x' || chars[i] == 'X'
+                    || chars[i] == 'o' || chars[i] == 'O'
+                    || chars[i] == 'b' || chars[i] == 'B'
+                    || chars[i] == '_')
+            {
+                i += 1;
+            }
+            tokens.push(Token {
+                kind: TokenKind::Number,
+                text: chars[start..i].iter().collect(),
+            });
+            continue;
+        }
+
+        // ── three-char operators ──
+        if i + 2 < n {
+            let three = format!("{}{}{}", ch, chars[i + 1], chars[i + 2]);
+            if matches!(three.as_str(), "===" | "!==" | "<<=" | ">>=" | ">>>" | "**=") {
+                tokens.push(Token {
+                    kind: TokenKind::Operator,
+                    text: three,
+                });
+                i += 3;
+                continue;
+            }
+        }
+
+        // ── two-char operators ──
+        if i + 1 < n {
+            let two = format!("{}{}", ch, chars[i + 1]);
+            if matches!(
+                two.as_str(),
+                "==" | "!=" | "<=" | ">=" | "&&" | "||" | "=>" | "??"
+                    | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|="
+                    | "^=" | "<<" | ">>" | "++" | "--" | "**" | "?."
+            ) {
+                tokens.push(Token {
+                    kind: TokenKind::Operator,
+                    text: two,
+                });
+                i += 2;
+                continue;
+            }
+        }
+
+        // ── single-char operators ──
+        if matches!(
+            ch,
+            '+' | '-' | '*' | '/' | '%' | '=' | '!' | '<' | '>'
+                | '&' | '|' | '^' | '~' | ':' | '.' | '?'
+        ) {
+            tokens.push(Token {
+                kind: TokenKind::Operator,
+                text: ch.to_string(),
+            });
+            i += 1;
+            continue;
+        }
+
+        // ── punctuation ──
+        if matches!(ch, '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';') {
+            if ch == '(' {
+                if let Some(last) = tokens.last_mut() {
+                    if last.kind == TokenKind::Plain {
+                        last.kind = TokenKind::Function;
+                    }
+                }
+            }
+            tokens.push(Token {
+                kind: TokenKind::Punctuation,
+                text: ch.to_string(),
+            });
+            i += 1;
+            continue;
+        }
+
+        // ── identifiers ──
+        if ch.is_alphanumeric() || ch == '_' || ch == '$' {
+            let start = i;
+            while i < n
+                && (chars[i].is_alphanumeric() || chars[i] == '_' || chars[i] == '$')
+            {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            let kind = if JS_KEYWORDS.contains(&word.as_str()) {
+                TokenKind::Keyword
+            } else if JS_BUILTINS.contains(&word.as_str()) {
+                TokenKind::Builtin
+            } else {
+                TokenKind::Plain
+            };
+            tokens.push(Token { kind, text: word });
+            continue;
+        }
+
+        let start = i;
+        i += 1;
+        tokens.push(Token {
+            kind: TokenKind::Plain,
+            text: chars[start..i].iter().collect(),
+        });
+    }
+
+    tokens
+}
+
+// ── HTML tokeniser ────────────────────────────────────────────────
+
+const HTML_TAGS: &[&str] = &[
+    "html", "head", "body", "div", "span", "p", "a", "img",
+    "ul", "ol", "li", "table", "tr", "td", "th", "form",
+    "input", "button", "select", "option", "textarea",
+    "h1", "h2", "h3", "h4", "h5", "h6", "meta", "link",
+    "script", "style", "title", "header", "footer", "nav",
+    "section", "article", "aside", "main", "br", "hr",
+    "strong", "em", "code", "pre", "blockquote",
+];
+
+fn tokenize_html(line: &str) -> Vec<Token> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut tokens: Vec<Token> = Vec::new();
+    let mut i = 0;
+    let n = chars.len();
+
+    while i < n {
+        let ch = chars[i];
+
+        // ── comment: `<!-- ... -->` ──
+        if ch == '<' && i + 3 < n
+            && chars[i + 1] == '!'
+            && chars[i + 2] == '-'
+            && chars[i + 3] == '-'
+        {
+            let start = i;
+            i += 4;
+            while i + 2 < n
+                && !(chars[i] == '-' && chars[i + 1] == '-' && chars[i + 2] == '>')
+            {
+                i += 1;
+            }
+            if i + 2 < n { i += 3; }
+            tokens.push(Token {
+                kind: TokenKind::Comment,
+                text: chars[start..i].iter().collect(),
+            });
+            continue;
+        }
+
+        // ── tag: `<tagname` … `>` ──
+        if ch == '<' {
+            let start = i;
+            i += 1;
+            while i < n && chars[i] != '>' && chars[i] != ' ' && chars[i] != '\t' && chars[i] != '\n' {
+                i += 1;
+            }
+            let tag = chars[start + 1..i].iter().collect::<String>().to_lowercase();
+            let is_kw = HTML_TAGS.contains(&tag.as_str()) || tag.starts_with('/');
+            tokens.push(Token {
+                kind: if is_kw { TokenKind::Keyword } else { TokenKind::Plain },
+                text: chars[start..i].iter().collect(),
+            });
+            // attributes
+            while i < n && chars[i] != '>' {
+                if chars[i] == '"' || chars[i] == '\'' {
+                    let q = chars[i];
+                    let attr_start = i;
+                    i += 1;
+                    while i < n && chars[i] != q { i += 1; }
+                    if i < n { i += 1; }
+                    tokens.push(Token {
+                        kind: TokenKind::String,
+                        text: chars[attr_start..i].iter().collect(),
+                    });
+                } else {
+                    i += 1;
+                }
+            }
+            // closing `>`
+            if i < n && chars[i] == '>' {
+                tokens.push(Token {
+                    kind: TokenKind::Keyword,
+                    text: ">".to_string(),
+                });
+                i += 1;
+            }
+            continue;
+        }
+
         let start = i;
         i += 1;
         tokens.push(Token {

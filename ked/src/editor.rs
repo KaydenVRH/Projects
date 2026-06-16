@@ -193,8 +193,9 @@ pub struct Editor {
     pub music_dir: String,
     pub transparent: bool,
     pub _frame: u64,
-    pub _mode_switched: u64,
+    pub _mode_switched: Instant,
     pub _last_mode: Mode,
+    pub _last_state: State,
     /// Cursor style to apply after rendering (set by render, consumed by main).
     pub cursor_style: SetCursorStyle,
     /// System dashboard data
@@ -284,8 +285,9 @@ impl Editor {
             },
             transparent: cfg.transparent,
             _frame: 0,
-            _mode_switched: 0,
+            _mode_switched: Instant::now(),
             _last_mode: Mode::Normal,
+            _last_state: State::Normal,
             cursor_style: SetCursorStyle::SteadyBlock,
             sys_info: String::new(),
         })
@@ -497,6 +499,26 @@ impl Editor {
             && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'))
         {
             return false;
+        }
+
+        // Ctrl+S: save.
+        if key.modifiers == KeyModifiers::CONTROL
+            && key.code == KeyCode::Char('s')
+        {
+            if let Some(ref fname) = self.filename.clone() {
+                match self.save_to_disk(fname) {
+                    Ok(()) => {
+                        self.modified = false;
+                        self.flash = Some(format!("'{}' written", fname));
+                    }
+                    Err(e) => {
+                        self.flash = Some(format!("Error: {e}"));
+                    }
+                }
+            } else {
+                self.flash = Some("No filename.  Use :w <name>".to_string());
+            }
+            return true;
         }
 
         match key.code {
@@ -765,12 +787,16 @@ impl Editor {
                 }
             }
 
-            // Enter: split the line at the cursor.
+            // Enter: split the line at the cursor, preserving indent.
             KeyCode::Enter => {
+                let indent: String = {
+                    let line = &self.lines[self.cy];
+                    line.chars().take_while(|c| *c == ' ' || *c == '\t').collect()
+                };
                 let right = self.lines[self.cy].split_off(self.cx);
-                self.lines.insert(self.cy + 1, right);
+                self.lines.insert(self.cy + 1, indent.clone() + &right);
                 self.cy += 1;
-                self.cx = 0;
+                self.cx = indent.len();
                 self.modified = true;
             }
 
@@ -1928,9 +1954,10 @@ impl Editor {
     /// Draw the editor into the terminal frame.
     pub fn render(&mut self, f: &mut Frame) {
         self._frame = self._frame.wrapping_add(1);
-        if self.mode != self._last_mode {
-            self._mode_switched = self._frame;
+        if self.mode != self._last_mode || self.state != self._last_state {
+            self._mode_switched = Instant::now();
             self._last_mode = self.mode;
+            self._last_state = self.state;
         }
 
         let area = f.area();
@@ -2041,8 +2068,11 @@ impl Editor {
                         "rs" => Some(highlight::Lang::Rust),
                         "py" => Some(highlight::Lang::Python),
                         "c" | "h" => Some(highlight::Lang::C),
+                        "cpp" | "hpp" => Some(highlight::Lang::C),
+                        "js" | "ts" | "jsx" | "tsx" | "css" => Some(highlight::Lang::JavaScript),
+                        "html" | "htm" => Some(highlight::Lang::Html),
                         "md" | "markdown" => Some(highlight::Lang::Md),
-                        "conf" | "ini" | "cfg" => Some(highlight::Lang::Conf),
+                        "conf" | "ini" | "cfg" | "toml" => Some(highlight::Lang::Conf),
                         _ => None,
                     }
                 })
@@ -2251,6 +2281,23 @@ impl Editor {
     /// Render the status bar at the bottom of the screen.
     fn render_status(&self, f: &mut Frame, area: Rect, _width: usize, theme: &Theme) {
 
+        // Mode-tint flash: briefly tint the status bar when switching modes.
+        let since = self._mode_switched.elapsed().as_secs_f64();
+        let tint_bg = if since < 0.3 && self.mode != Mode::Normal {
+            let tint = match self.mode {
+                Mode::Insert => Color::Rgb(80, 160, 80),
+                Mode::Normal => unreachable!(),
+            };
+            let alpha = (1.0 - since / 0.3) as f32;
+            blend_colors(theme.status_bg, tint, 0.0, alpha)
+        } else if since < 0.3 && self.state == State::Visual {
+            let tint = Color::Rgb(120, 120, 200);
+            let alpha = (1.0 - since / 0.3) as f32;
+            blend_colors(theme.status_bg, tint, 0.0, alpha)
+        } else {
+            theme.status_bg
+        };
+
         // Build the status text depending on state.
         let text: String = if let Some(ref msg) = self.flash {
             format!(" {msg} ")
@@ -2267,17 +2314,21 @@ impl Editor {
                 String::new()
             };
 
-            // Mode with frame-based blink
-            let mode_str = match self.mode {
-                Mode::Insert => if (self._frame / 15) % 2 == 0 { "INSERT" } else { "      " },
-                Mode::Normal => "NORMAL",
-            };
-            let visual_str = if self.state == State::Visual {
-                if (self._frame / 15) % 2 == 0 { "VISUAL" } else { "      " }
+            // Mode with colour blink (text stays visible, fg alternates)
+            let (mode_text, blink_fg) = if self.state == State::Visual {
+                ("VISUAL", Color::Rgb(120, 120, 200))
             } else {
-                ""
+                match self.mode {
+                    Mode::Insert => ("INSERT", Color::Rgb(80, 160, 80)),
+                    Mode::Normal => ("NORMAL", theme.status_fg),
+                }
             };
-            let mode_display = if self.state == State::Visual { visual_str } else { mode_str };
+            let blink_on = (self._frame / 15) % 2 == 0;
+            let mode_style = if blink_on && mode_text != "NORMAL" {
+                Style::new().fg(blink_fg).bg(tint_bg)
+            } else {
+                Style::new().fg(theme.status_fg).bg(tint_bg)
+            };
 
             let fname = self.filename.as_deref().unwrap_or("[No Name]");
             let mod_str = if self.modified { " [+]" } else { "" };
@@ -2290,7 +2341,16 @@ impl Editor {
                 .filter(|_| self.music_player.playing)
                 .map(|s| {
                     let name = s.rsplit('/').next().unwrap_or(s);
-                    format!("  ♫ {name}")
+                    let max_len = (_width.saturating_sub(60)).max(10);
+                    if name.len() > max_len {
+                        let pos = (self._frame as usize * 3) % (name.len() + 6);
+                        let scrolled = format!("{name}  ♫  {name}");
+                        let end = (pos + max_len).min(scrolled.len());
+                        let slice = &scrolled[pos..end];
+                        format!("  ♫ {slice}")
+                    } else {
+                        format!("  ♫ {name}")
+                    }
                 })
                 .unwrap_or_default();
 
@@ -2298,11 +2358,13 @@ impl Editor {
             let dash_colors = [theme.keyword.fg, theme.builtin.fg, theme.rstype.fg, theme.string.fg, theme.number.fg];
             let dash_idx = (self._frame / 3) as usize % dash_colors.len();
             let dash_color = dash_colors[dash_idx].unwrap_or(theme.status_fg);
-            let dash_style = Style::new().fg(dash_color).bg(theme.status_bg);
-            let plain_style = Style::new().fg(theme.status_fg).bg(theme.status_bg);
+            let dash_style = Style::new().fg(dash_color).bg(tint_bg);
+            let plain_style = Style::new().fg(theme.status_fg).bg(tint_bg);
 
             let spans = vec![
-                Span::styled(format!(" {spinner}{mode_display}  {fname}{mod_str}  "), plain_style),
+                Span::styled(format!(" {spinner}"), plain_style),
+                Span::styled(mode_text.to_string(), mode_style),
+                Span::styled(format!("  {fname}{mod_str}  "), plain_style),
                 Span::styled("─", dash_style),
                 Span::styled(format!(" {location}  "), plain_style),
                 Span::styled("─", dash_style),
@@ -2312,7 +2374,7 @@ impl Editor {
             ];
 
             let bar = Paragraph::new(Line::from(spans))
-                .style(Style::new().bg(theme.status_bg));
+                .style(Style::new().bg(tint_bg));
             f.render_widget(ratatui::widgets::Clear, area);
             f.render_widget(bar, area);
             return;
@@ -2320,9 +2382,9 @@ impl Editor {
 
         let bar = Paragraph::new(Line::from(Span::styled(
             text.clone(),
-            Style::new().fg(theme.status_fg).bg(theme.status_bg),
+            Style::new().fg(theme.status_fg).bg(tint_bg),
         )))
-        .style(Style::new().bg(theme.status_bg));
+        .style(Style::new().bg(tint_bg));
         f.render_widget(ratatui::widgets::Clear, area);
         f.render_widget(bar, area);
     }
@@ -2771,6 +2833,16 @@ impl Editor {
             "                 ",
         ];
 
+        // Rainbow colours for the logo — cycle through theme highlights
+        let splash_colors: [(Color, f64); 5] = [
+            (theme.keyword.fg.unwrap_or(theme.fg), 0.0),
+            (theme.builtin.fg.unwrap_or(theme.fg), 0.2),
+            (theme.rstype.fg.unwrap_or(theme.fg), 0.4),
+            (theme.string.fg.unwrap_or(theme.fg), 0.6),
+            (theme.number.fg.unwrap_or(theme.fg), 0.8),
+        ];
+        let anim_offset = self._frame as f64 * 0.04;
+
         let keybinds = [
             ("Ctrl+P", "find file"),
             ("Ctrl+F", "file tree"),
@@ -2795,8 +2867,9 @@ impl Editor {
             lines.push(Line::from(""));
         }
 
-        for line in &figlet {
-            lines.push(Line::from(Span::styled(*line, theme.keyword)));
+        for (li, line) in figlet.iter().enumerate() {
+            let color = splash_colors[(li as f64 + anim_offset) as usize % splash_colors.len()].0;
+            lines.push(Line::from(Span::styled(*line, Style::new().fg(color))));
         }
 
         lines.push(Line::from(""));
