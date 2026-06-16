@@ -8,7 +8,16 @@ from collections import namedtuple
 
 Color = namedtuple('Color', 'r g b')
 def fg(c): return f'\033[38;2;{c.r};{c.g};{c.b}m'
-def bg(c): return f'\033[48;2;{c.r};{c.g};{c.b}m'
+
+# Transparent background support — module-level flag
+_transparent = False
+_theme_bg = None
+
+def bg(c):
+    if _transparent and _theme_bg is not None and \
+       c.r == _theme_bg.r and c.g == _theme_bg.g and c.b == _theme_bg.b:
+        return '\033[49m'  # reset to terminal default
+    return f'\033[48;2;{c.r};{c.g};{c.b}m'
 
 class Theme:
     def __init__(self, bg, fg, gutter_bg, gutter_fg, status_bg, status_fg, tilde,
@@ -147,11 +156,27 @@ THEMES = {
         num=C(245,167,66), builtin=C(157,124,216), tp=C(229,192,123),
         decorator=C(178,140,230), operator=C(157,124,216), fn=C(178,140,230),
     ),
+    'ayu': Theme(
+        C(16,16,18), C(191,186,174),
+        C(25,25,28), C(106,103,95),
+        C(25,25,28), C(191,186,174), C(106,103,95),
+        kw=C(255,141,82), string=C(166,210,112), cmt=C(106,103,95),
+        num=C(210,175,115), builtin=C(115,182,209), tp=C(255,198,109),
+        decorator=C(255,181,106), operator=C(237,147,102), fn=C(255,198,109),
+    ),
+    'kanagawa': Theme(
+        C(29,32,39), C(205,208,190),
+        C(37,40,47), C(83,86,90),
+        C(37,40,47), C(205,208,190), C(83,86,90),
+        kw=C(203,148,143), string=C(152,187,121), cmt=C(83,86,90),
+        num=C(220,158,128), builtin=C(142,166,176), tp=C(230,180,128),
+        decorator=C(199,146,140), operator=C(142,166,176), fn=C(229,192,128),
+    ),
 }
 
 THEME_LIST = ['catppuccin', 'default', 'monokai', 'solarized', 'nord', 'gruvbox',
               'bi', 'tokyonight', 'amber', 'dracula', 'onedark', 'everforest',
-              'rosepine', 'oxocarbon', 'system', 'opencode']
+              'rosepine', 'oxocarbon', 'system', 'opencode', 'ayu', 'kanagawa']
 
 def theme_get(name):
     return THEMES.get(name, THEMES['default'])
@@ -1907,19 +1932,6 @@ def load_config():
     return {}
 
 
-# ── Pane ───────────────────────────────────────────────────────
-
-class Pane:
-    __slots__ = ('buffer_idx', 'cy', 'cx', 'top', 'left')
-
-    def __init__(self, buffer_idx):
-        self.buffer_idx = buffer_idx
-        self.cy = 0
-        self.cx = 0
-        self.top = 0
-        self.left = 0
-
-
 # ── Buffer ─────────────────────────────────────────────────────
 
 class Buffer:
@@ -1957,10 +1969,9 @@ class Editor:
         self.undo_stack = []
         self.last_mtime = None
 
-        # ── multi-buffer / panes ──
+        # ── multi-buffer ──
         self.buffers = []
-        self.panes = []
-        self.active_pane = 0
+        self.current = 0
 
         # ── mode & state ──
         self.mode = 'normal'
@@ -1994,12 +2005,21 @@ class Editor:
             sbt = sbt.lower() in ('true', '1', 'yes')
         self.status_bar_top = bool(sbt)
 
+        # ── transparency ──
+        transp = cfg.get('transparent', False)
+        if isinstance(transp, str):
+            transp = transp.lower() in ('true', '1', 'yes')
+        self.transparent = bool(transp)
+
         # ── run output (Ctrl+R) ──
         self.run_output = ''
 
         # ── colour effects (:3) ──
         self.fx_mode = 0
         self.fx_start = 0.0
+        self._frame = 0  # animation frame counter (unused, kept for compat)
+        self._mode_switched = 0  # frame when mode last changed
+        self._hl_cache = {}  # syntax highlight cache: (line, ext) -> tokens
 
         # ── pop-up shell (Ctrl+J) ──
         self.shell = None
@@ -2036,111 +2056,156 @@ class Editor:
         else:
             buf = Buffer([''])
         self.buffers.append(buf)
-        self.panes.append(Pane(0))
-        self._sync_from_current()
+        self._sync_from_buffer(0)
+
+    # ── keybind manual (Ctrl+K) ──
+
+    def render_help(self, buf, t, w, h):
+        rst = '\033[0m' + fg(t.fg) + bg(t.bg)
+        buf.append('\033[0m' + bg(t.bg) + '\033[2J')
+
+        # Header
+        self.go(buf, 0, 0)
+        buf.append(bg(t.status_bg) + fg(t.status_fg) + '\033[1m')
+        buf.append(f'  pked keybinds  (any key to close)')
+        buf.append('\033[K' + rst)
+
+        sections = [
+            ('Movement & Editing', [
+                ('h/j/k/l',       'move cursor'),
+                ('w / b',         'next/prev word'),
+                ('0 / $ / gg / G','line start/end, first/last'),
+                ('i/a/I/A',       'insert mode (cursor/after/bol/eol)'),
+                ('o / O / x / dd','open line, delete char/line'),
+                ('yy / p / P',    'yank, paste after/before'),
+                ('u / v',         'undo, visual mode'),
+            ]),
+            ('Buffers & Shell', [
+                ('Tab / S-Tab',   'next/prev buffer'),
+                (':bn / :bp',     'next/prev buffer'),
+                ('Ctrl+J',        'open terminal'),
+            ]),
+            ('Tools', [
+                ('Ctrl+P / Ctrl+F','find file / file tree'),
+                ('Ctrl+R / Ctrl+T','run python / music'),
+                ('Ctrl+E',        'theme selector'),
+                ('Ctrl+S / Ctrl+K','save / keybind manual'),
+                (':sys / :3',     'dashboard / colour fx'),
+            ]),
+            ('Search & Commands', [
+                ('/ / n / N',     'search, next/prev match'),
+                (':w / :wq',      'save / save & quit'),
+                (':q / :q!',      'quit / force quit'),
+                (':e / :theme',   'open file / switch theme'),
+                (':bn / :bp',     'next/prev buffer'),
+            ]),
+            ('Tools', [
+                ('Ctrl+P / Ctrl+F','find file / file tree'),
+                ('Ctrl+R / Ctrl+T','run python / music'),
+                ('Ctrl+E',        'theme selector'),
+                ('Ctrl+S / Ctrl+K','save / keybind manual'),
+                (':sys / :3',     'dashboard / colour fx'),
+            ]),
+            ('Search & Commands', [
+                ('/ / n / N',     'search, next/prev match'),
+                (':w / :wq',      'save / save & quit'),
+                (':q / :q!',      'quit / force quit'),
+                (':e / :theme',   'open file / switch theme'),
+                (':vsp / :bn :bp','vsplit / next-prev buffer'),
+            ]),
+        ]
+
+        y = 1
+        for section_name, keys in sections:
+            self.go(buf, 2, y)
+            key_w = max(len(k) for k, _ in keys)
+            buf.append(bg(t.bg) + fg(t.kw) + '\033[1m' + section_name + rst)
+            y += 1
+            for key, desc in keys:
+                if y >= h - 1:
+                    break
+                self.go(buf, 4, y)
+                buf.append(fg(t.builtin) + key.ljust(key_w + 3) + fg(t.fg) + desc)
+                buf.append('\033[K')
+                y += 1
+            if y >= h - 1:
+                break
+        buf.append(rst)
+
+    # ── system dashboard (:sys) ──
 
     def theme(self):
         return theme_get(self.theme_name)
 
-    # ── multi-buffer / pane sync ──
+    def _bg(self, t, c):
+        """Return bg() escape, or empty string if transparent and c is content bg."""
+        if self.transparent and c is t.bg:
+            return ''
+        return bg(c)
+
+    # ── multi-buffer sync ──
 
     def _current_buffer(self):
-        return self.buffers[self.panes[self.active_pane].buffer_idx]
+        return self.buffers[self.current]
 
-    def _sync_to_current(self):
-        pane = self.panes[self.active_pane]
+    def _sync_to_buffer(self):
         buf = self._current_buffer()
-        pane.cy = self.cy
-        pane.cx = self.cx
-        pane.top = self.top
-        pane.left = self.left
         buf.lines = list(self.lines)
+        buf.cy = self.cy
+        buf.cx = self.cx
+        buf.top = self.top
+        buf.left = self.left
         buf.filename = self.filename
         buf.modified = self.modified
         buf.undo_stack = list(self.undo_stack)
         buf.last_mtime = self.last_mtime
 
-    def _sync_from_current(self):
-        pane = self.panes[self.active_pane]
-        buf = self._current_buffer()
+    def _sync_from_buffer(self, idx):
+        buf = self.buffers[idx]
         self.lines = list(buf.lines)
-        self.cy = pane.cy
-        self.cx = pane.cx
-        self.top = pane.top
-        self.left = pane.left
+        self.cy = buf.cy
+        self.cx = buf.cx
+        self.top = buf.top
+        self.left = buf.left
         self.filename = buf.filename
         self.modified = buf.modified
         self.undo_stack = list(buf.undo_stack)
         self.last_mtime = buf.last_mtime
 
-    def _switch_pane(self, idx):
-        if idx >= len(self.panes) or idx == self.active_pane:
-            return
-        self._sync_to_current()
-        self.active_pane = idx
-        self._sync_from_current()
-        self.needs_clear = True
-
     def _switch_buffer(self, idx):
-        if idx >= len(self.buffers):
+        if idx >= len(self.buffers) or idx == self.current:
             return
-        buf = self._current_buffer()
-        if self.panes[self.active_pane].buffer_idx == idx:
-            return
-        self._sync_to_current()
-        self.panes[self.active_pane].buffer_idx = idx
-        self._sync_from_current()
-        self.needs_clear = True
-
-    def _close_pane(self):
-        pane = self.panes[self.active_pane]
-        buf_idx = pane.buffer_idx
-        del self.panes[self.active_pane]
-        if not self.panes and self.buffers:
-            # Last pane closed but buffers remain — create pane for first buffer
-            self.panes.append(Pane(0))
-            self.active_pane = 0
-            self._sync_from_current()
-            self.needs_clear = True
-            return
-        if not self.panes:
-            return  # editor exits
-        self.active_pane = min(self.active_pane, len(self.panes) - 1)
-        # If no other pane references this buffer, remove it
-        still_used = any(p.buffer_idx == buf_idx for p in self.panes)
-        if not still_used:
-            del self.buffers[buf_idx]
-            for p in self.panes:
-                if p.buffer_idx > buf_idx:
-                    p.buffer_idx -= 1
-        self._sync_from_current()
+        self._sync_to_buffer()
+        self.current = idx
+        self._sync_from_buffer(idx)
+        self._hl_cache.clear()
         self.needs_clear = True
 
     def _close_buffer(self):
-        """Close the active pane's buffer.  If no panes remain, create a
-        fresh pane for the next buffer, or exit if no buffers left."""
-        buf_idx = self.panes[self.active_pane].buffer_idx
-        # Remove all panes referencing this buffer
-        i = 0
-        while i < len(self.panes):
-            if self.panes[i].buffer_idx == buf_idx:
-                del self.panes[i]
-                if i <= self.active_pane:
-                    self.active_pane = max(0, self.active_pane - 1)
-            else:
-                i += 1
-        del self.buffers[buf_idx]
-        for p in self.panes:
-            if p.buffer_idx > buf_idx:
-                p.buffer_idx -= 1
-        # If no panes left but buffers remain, create a pane for the first buffer
-        if not self.panes and self.buffers:
-            self.panes.append(Pane(0))
-            self.active_pane = 0
-        if not self.panes:
+        self._sync_to_buffer()
+        del self.buffers[self.current]
+        if not self.buffers:
             return  # editor exits
-        self.active_pane = min(self.active_pane, len(self.panes) - 1)
-        self._sync_from_current()
+        self.current = min(self.current, len(self.buffers) - 1)
+        self._sync_from_buffer(self.current)
+        self.needs_clear = True
+
+    def _switch_buffer(self, idx):
+        if idx >= len(self.buffers) or idx == self.current:
+            return
+        self._sync_to_buffer()
+        self.current = idx
+        self._sync_from_buffer(idx)
+        self._hl_cache.clear()
+        self.needs_clear = True
+
+    def _close_buffer(self):
+        self._sync_to_buffer()
+        del self.buffers[self.current]
+        if not self.buffers:
+            return  # editor exits
+        self.current = min(self.current, len(self.buffers) - 1)
+        self._sync_from_buffer(self.current)
         self.needs_clear = True
 
     # ── file operations ──
@@ -2175,10 +2240,10 @@ class Editor:
         buf = self._buffer_from_file(path)
         if buf is None:
             return None
-        self._sync_to_current()
+        self._sync_to_buffer()
         self.buffers.append(buf)
-        self.panes[self.active_pane].buffer_idx = len(self.buffers) - 1
-        self._sync_from_current()
+        self.current = len(self.buffers) - 1
+        self._sync_from_buffer(self.current)
         return 'normal'
 
     def save(self):
@@ -2223,9 +2288,10 @@ class Editor:
             self.cx = min(self.cx, len(self.lines[self.cy]))
         self.top = min(self.top, max(0, len(self.lines) - 1))
         self.last_mtime = cur
+        self._hl_cache.clear()
 
     def is_splash(self):
-        buf = self._current_buffer() if self.panes else None
+        buf = self._current_buffer() if self.buffers else None
         if buf and buf.shell:
             return False
         return self.filename is None and len(self.lines) == 1 and self.lines[0] == ''
@@ -2245,7 +2311,6 @@ class Editor:
             h = max(1, self.cache_h - 1)  # status bar at top, no buffer bar
         else:
             h = max(1, self.cache_h - 2)  # buffer bar + status bar at bottom
-        ft_w = self.filetree_width if self.state == 'filetree' else 0
         if self.cy < 0: self.cy = 0
         if self.cy >= len(self.lines):
             self.cy = max(0, len(self.lines) - 1)
@@ -2261,6 +2326,7 @@ class Editor:
             self.cx = 0
 
         gutter = self.gutter_width() + 1
+        ft_w = self.filetree_width if self.state == 'filetree' else 0
         content_w = self.cache_w - ft_w
         visible_cols = content_w - gutter
         if visible_cols < 1:
@@ -2276,6 +2342,7 @@ class Editor:
         self.undo_stack.append([l for l in self.lines])
         if len(self.undo_stack) > 50:
             self.undo_stack.pop(0)
+        self._hl_cache.clear()  # invalidate syntax cache on modification
 
     def restore_undo(self):
         if not self.undo_stack:
@@ -2388,8 +2455,7 @@ class Editor:
 
     def handle_key(self, key):
         prev_state = self.state
-        prev_pane = self.active_pane
-        prev_buf = self.panes[self.active_pane].buffer_idx if self.panes else 0
+        prev_current = self.current
 
         # Global keybindings (work from any state)
         if key == KEY_CTRL('t'):
@@ -2429,7 +2495,11 @@ class Editor:
             self.needs_clear = True
             return True
         if key == KEY_CTRL('j'):
-            self._open_shell_pane()
+            self._open_shell_buffer()
+            return True
+        if key == KEY_CTRL('k'):
+            self.state = 'help'
+            self.needs_clear = True
             return True
         if key == KEY_CTRL('w'):
             self.state = 'ctrlw'
@@ -2457,26 +2527,18 @@ class Editor:
             result = self.handle_shell(key)
         elif self.state == 'image':
             result = self.handle_image(key)
-        elif self.state == 'ctrlw':
-            result = self.handle_ctrlw(key)
         elif self.state == 'sysinfo':
             result = self.handle_sysinfo(key)
+        elif self.state == 'help':
+            result = self.handle_help(key)
         elif self.mode == 'insert':
             result = self.handle_insert(key)
         elif self.mode == 'visual':
             result = self.handle_visual(key)
         else:
-            # If the active pane has a shell buffer, forward keys to it
-            if self.panes and self._current_buffer().shell is not None:
-                sh = self._current_buffer().shell
-                if sh.is_alive():
-                    sh.write(self._key_to_bytes(key))
-                    return True
             result = self.handle_normal(key)
 
-        if self.state != prev_state or self.active_pane != prev_pane:
-            self.needs_clear = True
-        elif self.panes and self.panes[self.active_pane].buffer_idx != prev_buf:
+        if self.state != prev_state or self.current != prev_current:
             self.needs_clear = True
         return result
 
@@ -2588,44 +2650,17 @@ class Editor:
         self.state = 'normal'
         return True
 
-    def handle_image(self, key):
-        self.image_path = None
-        self.state = 'normal'
+    def handle_shell(self, key):
+        buf = self._current_buffer()
+        if buf.shell is None or not buf.shell.is_alive():
+            buf.shell = None
+            self.state = 'normal'
+            return True
+        buf.shell.write(self._key_to_bytes(key))
         return True
 
-    def handle_sysinfo(self, key):
-        self.state = 'normal'
-        return True
-
-    def handle_ctrlw(self, key):
-        self.state = 'normal'
-        if key in (ord('h'), KEY_LEFT):
-            self._switch_pane(max(0, self.active_pane - 1))
-        elif key in (ord('l'), KEY_RIGHT):
-            self._switch_pane(min(len(self.panes) - 1, self.active_pane + 1))
-        elif key == ord('q'):
-            self._close_pane()
-            if not self.panes:
-                self.running = False
-                return False
-        elif key == ord('v'):
-            self._sync_to_current()
-            buf_idx = self.panes[self.active_pane].buffer_idx
-            new_pane = Pane(buf_idx)
-            self.panes.insert(self.active_pane + 1, new_pane)
-            self.active_pane += 1
-            self._sync_from_current()
-            self.needs_clear = True
-        elif key == ord('='):
-            # Collapse to single pane
-            buf_idx = self.panes[self.active_pane].buffer_idx
-            self.panes = [Pane(buf_idx)]
-            self.active_pane = 0
-            self._sync_from_current()
-            self.needs_clear = True
-        return True
-
-    def _key_to_bytes(self, key):
+    @staticmethod
+    def _key_to_bytes(key):
         """Convert a pked keycode to bytes for the shell PTY."""
         if key == KEY_ENTER:    return b'\r'
         if key == KEY_BACKSP:   return b'\x7f'
@@ -2645,12 +2680,17 @@ class Editor:
         if 32 <= key < 127:     return bytes([key])
         return b''
 
-    def handle_shell(self, key):
-        if self.shell is None or not self.shell.is_alive():
-            self.shell = None
-            self.state = 'normal'
-            return True
-        self.shell.write(self._key_to_bytes(key))
+    def handle_image(self, key):
+        self.image_path = None
+        self.state = 'normal'
+        return True
+
+    def handle_sysinfo(self, key):
+        self.state = 'normal'
+        return True
+
+    def handle_help(self, key):
+        self.state = 'normal'
         return True
 
     def handle_finder(self, key):
@@ -2930,13 +2970,11 @@ class Editor:
             self.cmd_buf = ''
         elif key == KEY_TAB:
             if len(self.buffers) > 1:
-                buf_idx = self.panes[self.active_pane].buffer_idx
-                nxt = (buf_idx + 1) % len(self.buffers)
+                nxt = (self.current + 1) % len(self.buffers)
                 self._switch_buffer(nxt)
         elif key == KEY_BACKTAB:
             if len(self.buffers) > 1:
-                buf_idx = self.panes[self.active_pane].buffer_idx
-                prv = (buf_idx - 1) % len(self.buffers)
+                prv = (self.current - 1) % len(self.buffers)
                 self._switch_buffer(prv)
         elif key in (KEY_CTRL('c'), KEY_CTRL('q')):
             if self.modified:
@@ -2987,15 +3025,13 @@ class Editor:
                     self.state = new_state
         elif cmd in ('bn', 'bnext'):
             if len(self.buffers) > 1:
-                buf_idx = self.panes[self.active_pane].buffer_idx
-                nxt = (buf_idx + 1) % len(self.buffers)
+                nxt = (self.current + 1) % len(self.buffers)
                 self._switch_buffer(nxt)
             else:
                 self.flash = "Only one buffer open"
         elif cmd in ('bp', 'bprev'):
             if len(self.buffers) > 1:
-                buf_idx = self.panes[self.active_pane].buffer_idx
-                prv = (buf_idx - 1) % len(self.buffers)
+                prv = (self.current - 1) % len(self.buffers)
                 self._switch_buffer(prv)
             else:
                 self.flash = "Only one buffer open"
@@ -3003,18 +3039,6 @@ class Editor:
             self.fx_mode = (self.fx_mode + 1) % len(FX_NAMES)
             self.fx_start = time.time()
             self.flash = f'fx: {FX_NAMES[self.fx_mode]}'
-        elif cmd == 'vsp':
-            self._sync_to_current()
-            buf_idx = self.panes[self.active_pane].buffer_idx
-            new_pane = Pane(buf_idx)
-            self.panes.insert(self.active_pane + 1, new_pane)
-            self.active_pane += 1
-            self._sync_from_current()
-            self.needs_clear = True
-        elif cmd == 'sys':
-            self.sys_info._last_fetch = 0  # force refresh
-            self.state = 'sysinfo'
-            self.needs_clear = True
         elif cmd.startswith('theme'):
             parts = cmd.split()
             if len(parts) > 1:
@@ -3109,89 +3133,33 @@ class Editor:
 
     # ── rendering ──
 
-    def _render_pane_shell(self, buf, t, x, y, pw, ph):
-        """Render shell output inside a pane rectangle."""
-        b = self._current_buffer()
-        if b.shell is None:
-            return
-        # Only resize when dimensions actually change
-        if not hasattr(b.shell, '_last_rows') or b.shell._last_rows != ph or b.shell._last_cols != pw:
-            b.shell.resize(ph, pw)
-            b.shell._last_rows = ph
-            b.shell._last_cols = pw
-        lines = b.shell.styled_lines(t.fg, t.bg)
-        visible = lines[-ph:] if len(lines) > ph else lines
-        for li, line in enumerate(visible):
-            self.go(buf, x, y + li)
-            col = 0
-            for text, fgc, bold in line:
-                if fgc:
-                    buf.append(fg(fgc))
-                else:
-                    buf.append(fg(t.fg))
-                buf.append(bg(t.bg))
-                if bold:
-                    buf.append('\033[1m')
-                for ch in text:
-                    if ch.isprintable() or ch == ' ':
-                        buf.append(ch)
-                        col += 1
-                    if col >= pw:
-                        break
-                buf.append('\033[0m' + fg(t.fg) + bg(t.bg))
-                if col >= pw:
-                    break
-            if col < pw:
-                buf.append(' ' * (pw - col))
-
-    def _open_shell_pane(self):
-        """Open a new pane with a shell buffer."""
-        self._sync_to_current()
+    def _open_shell_buffer(self):
+        """Open a full-buffer shell view."""
+        self._sync_to_buffer()
         shell_buf = Buffer([''], filename=None)
         shell_buf.shell = ShellProcess().spawn()
         self.buffers.append(shell_buf)
-        buf_idx = len(self.buffers) - 1
-        new_pane = Pane(buf_idx)
-        self.panes.insert(self.active_pane + 1, new_pane)
-        self.active_pane += 1
-        self._sync_from_current()
+        self.current = len(self.buffers) - 1
+        self._sync_from_buffer(self.current)
+        self.state = 'shell'
         self.needs_clear = True
-
-    def _pane_rects(self, w, h):
-        """Return list of (x, y, pw, ph) for each pane in the content area."""
-        n = len(self.panes)
-        if n == 0:
-            return []
-        content_y = 1
-        content_h = max(1, h - (1 if self.status_bar_top else 2))
-        if n == 1:
-            return [(0, content_y, w, content_h)]
-        # Vertical split: divide width equally
-        divider_w = 1
-        pw = (w - (n - 1) * divider_w) // n
-        rects = []
-        x = 0
-        for i in range(n):
-            if i == n - 1:
-                pw = w - x  # last pane gets remainder
-            rects.append((x, content_y, pw, content_h))
-            x += pw + divider_w
-        return rects
-
-    def _render_pane_dividers(self, buf, t, w, h):
-        rects = self._pane_rects(w, h)
-        for i in range(len(rects) - 1):
-            x = rects[i][0] + rects[i][2]  # right edge of pane i
-            for row in range(rects[i][1], rects[i][1] + rects[i][3]):
-                self.go(buf, x, row)
-                buf.append(fg(t.tilde) + bg(t.bg) + '│')
 
     def go(self, buf, x, y):
         buf.append(f'\033[{y+1};{x+1}H')
 
     def render(self):
+        global _transparent, _theme_bg
         buf = []
+        self._frame += 1
+        now = time.time()
+        if not hasattr(self, '_last_mode'):
+            self._last_mode = self.mode
+        if self.mode != self._last_mode:
+            self._mode_switched = now
+            self._last_mode = self.mode
         t = self.theme()
+        _transparent = self.transparent
+        _theme_bg = t.bg
         if self.fx_mode:
             elapsed = time.time() - self.fx_start
             if self.fx_mode == 1:
@@ -3226,54 +3194,37 @@ class Editor:
             sys.stdout.write(''.join(buf))
             sys.stdout.flush()
             return
+        if self.state == 'help':
+            self.render_help(buf, t, w, h)
+            buf.append('\033[?25h')
+            sys.stdout.write(''.join(buf))
+            sys.stdout.flush()
+            return
 
         if self.status_bar_top:
             self.render_status(buf, t, w, h)  # status at row 0
         else:
             self.render_buffer_bar(buf, t, w)
+
         if self.state == 'filetree':
             self.render_filetree(buf, t, w, h)
         ft_w = self.filetree_width if self.state == 'filetree' else 0
         if self.is_splash():
             self.render_splash(buf, t, w, h, ft_w)
+        elif self.state == 'shell':
+            self.render_shell(buf, t, w, h)
         else:
-            rects = self._pane_rects(w - ft_w, h)
-            if rects:
-                if len(rects) > 1:
-                    self._render_pane_dividers(buf, t, w, h)
-                saved_pane = self.active_pane
-                saved_cy, saved_cx = self.cy, self.cx
-                saved_top, saved_left = self.top, self.left
-                for pi in range(len(self.panes)):
-                    if pi != self.active_pane:
-                        self._sync_to_current()
-                        self.active_pane = pi
-                        self._sync_from_current()
-                    x, y, pw, ph = rects[pi]
-                    if self._current_buffer().shell:
-                        self._render_pane_shell(buf, t, x + ft_w, y, pw, ph)
-                    else:
-                        self.render_content(buf, t, pw, h, x_offset=x + ft_w)
-                if self.active_pane != saved_pane:
-                    self._sync_to_current()
-                    self.active_pane = saved_pane
-                    self._sync_from_current()
-                self.cy, self.cx = saved_cy, saved_cx
-                self.top, self.left = saved_top, saved_left
+            self.render_content(buf, t, w, h, ft_w)
         if not self.status_bar_top:
             self.render_status(buf, t, w, h)
 
-        # Cursor — position in the active pane
-        if not self.is_splash():
+        # Cursor
+        if not self.is_splash() and self.state != 'shell':
             gutter = self.gutter_width() + 1
             ft_w = self.filetree_width if self.state == 'filetree' else 0
-            rects = self._pane_rects(w - ft_w, h)
-            px = rects[self.active_pane][0] + ft_w if rects else ft_w
-            cy_s = self.cy - self.top + (1 if self.status_bar_top else 1)
-            cx_s = self.cx - self.left + gutter + px
-            top_bound = 1 if self.status_bar_top else 1
-            bot_bound = h - 1 if self.status_bar_top else h - 1
-            if top_bound <= cy_s < bot_bound:
+            cy_s = self.cy - self.top + 1
+            cx_s = self.cx - self.left + gutter + ft_w
+            if 1 <= cy_s < h - 1:
                 self.go(buf, cx_s, cy_s)
 
         if self.state == 'theme':
@@ -3290,23 +3241,31 @@ class Editor:
             self.render_image(buf, w, h)
 
         buf.append('\033[?25h')
+        # Cursor shape — only emit on mode change, not every frame
+        cs = '2' if self.mode == 'normal' else '6' if self.mode == 'insert' else '4'
+        if not hasattr(self, '_last_cursor_shape') or self._last_cursor_shape != cs:
+            buf.append(f'\033[{cs} q')
+            self._last_cursor_shape = cs
         sys.stdout.write(''.join(buf))
         sys.stdout.flush()
+        _transparent = False
+        _theme_bg = None
 
-    def render_content(self, buf, t, pane_w, h, x_offset=0):
-        text_h = max(1, h - (1 if self.status_bar_top else 2))  # header rows
+    def render_content(self, buf, t, w, h, ft_w=0):
+        text_h = max(1, h - (1 if self.status_bar_top else 2))
         gutter = self.gutter_width() + 1
-        max_col = max(1, pane_w - gutter)
+        content_w = w - ft_w
+        max_col = max(1, content_w - gutter)
 
         for row in range(text_h):
             buf_row = self.top + row
-            self.go(buf, x_offset, row + 1)  # +1 for buffer bar
+            self.go(buf, ft_w, row + 1)
             buf.append(bg(t.bg))
 
             if buf_row >= len(self.lines):
                 buf.append(' ' * (gutter + 1) + fg(t.tilde) + '~')
-                if pane_w > gutter + 2:
-                    buf.append(' ' * (pane_w - gutter - 2))
+                if content_w > gutter + 2:
+                    buf.append(' ' * (content_w - gutter - 2))
                 continue
 
             # Gutter
@@ -3360,7 +3319,21 @@ class Editor:
 
     def render_syntax_line(self, buf, t, syn, line, start_col, end_col):
         visible = line[start_col:end_col]
-        tokens = syn(visible)
+        # Use cache for full-line tokens, then slice to visible range
+        if syn:
+            cache_key = (line, syn)
+            if cache_key in self._hl_cache:
+                tokens = self._hl_cache[cache_key]
+            else:
+                tokens = syn(line)
+                self._hl_cache[cache_key] = tokens
+                if len(self._hl_cache) > 5000:
+                    self._hl_cache.clear()
+            # Filter tokens to visible range
+            tokens = [(max(s, start_col) - start_col, min(e, end_col) - start_col, t)
+                      for s, e, t in tokens if e > start_col and s < end_col]
+        else:
+            tokens = []
         pos = 0
         for s, e, typ in tokens:
             if s > pos:
@@ -3378,7 +3351,19 @@ class Editor:
     def render_visual_content(self, buf, t, syn, line, start_col, end_col, buf_row):
         """Render syntax-highlighted content with visual-selection overlay on top."""
         visible = line[start_col:end_col]
-        tokens = syn(visible) if syn else []
+        if syn:
+            cache_key = (line, syn)
+            if cache_key in self._hl_cache:
+                tokens = self._hl_cache[cache_key]
+            else:
+                tokens = syn(line)
+                self._hl_cache[cache_key] = tokens
+                if len(self._hl_cache) > 5000:
+                    self._hl_cache.clear()
+            tokens = [(max(s, start_col) - start_col, min(e, end_col) - start_col, t)
+                      for s, e, t in tokens if e > start_col and s < end_col]
+        else:
+            tokens = []
         sl, sc, el, ec = self.visual_bounds()
         # Build a colour map for each character: (fg_Color_or_None, in_selection)
         col_map = []
@@ -3476,7 +3461,16 @@ class Editor:
     def render_buffer_bar(self, buf, t, w):
         self.go(buf, 0, 0)
         buf.append('\033[0m' + bg(t.bg))
-        active_buf = self.panes[self.active_pane].buffer_idx if self.panes else 0
+        active_buf = self.current
+        # Breathing pulse on active tab — oscillate lightness
+        import math
+        pulse = 0.5 + 0.5 * math.sin(time.time() * 7)
+        shimmer_bg = C(
+            int(t.status_bg.r + (t.status_fg.r - t.status_bg.r) * pulse * 0.10),
+            int(t.status_bg.g + (t.status_fg.g - t.status_bg.g) * pulse * 0.10),
+            int(t.status_bg.b + (t.status_fg.b - t.status_bg.b) * pulse * 0.10),
+        )
+
         if len(self.buffers) <= 1:
             b = self.buffers[0] if self.buffers else None
             if b:
@@ -3484,7 +3478,7 @@ class Editor:
                 if b.shell:
                     name = '[shell]'
                 mod_flag = ' +' if b.modified else ''
-                buf.append(bg(t.status_bg) + fg(t.status_fg) + f' {name}{mod_flag} ')
+                buf.append(bg(shimmer_bg) + fg(t.status_fg) + f' {name}{mod_flag} ')
         else:
             for i, b in enumerate(self.buffers):
                 name = b.filename.rsplit('/', 1)[-1] if b.filename else '[No Name]'
@@ -3493,7 +3487,7 @@ class Editor:
                 mod_flag = ' +' if b.modified else ''
                 label = f' {name}{mod_flag} '
                 if i == active_buf:
-                    buf.append(bg(t.status_bg) + fg(t.status_fg) + label + fg(t.fg) + bg(t.bg))
+                    buf.append(bg(shimmer_bg) + fg(t.status_fg) + label + fg(t.fg) + bg(t.bg))
                 else:
                     buf.append(fg(t.tilde) + label + fg(t.fg))
                 buf.append(fg(t.tilde) + '│')
@@ -3502,51 +3496,111 @@ class Editor:
 
     def render_status(self, buf, t, w, h):
         y = h - 1
+        # Mode transition: brief tint flash on the status bar
+        since_switch = time.time() - self._mode_switched
+        if since_switch < 0.3 and self.mode != 'normal':
+            flash_colors = {'insert': C(80, 160, 80), 'visual': C(120, 120, 200)}
+            tint = flash_colors.get(self.mode)
+            if tint:
+                alpha = max(0, 1.0 - since_switch / 0.3)
+                sb = C(int(t.status_bg.r + (tint.r - t.status_bg.r) * alpha),
+                       int(t.status_bg.g + (tint.g - t.status_bg.g) * alpha),
+                       int(t.status_bg.b + (tint.b - t.status_bg.b) * alpha))
+            else:
+                sb = t.status_bg
+        else:
+            sb = t.status_bg
+
         self.go(buf, 0, y)
-        buf.append(bg(t.status_bg) + fg(t.status_fg) + '\033[1m')
+        buf.append(bg(sb) + fg(t.status_fg) + '\033[1m')
 
         if self.flash is not None:
-            text = f' {self.flash} '
+            buf.append(f' {self.flash} ')
         elif self.state == 'command':
-            text = f':{self.cmd_buf}'
+            buf.append(f':{self.cmd_buf}')
         elif self.state == 'search':
-            text = f'/{self.cmd_buf}'
+            buf.append(f'/{self.cmd_buf}')
         else:
-            mode_str = 'INSERT' if self.mode == 'insert' else 'VISUAL' if self.mode == 'visual' else 'NORMAL'
+            spinner_chars = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+            spinner = ''
+            shell_active = any(b.shell is not None and b.shell.is_alive() for b in self.buffers)
+            if self.music_player.playing or shell_active:
+                spinner = spinner_chars[int(time.time() * 10) % len(spinner_chars)] + ' '
+
+            if self.mode == 'insert':
+                mode_str = 'INSERT'
+                flash_fg = C(80, 160, 80)
+                blink = int(time.time() * 2.5) % 2
+            elif self.mode == 'visual':
+                mode_str = 'VISUAL'
+                flash_fg = C(120, 120, 200)
+                blink = int(time.time() * 2.5) % 2
+            else:
+                mode_str = 'NORMAL'
+                blink = False
+
             fname = self.filename if self.filename else '[No Name]'
             mod_str = ' [+]' if self.modified else ''
             location = f'{self.cy + 1}:{self.cx + 1}'
             tname = self.theme_name.capitalize()
+            now = time.strftime('%H:%M')
+
             now_playing = ''
             if self.music_player.playing and self.music_player.current_song:
                 name = self.music_player.current_song.rsplit('/', 1)[-1]
-                now_playing = f'  ♫ {name}'
-            text = f' {mode_str}  {fname}{mod_str}  ─  {location}  ─  {tname}{now_playing} '
+                max_song = max(10, w - 60)
+                if len(name) > max_song:
+                    pos = int(time.time() * 3) % (len(name) + 6)
+                    scrolled = (name + '  ♫  ' + name)[pos:pos + max_song]
+                    now_playing = f'  ♫ {scrolled}'
+                else:
+                    now_playing = f'  ♫ {name}'
 
-        text = text[:w]
-        buf.append(text)
+            dash_colors = [t.kw, t.builtin, t.tp, t.string, t.num]
+            dash_c = dash_colors[int(time.time() * 5) % len(dash_colors)]
+            sep = fg(dash_c) + ' ─ ' + fg(t.status_fg)
+
+            # Emit in order — blink only touches the mode word
+            if blink:
+                buf.append(f' {spinner}' + fg(flash_fg) + mode_str + fg(t.status_fg))
+            else:
+                buf.append(f' {spinner}{mode_str}')
+            buf.append('  ' + fname + mod_str + sep + location + sep + tname +
+                       sep + now + now_playing + ' ')
+
         buf.append('\033[K\033[0m')
 
     def render_splash(self, buf, t, w, h, ft_w=0):
         avail_w = w - ft_w
         figlet = [
-            ' _            _ ',
-            '| |          | |',
-            '| | _____  __| |',
-            '| |/ / _ \\/ _` |',
-            '|   <  __/ (_| |',
-            '|_|\\_\\___|\\__,_|',
+            '         __          __',
+            '   ___  / /_____ ___/ /',
+            "  / _ \\/  '_/ -_) _  / ",
+            ' / .__/_/\\_\\\\__/\\_,_/  ',
+            '/_/                    ',
         ]
         keybinds = [
             ('Ctrl+P', 'find file'),   ('Ctrl+F', 'file tree'),
-            ('Ctrl+J', 'shell pane'),  ('Ctrl+R', 'run python'),
+            ('Ctrl+J', 'terminal'),    ('Ctrl+R', 'run python'),
             ('Ctrl+T', 'music'),       ('Ctrl+E', 'theme'),
-            ('Ctrl+W', 'pane menu'),   ('Tab',    'switch buf'),
-            (':vsp',   'vsplit'),      (':q!',    'quit'),
+            ('Ctrl+K', 'keybinds'),    ('Tab',    'switch buf'),
             (':wq',    'save & quit'), (':3',     'colour fx'),
         ]
         key_w = max(len(k) for k, _ in keybinds) + 2
         pairs = [keybinds[i:i+2] for i in range(0, len(keybinds), 2)]
+        # Compute max_width of the widest pair (for unified centering)
+        gap = 3
+        max_pair_w = 0
+        for pair in pairs:
+            pw = sum(key_w + len(d) for _, d in pair) + gap * max(0, len(pair) - 1)
+            if pw > max_pair_w:
+                max_pair_w = pw
+        # Use the widest element as the block width for centering everything
+        block_w = max(max(len(l) for l in figlet), len(sub := "kayden's editor (now in python!)"), max_pair_w)
+        fx = ft_w + max(0, (avail_w - block_w) // 2)
+        # Center keybinds within the same block
+        kb_fx = fx + (block_w - max_pair_w) // 2
+
         total_h = len(figlet) + 3 + len(pairs)
         pad_top = max(0, (h - total_h) // 2)
 
@@ -3556,11 +3610,11 @@ class Editor:
         for _ in range(pad_top):
             self.go(buf, ft_w, y); buf.append(bg(t.bg) + '\033[K'); y += 1
 
-        # Figlet — styled with keyword colour
+        # Figlet — styled with keyword colour, centered in block
         for line in figlet:
             self.go(buf, ft_w, y); buf.append(bg(t.bg) + '\033[K')
-            fx = ft_w + max(0, (avail_w - len(line)) // 2)
-            self.go(buf, fx, y)
+            lx = fx + (block_w - len(line)) // 2
+            self.go(buf, lx, y)
             buf.append(fg(t.kw) + line + fg(t.fg))
             y += 1
 
@@ -3569,26 +3623,18 @@ class Editor:
 
         # Subtitle
         self.go(buf, ft_w, y); buf.append(bg(t.bg) + '\033[K')
-        sub = "kayden's editor"
-        fx = ft_w + max(0, (avail_w - len(sub)) // 2)
-        self.go(buf, fx, y)
+        sx = fx + (block_w - len(sub)) // 2
+        self.go(buf, sx, y)
         buf.append(fg(t.tilde) + sub + fg(t.fg))
         y += 1
 
         # Blank line
         self.go(buf, ft_w, y); buf.append(bg(t.bg) + '\033[K'); y += 1
 
-        # Keybinds — two columns, keys in builtin colour, descs in fg
-        gap = 3
-        max_pair_w = 0
-        for pair in pairs:
-            pw = sum(key_w + len(d) for _, d in pair) + gap * max(0, len(pair) - 1)
-            if pw > max_pair_w:
-                max_pair_w = pw
-        fx = ft_w + max(0, (avail_w - max_pair_w) // 2)
+        # Keybinds — centered within the unified block
         for pair in pairs:
             self.go(buf, ft_w, y); buf.append(bg(t.bg))
-            self.go(buf, fx, y)
+            self.go(buf, kb_fx, y)
             for ki, (key, desc) in enumerate(pair):
                 if ki > 0:
                     buf.append(' ' * gap)
@@ -3743,41 +3789,29 @@ class Editor:
     # ── shell overlay (Ctrl+J) ──
 
     def render_shell(self, buf, t, w, h):
-        if self.shell is None:
+        sh = self._current_buffer().shell
+        if sh is None:
             return
-        popup_w = max(40, int(w * 0.92))
-        popup_h = max(5, int(h * 0.85))
-        popup_x = (w - popup_w) // 2
-        popup_y = max(0, (h - popup_h) // 2)
-        inner_w = popup_w - 2
-        inner_h = popup_h - 2
+        # Only resize when dimensions change
+        inner_h = h - 1  # full buffer minus header
+        inner_w = w
+        if not hasattr(sh, '_last_rows') or sh._last_rows != inner_h or sh._last_cols != inner_w:
+            sh.resize(inner_h, inner_w)
+            sh._last_rows = inner_h
+            sh._last_cols = inner_w
+
+        # Header bar
+        buf.append('\033[0m' + bg(t.bg) + '\033[2J')
+        self.go(buf, 0, 0)
+        buf.append(bg(t.status_bg) + fg(t.status_fg) + '\033[1m')
+        buf.append('  Shell — type exit to close  (Ctrl+Tab to switch buffers)')
+        buf.append('\033[K\033[0m')
 
         rst = '\033[0m' + fg(t.fg) + bg(t.bg)
-
-        # Resize the shell PTY
-        self.shell.resize(inner_h, inner_w)
-
-        # Border
-        for row in range(popup_h):
-            self.go(buf, popup_x, popup_y + row)
-            if row == 0:
-                buf.append(fg(t.fg) + bg(t.bg) + '┌')
-                title = ' Shell — type exit to close '
-                pad = popup_w - 2 - len(title)
-                buf.append('─' * (pad // 2) + title + '─' * (pad - pad // 2) + '┐' + rst)
-            elif row == popup_h - 1:
-                buf.append(fg(t.fg) + bg(t.bg) + '└' + '─' * (popup_w - 2) + '┘' + rst)
-            else:
-                buf.append(fg(t.fg) + bg(t.bg) + '│' + rst)
-                buf.append(' ' * (popup_w - 2))
-                buf.append(fg(t.fg) + bg(t.bg) + '│' + rst)
-
-        # Shell output — show last inner_h lines
-        lines = self.shell.styled_lines(t.fg, t.bg)
+        lines = sh.styled_lines(t.fg, t.bg)
         visible = lines[-inner_h:] if len(lines) > inner_h else lines
         for li, line in enumerate(visible):
-            self.go(buf, popup_x + 1, popup_y + 1 + li)
-            # pad to fill the row
+            self.go(buf, 0, li + 1)
             col = 0
             for text, fgc, bold in line:
                 if fgc:
@@ -3788,7 +3822,6 @@ class Editor:
                 if bold:
                     buf.append('\033[1m')
                 for ch in text:
-                    # Skip control chars except space
                     if ch.isprintable() or ch == ' ':
                         buf.append(ch)
                         col += 1
@@ -3799,6 +3832,7 @@ class Editor:
                     break
             if col < inner_w:
                 buf.append(' ' * (inner_w - col))
+        buf.append(rst)
 
     # ── music player overlay (Ctrl+T) ──
 
