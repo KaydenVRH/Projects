@@ -138,11 +138,12 @@ pub struct Editor {
 
     // ── fuzzy finder ──
     pub finder: Finder,
+    pub finder_query: String,
+    pub finder_selection: usize,
+    pub finder_scroll: usize,
 
     // ── file tree (Ctrl+F) ──
     pub filetree: FileTree,
-    pub finder_query: String,
-    pub finder_selection: usize,
 
     // ── run output ──
     pub run_output: String,
@@ -252,6 +253,7 @@ impl Editor {
             finder: Finder::new(),
             finder_query: String::new(),
             finder_selection: 0,
+            finder_scroll: 0,
             filetree: FileTree::new(),
             run_output: String::new(),
             music_player: MusicPlayer::new(),
@@ -2327,7 +2329,7 @@ impl Editor {
 
     // ── finder overlay ───────────────────────────────────────────
 
-    fn render_finder(&self, f: &mut Frame, area: Rect, theme: &Theme) {
+    fn render_finder(&mut self, f: &mut Frame, area: Rect, theme: &Theme) {
 
         // Centered popup: ~60% width, ~50% height.
         let popup_w = (area.width as f32 * 0.6) as u16;
@@ -2379,12 +2381,25 @@ impl Editor {
             query_area,
         );
 
+        let total = self.finder.results.len();
+        let visible_h = list_area.height as usize;
+
+        // Auto-scroll
+        if self.finder_selection < self.finder_scroll {
+            self.finder_scroll = self.finder_selection;
+        }
+        if self.finder_selection >= self.finder_scroll + visible_h {
+            self.finder_scroll = self.finder_selection - visible_h + 1;
+        }
+
         // Results list.
         let results: Vec<ListItem> = self
             .finder
             .results
             .iter()
             .enumerate()
+            .skip(self.finder_scroll)
+            .take(visible_h)
             .map(|(i, (path, _score))| {
                 let style = if i == self.finder_selection {
                     Style::new()
@@ -2399,7 +2414,7 @@ impl Editor {
 
         if results.is_empty() {
             let no_files = vec![ListItem::new(Line::from(Span::styled(
-                " (no files found)",
+                if total == 0 { " (no files found)" } else { "" },
                 Style::new().fg(theme.fg).bg(theme.bg),
             )))];
             f.render_widget(
@@ -2416,7 +2431,7 @@ impl Editor {
 
     // ── music player overlay (Ctrl+M) ──────────────────────────
 
-    fn render_music(&self, f: &mut Frame, area: Rect, theme: &Theme) {
+    fn render_music(&mut self, f: &mut Frame, area: Rect, theme: &Theme) {
 
         let popup_w = (area.width as f32 * 0.6) as u16;
         let popup_h = (area.height as f32 * 0.5) as u16;
@@ -2467,12 +2482,24 @@ impl Editor {
             status_area,
         );
 
+        let total = self.music_player.files.len();
+        let visible_h = list_area.height as usize;
+
+        // Auto-scroll to keep selected visible
+        let scroll = if self.music_player.selected < visible_h {
+            0
+        } else {
+            (self.music_player.selected - visible_h / 2).min(total.saturating_sub(visible_h))
+        };
+
         // File list.
         let results: Vec<ListItem> = self
             .music_player
             .files
             .iter()
             .enumerate()
+            .skip(scroll)
+            .take(visible_h)
             .map(|(i, path)| {
                 let name = path.rsplit('/').next().unwrap_or(path);
                 let is_playing = self.music_player.playing
@@ -2737,26 +2764,24 @@ impl Editor {
         f.render_widget(Clear, area);
 
         let figlet = [
-            " _            _ ",
-            "| |          | |",
-            "| | _____  __| |",
-            "| |/ / _ \\/ _` |",
-            "|   <  __/ (_| |",
-            "|_|\\_\\___|\\__,_|",
+            "   __          __",
+            "  / /_____ ___/ /",
+            " /  '_/ -_) _  / ",
+            "/_/\\_\\\\__/\\_,_/  ",
+            "                 ",
         ];
 
         let keybinds = [
             ("Ctrl+P", "find file"),
             ("Ctrl+F", "file tree"),
-            ("Ctrl+J", "shell"),
+            ("Ctrl+J", "terminal"),
             ("Ctrl+R", "run python"),
             ("Ctrl+T", "music"),
             ("Ctrl+E", "theme"),
-            ("/",      "search"),
+            ("Ctrl+K", "keybinds"),
             ("Tab",    "switch buf"),
-            ("Ctrl+S", "save"),
             (":wq",    "save & quit"),
-            (":q!",    "quit"),
+            (":3",     "colour fx"),
         ];
 
         // Compute column widths for alignment.
@@ -2778,7 +2803,7 @@ impl Editor {
 
         // Subtitle
         lines.push(Line::from(Span::styled(
-            "kayden's editor",
+            "kayden's editor (now in rust!)",
             Style::new().fg(theme.comment.fg.unwrap_or(theme.fg)),
         )));
 
@@ -2788,7 +2813,6 @@ impl Editor {
             let mut spans = Vec::new();
             for (i, (key, desc)) in chunk.iter().enumerate() {
                 if i > 0 {
-                    // Gap between left cell and right cell.
                     spans.push(Span::raw(" ".repeat(3)));
                 }
                 spans.push(Span::styled(*key, theme.builtin));
