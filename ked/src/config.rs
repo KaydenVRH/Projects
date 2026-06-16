@@ -6,7 +6,8 @@ use serde::Deserialize;
 #[derive(Deserialize, Default)]
 pub struct Config {
     /// Theme name (default, monokai, solarized, nord, gruvbox, bi,
-    /// catppuccin, tokyonight, amber).
+    /// catppuccin, tokyonight, amber, dracula, onedark, everforest,
+    /// rosepine, oxocarbon, system, opencode, ayu, kanagawa).
     #[serde(default)]
     pub theme: String,
 
@@ -17,6 +18,14 @@ pub struct Config {
     /// Width of the file tree panel in columns (default 30).
     #[serde(default = "default_filetree_width")]
     pub filetree_width: u16,
+
+    /// Put the status bar at the top instead of the bottom.
+    #[serde(default)]
+    pub status_bar_top: bool,
+
+    /// Make the content background transparent (terminal default).
+    #[serde(default)]
+    pub transparent: bool,
 }
 
 const fn default_filetree_width() -> u16 {

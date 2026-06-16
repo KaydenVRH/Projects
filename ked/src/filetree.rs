@@ -2,7 +2,7 @@
 //!
 //! Walks the current directory and builds a flat list of [`TreeEntry`]
 //! with depth information so the renderer can draw an indented tree.
-//! Hidden files and `.git` are skipped.
+//! Hidden files are shown (only `.git` is skipped).
 
 use std::fs;
 use std::path::Path;
@@ -22,6 +22,34 @@ pub struct FileTree {
     pub entries: Vec<TreeEntry>,
     pub selected: usize,
     pub scroll: usize,
+}
+
+/// Return a Nerd Font icon character for a file or directory.
+pub fn file_icon(path: &str, is_dir: bool) -> &'static str {
+    if is_dir {
+        return "\u{f07b}"; //  folder
+    }
+    match path.rsplit('.').next().unwrap_or("") {
+        "py"   => "\u{e606}", //  python
+        "rs"   => "\u{e7a8}", //  rust
+        "js"   => "\u{e781}", //  javascript
+        "ts"   => "\u{e628}", //  typescript
+        "jsx"  => "\u{e7ba}", //  react
+        "tsx"  => "\u{e7ba}",
+        "c"    => "\u{e61e}", //  c
+        "h"    => "\u{e61e}",
+        "cpp"  => "\u{e61d}", //  c++
+        "hpp"  => "\u{e61d}",
+        "html" => "\u{e736}", //  html
+        "css"  => "\u{e749}", //  css
+        "json" => "\u{e60b}", //  json
+        "md"   => "\u{e73b}", //  markdown
+        "toml" => "\u{e615}", //  toml/config
+        "yml"  => "\u{e615}",
+        "yaml" => "\u{e615}",
+        "sh"   => "\u{e68d}", // terminal
+        _      => "\u{f15b}", //  default file
+    }
 }
 
 impl FileTree {
@@ -93,7 +121,7 @@ fn collect_children(dir: &str, depth: usize) -> Vec<TreeEntry> {
     };
     let mut items: Vec<TreeEntry> = entries
         .flatten()
-        .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+        .filter(|e| e.file_name() != ".git")
         .map(|e| {
             let path = e.path();
             TreeEntry {

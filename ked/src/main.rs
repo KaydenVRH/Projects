@@ -70,6 +70,8 @@ fn main() -> Result<()> {
 
         // render the current editor state
         terminal.draw(|f| editor.render(f))?;
+        // Apply cursor style set by render
+        let _ = execute!(io::stdout(), editor.cursor_style);
 
         // Poll with a 100 ms timeout so keyboard feels snappy
         // while the music player thread can still auto-advance.

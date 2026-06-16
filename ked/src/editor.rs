@@ -32,6 +32,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::cursor::SetCursorStyle;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout, Position, Rect},
@@ -46,7 +47,7 @@ use crate::config::Config;
 use crate::theme::{hsl_to_rgb, Theme, ThemeKind};
 use crate::finder::Finder;
 use crate::music::MusicPlayer;
-use crate::filetree::FileTree;
+use crate::filetree::{FileTree, file_icon as ft_icon};
 
 // ── Mode & State ─────────────────────────────────────────────────
 
@@ -70,6 +71,8 @@ pub enum State {
     Visual,  // visual mode: selecting text with movement keys
     Search,  // typing a / search query on the status line
     FileTree,// file tree panel (Ctrl+F)
+    SysInfo, // system dashboard (:sys)
+    Help,    // keybind manual (Ctrl+K)
 }
 
 // ── Buffer ───────────────────────────────────────────────────────
@@ -167,6 +170,8 @@ pub struct Editor {
     pub theme: ThemeKind,
     /// Currently-highlighted row in the theme selector.
     pub theme_selected: usize,
+    /// Scroll offset for the theme selector list.
+    pub theme_scroll: usize,
 
     // ── flash message (shown in status bar, cleared next render) ──
     pub flash: Option<String>,
@@ -179,12 +184,20 @@ pub struct Editor {
     pub shell: Option<ShellProcess>,
     pub shell_reader: Option<std::thread::JoinHandle<()>>,
 
-    // ── rainbow mode (animated hue cycling from `:3`) ──
-    pub rainbow: bool,
-    pub rainbow_start: Instant,
+    // ── colour fx mode (animated theme from `:3`) ──
+    pub fx_mode: u8,  // 0=off, 1=gentle, 2=breathing, 3=warm
+    pub fx_start: Instant,
 
     pub filetree_width: u16,
     pub music_dir: String,
+    pub transparent: bool,
+    pub _frame: u64,
+    pub _mode_switched: u64,
+    pub _last_mode: Mode,
+    /// Cursor style to apply after rendering (set by render, consumed by main).
+    pub cursor_style: SetCursorStyle,
+    /// System dashboard data
+    pub sys_info: String,
 
     pub buffers: Vec<Buffer>,
     pub current: usize,
@@ -251,13 +264,14 @@ impl Editor {
             clipboard_text: String::new(),
             theme,
             theme_selected: ThemeKind::all().iter().position(|t| *t == theme).unwrap_or(0),
+            theme_scroll: 0,
             flash: None,
             cache_w: 80,
             cache_h: 24,
             shell: None,
             shell_reader: None,
-            rainbow: false,
-            rainbow_start: Instant::now(),
+            fx_mode: 0,
+            fx_start: Instant::now(),
             filetree_width: cfg.filetree_width.max(10),
             music_dir: if cfg.music_dir.is_empty() {
                 std::env::var("HOME")
@@ -266,6 +280,12 @@ impl Editor {
             } else {
                 cfg.music_dir.clone()
             },
+            transparent: cfg.transparent,
+            _frame: 0,
+            _mode_switched: 0,
+            _last_mode: Mode::Normal,
+            cursor_style: SetCursorStyle::SteadyBlock,
+            sys_info: String::new(),
         })
     }
 
@@ -414,6 +434,8 @@ impl Editor {
             State::Theme => return self.handle_theme_state(key),
             State::Search => return self.handle_search_state(key),
             State::FileTree => return self.handle_filetree_state(key),
+            State::SysInfo => return self.handle_sysinfo_state(key),
+            State::Help => return self.handle_help_state(key),
             State::Normal => {}
             State::Shell => {}
             State::Visual => {}
@@ -444,6 +466,10 @@ impl Editor {
                     return true;
                 }
                 KeyCode::Char('c') | KeyCode::Char('d') => return false,
+                KeyCode::Char('k') => {
+                    self.state = State::Help;
+                    return true;
+                }
                 _ => {}
             }
         }
@@ -1372,6 +1398,16 @@ impl Editor {
         true
     }
 
+    fn handle_sysinfo_state(&mut self, _key: KeyEvent) -> bool {
+        self.state = State::Normal;
+        true
+    }
+
+    fn handle_help_state(&mut self, _key: KeyEvent) -> bool {
+        self.state = State::Normal;
+        true
+    }
+
     fn handle_shell_state(&mut self, key: KeyEvent) -> bool {
         let shell = match self.shell.as_ref() {
             Some(s) => s,
@@ -1554,15 +1590,17 @@ impl Editor {
                     self.flash = Some("Only one buffer open".to_string());
                 }
             }
-            // :3 — toggle rainbow mode
+            // :3 — cycle colour fx mode
             "3" => {
-                self.rainbow = !self.rainbow;
-                self.rainbow_start = Instant::now();
-                self.flash = Some(if self.rainbow {
-                    "🌈 rainbow on".to_string()
-                } else {
-                    "rainbow off".to_string()
-                });
+                self.fx_mode = (self.fx_mode + 1) % 4;
+                self.fx_start = Instant::now();
+                let names = ["off", "gentle", "breathing", "warm"];
+                self.flash = Some(format!("fx: {}", names[self.fx_mode as usize]));
+            }
+            // :sys — system dashboard
+            "sys" => {
+                self.sys_info = collect_sys_info();
+                self.state = State::SysInfo;
             }
             // Unknown command.
             _ => {
@@ -1887,6 +1925,12 @@ impl Editor {
 
     /// Draw the editor into the terminal frame.
     pub fn render(&mut self, f: &mut Frame) {
+        self._frame = self._frame.wrapping_add(1);
+        if self.mode != self._last_mode {
+            self._mode_switched = self._frame;
+            self._last_mode = self.mode;
+        }
+
         let area = f.area();
         if area.width == 0 || area.height == 0 {
             return; // terminal too small, don't draw anything
@@ -1925,20 +1969,28 @@ impl Editor {
         };
 
         // ── 1. main content / splash ────────────────────────────
-        let is_default = self.theme == ThemeKind::Default;
         let mut theme = self.theme.theme();
-        if self.rainbow {
-            let elapsed = self.rainbow_start.elapsed();
-            let hue = (elapsed.as_millis() as f64 * 0.04) % 360.0;
-            theme = theme.with_rainbow(hue);
-            if is_default {
-                // Cycle the status bar too (Default uses named colours
-                // like DarkGray which rotate_hue skips).
-                let (r, g, b) = hsl_to_rgb(hue, 0.5, 0.3);
-                theme.status_bg = Color::Rgb(r, g, b);
-                let (r, g, b) = hsl_to_rgb(hue, 0.8, 0.9);
-                theme.status_fg = Color::Rgb(r, g, b);
+        if self.fx_mode > 0 {
+            let elapsed = self.fx_start.elapsed().as_secs_f64();
+            match self.fx_mode {
+                1 => { // gentle: very slow ±15° hue oscillation
+                    let hue = (elapsed * 3.0).sin() * 15.0;
+                    theme = soft_shift_theme(&theme, hue, 0.0);
+                }
+                2 => { // breathing: very slow lightness pulse
+                    let lightness = ((elapsed * 0.3).sin() * 0.5 + 0.5) * 0.08;
+                    theme = soft_shift_theme(&theme, 0.0, lightness);
+                }
+                3 => { // warm: very slow drift between amber and purple
+                    let hue = (elapsed * 2.0).sin() * 25.0 + 270.0;
+                    theme = soft_shift_theme(&theme, hue, 0.0);
+                }
+                _ => {}
             }
+        }
+        // Transparent content background
+        if self.transparent {
+            theme.bg = Color::Reset;
         }
         let is_splash = self.filename.is_none()
             && self.lines.len() == 1
@@ -2141,14 +2193,27 @@ impl Editor {
                     self.render_filetree(f, tree_area, &theme);
                 }
             }
+            State::SysInfo => self.render_sysinfo(f, area, &theme),
+            State::Help => self.render_help(f, area, &theme),
             _ => {}
         }
+
+        // Cursor shape per mode (applied in main.rs after draw)
+        self.cursor_style = match self.mode {
+            Mode::Insert => SetCursorStyle::BlinkingBar,
+            Mode::Normal if self.state == State::Visual => SetCursorStyle::SteadyUnderScore,
+            _ => SetCursorStyle::SteadyBlock,
+        };
     }
 
     // ── status bar ───────────────────────────────────────────────
 
     /// Render a one‑line buffer (tab) bar at the top of the screen.
     fn render_buffer_bar(&self, f: &mut Frame, area: Rect, theme: &Theme) {
+        // Tab shimmer: oscillate the active tab's background brightness
+        let pulse = 0.5 + 0.5 * (self._frame as f64 * 0.12).sin();
+        let shimmer_bg = blend_colors(theme.status_bg, theme.status_fg, 0.0, (pulse * 0.10) as f32);
+
         let items: Vec<Span> = self
             .buffers
             .iter()
@@ -2163,7 +2228,7 @@ impl Editor {
                 let mod_flag = if buf.modified { " +" } else { "" };
                 let label = format!(" {name}{mod_flag} ");
                 let style = if is_current {
-                    Style::new().fg(theme.status_fg).bg(theme.status_bg)
+                    Style::new().fg(theme.status_fg).bg(shimmer_bg)
                 } else {
                     Style::new().fg(theme.comment.fg.unwrap_or(theme.fg)).bg(theme.bg)
                 };
@@ -2188,28 +2253,37 @@ impl Editor {
         let text: String = if let Some(ref msg) = self.flash {
             format!(" {msg} ")
         } else if self.state == State::Command {
-            // Show the command being typed.
             format!(":{}", self.cmd_buf)
         } else if self.state == State::Search {
-            // Show the search query being typed.
             format!("/{}", self.search_query)
         } else {
-            // Normal status:  mode | filename | modified | line:col | theme
-            let mode_str = match self.state {
-                State::Visual => "VISUAL",
-                _ => match self.mode {
-                    Mode::Normal => "NORMAL",
-                    Mode::Insert => "INSERT",
-                },
+            // Spinner (braille rotation) when music is playing
+            let spinner_chars: &[char] = &['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+            let spinner = if self.music_player.playing {
+                format!("{} ", spinner_chars[self._frame as usize % spinner_chars.len()])
+            } else {
+                String::new()
             };
-            let fname = self
-                .filename
-                .as_deref()
-                .unwrap_or("[No Name]");
+
+            // Mode with frame-based blink
+            let mode_str = match self.mode {
+                Mode::Insert => if (self._frame / 15) % 2 == 0 { "INSERT" } else { "      " },
+                Mode::Normal => "NORMAL",
+            };
+            let visual_str = if self.state == State::Visual {
+                if (self._frame / 15) % 2 == 0 { "VISUAL" } else { "      " }
+            } else {
+                ""
+            };
+            let mode_display = if self.state == State::Visual { visual_str } else { mode_str };
+
+            let fname = self.filename.as_deref().unwrap_or("[No Name]");
             let mod_str = if self.modified { " [+]" } else { "" };
             let location = format!("{}:{}", self.cy + 1, self.cx + 1);
             let tname = self.theme.name();
-            // Append " ♫ song.mp3" if playing music.
+            // Clock
+            let now = chrono::Local::now().format("%H:%M").to_string();
+
             let now_playing = self.music_player.current_song.as_ref()
                 .filter(|_| self.music_player.playing)
                 .map(|s| {
@@ -2217,9 +2291,29 @@ impl Editor {
                     format!("  ♫ {name}")
                 })
                 .unwrap_or_default();
-            format!(
-                " {mode_str}  {fname}{mod_str}  ─ {location}  ─ {tname}{now_playing} "
-            )
+
+            // Build spans with animated dash colours
+            let dash_colors = [theme.keyword.fg, theme.builtin.fg, theme.rstype.fg, theme.string.fg, theme.number.fg];
+            let dash_idx = (self._frame / 3) as usize % dash_colors.len();
+            let dash_color = dash_colors[dash_idx].unwrap_or(theme.status_fg);
+            let dash_style = Style::new().fg(dash_color).bg(theme.status_bg);
+            let plain_style = Style::new().fg(theme.status_fg).bg(theme.status_bg);
+
+            let spans = vec![
+                Span::styled(format!(" {spinner}{mode_display}  {fname}{mod_str}  "), plain_style),
+                Span::styled("─", dash_style),
+                Span::styled(format!(" {location}  "), plain_style),
+                Span::styled("─", dash_style),
+                Span::styled(format!(" {tname}  "), plain_style),
+                Span::styled("─", dash_style),
+                Span::styled(format!(" {now}{now_playing} "), plain_style),
+            ];
+
+            let bar = Paragraph::new(Line::from(spans))
+                .style(Style::new().bg(theme.status_bg));
+            f.render_widget(ratatui::widgets::Clear, area);
+            f.render_widget(bar, area);
+            return;
         };
 
         let bar = Paragraph::new(Line::from(Span::styled(
@@ -2422,7 +2516,7 @@ impl Editor {
 
     // ── theme-selector overlay ─────────────────────────────────
 
-    fn render_theme(&self, f: &mut Frame, area: Rect, theme: &Theme) {
+    fn render_theme(&mut self, f: &mut Frame, area: Rect, theme: &Theme) {
 
         let popup_w = (area.width as f32 * 0.45) as u16;
         let popup_h = (area.height as f32 * 0.4) as u16;
@@ -2449,9 +2543,22 @@ impl Editor {
             return;
         }
 
-        let list_items: Vec<ListItem> = ThemeKind::all()
+        let themes = ThemeKind::all();
+        let visible_h = inner.height as usize;
+
+        // Auto-scroll to keep selected item visible
+        if self.theme_selected < self.theme_scroll {
+            self.theme_scroll = self.theme_selected;
+        }
+        if self.theme_selected >= self.theme_scroll + visible_h {
+            self.theme_scroll = self.theme_selected - visible_h + 1;
+        }
+
+        let list_items: Vec<ListItem> = themes
             .iter()
             .enumerate()
+            .skip(self.theme_scroll)
+            .take(visible_h)
             .map(|(i, t)| {
                 let name = t.name();
                 let is_current = *t == self.theme;
@@ -2477,6 +2584,67 @@ impl Editor {
 
         f.render_widget(
             List::new(list_items).style(Style::new().bg(theme.bg)),
+            inner,
+        );
+    }
+
+    // ── system dashboard (:sys) ──────────────────────────────────
+
+    fn render_sysinfo(&self, f: &mut Frame, area: Rect, theme: &Theme) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" System Dashboard ")
+            .title_style(Style::new().fg(theme.fg))
+            .border_style(Style::new().fg(theme.fg));
+        let inner = block.inner(area);
+        f.render_widget(Clear, area);
+        f.render_widget(block, area);
+        let text = Text::from(self.sys_info.clone());
+        f.render_widget(
+            Paragraph::new(text).style(Style::new().fg(theme.fg).bg(theme.bg)),
+            inner,
+        );
+    }
+
+    // ── keybind manual (Ctrl+K) ──────────────────────────────────
+
+    fn render_help(&self, f: &mut Frame, area: Rect, theme: &Theme) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Keybinds ")
+            .title_style(Style::new().fg(theme.fg))
+            .border_style(Style::new().fg(theme.fg));
+        let inner = block.inner(area);
+        f.render_widget(Clear, area);
+        f.render_widget(block, area);
+
+        let help_text = vec![
+            Line::from(Span::styled("Movement & Editing", theme.keyword)),
+            Line::from("  h/j/k/l    move cursor          w/b      next/prev word"),
+            Line::from("  0/$/gg/G    line start/end, first/last"),
+            Line::from("  i/a/I/A     insert mode           o/O      open line below/above"),
+            Line::from("  x/dd        delete char/line      yy/p/P   yank/paste"),
+            Line::from("  u           undo                  v        visual mode"),
+            Line::from(""),
+            Line::from(Span::styled("Buffers & Files", theme.keyword)),
+            Line::from("  Tab/S-Tab   next/prev buffer      :bn/:bp  next/prev buffer"),
+            Line::from("  Ctrl+P      find file             Ctrl+F   file tree"),
+            Line::from("  Ctrl+S      save                  :e <f>   open file"),
+            Line::from(""),
+            Line::from(Span::styled("Tools", theme.keyword)),
+            Line::from("  Ctrl+R      run python            Ctrl+T   music player"),
+            Line::from("  Ctrl+E      theme selector        Ctrl+K   this manual"),
+            Line::from("  :sys        system dashboard      :3       colour fx cycle"),
+            Line::from(""),
+            Line::from(Span::styled("Commands", theme.keyword)),
+            Line::from("  /           search                n/N      next/prev match"),
+            Line::from("  :w/:wq      save / save & quit    :q/:q!   quit / force quit"),
+            Line::from("  :theme <n>  switch theme          Ctrl+J   shell popup"),
+        ];
+
+        f.render_widget(
+            Paragraph::new(Text::from(help_text))
+                .style(Style::new().fg(theme.fg).bg(theme.bg)),
             inner,
         );
     }
@@ -2676,8 +2844,9 @@ impl Editor {
                 } else {
                     "  "
                 };
+                let icon = ft_icon(&entry.path, entry.is_dir);
                 let indent = "  ".repeat(entry.depth);
-                let label = format!("{indent}{prefix}{}", entry.name);
+                let label = format!("{indent}{prefix}{icon} {}", entry.name);
                 let style = if i == selected {
                     Style::new().fg(theme.status_bg).bg(theme.status_fg)
                 } else if entry.is_dir {
@@ -2696,9 +2865,115 @@ impl Editor {
     }
 }
 
-/// Convert a crossterm key event into the byte sequence to send to
-/// the shell's PTY.  Handles regular chars, Ctrl+letter, arrows,
-/// Home/End, Delete, PageUp/Down, Esc, Tab, Enter, Backspace.
+/// Blend two ratatui Colors by interpolating their RGB values.
+/// `factor` controls how much of `b` is mixed in: 0.0 = pure `a`, 1.0 = pure `b`.
+fn blend_colors(a: Color, b: Color, min_factor: f32, max_factor: f32) -> Color {
+    let ar = color_to_rgb(a);
+    let br = color_to_rgb(b);
+    if let (Some((ar, ag, ab)), Some((br, bg, bb))) = (ar, br) {
+        let t = min_factor.max(max_factor).min(1.0);
+        Color::Rgb(
+            (ar as f32 + (br as f32 - ar as f32) * t) as u8,
+            (ag as f32 + (bg as f32 - ag as f32) * t) as u8,
+            (ab as f32 + (bb as f32 - ab as f32) * t) as u8,
+        )
+    } else {
+        a
+    }
+}
+
+/// Softly shift a theme's colours.  `hue_offset` rotates hues in degrees
+/// (small values = subtle).  `lightness` blends toward white (positive) or
+/// black (negative) — used for breathing effects.
+fn soft_shift_theme(t: &Theme, hue_offset: f64, lightness: f64) -> Theme {
+    use crate::theme::hsl_to_rgb;
+
+    let shift = |c: Color| -> Color {
+        let rgb = color_to_rgb(c);
+        let (r, g, b) = match rgb {
+            Some(x) => x,
+            None => return c,
+        };
+        let rn = r as f64 / 255.0;
+        let gn = g as f64 / 255.0;
+        let bn = b as f64 / 255.0;
+        let mx = rn.max(gn).max(bn);
+        let mn = rn.min(gn).min(bn);
+        let l = (mx + mn) / 2.0;
+        let d = mx - mn;
+
+        let s = if d == 0.0 { 0.0 }
+            else if l > 0.5 { d / (2.0 - mx - mn) }
+            else { d / (mx + mn) };
+
+        let h = if d == 0.0 { 0.0 } else if mx == rn {
+            ((gn - bn) / d * 60.0 + 360.0) % 360.0
+        } else if mx == gn {
+            ((bn - rn) / d * 60.0 + 120.0) % 360.0
+        } else {
+            ((rn - gn) / d * 60.0 + 240.0) % 360.0
+        };
+
+        let h = (h + hue_offset + 360.0) % 360.0;
+        let l = (l + lightness).clamp(0.05, 0.95);
+        let (r2, g2, b2) = hsl_to_rgb(h, s as f64, l);
+        Color::Rgb(r2, g2, b2)
+    };
+
+    let shift_style = |s: &Style| -> Style {
+        Style {
+            fg: s.fg.map(shift),
+            bg: s.bg.map(shift),
+            underline_color: s.underline_color.map(shift),
+            add_modifier: s.add_modifier,
+            sub_modifier: s.sub_modifier,
+        }
+    };
+
+    Theme {
+        fg: shift(t.fg),
+        bg: t.bg,  // keep background static
+        selection_bg: shift(t.selection_bg),
+        line_number: shift_style(&t.line_number),
+        tilde: shift_style(&t.tilde),
+        status_bg: shift(t.status_bg),
+        status_fg: shift(t.status_fg),
+        keyword: shift_style(&t.keyword),
+        builtin: shift_style(&t.builtin),
+        rstype: shift_style(&t.rstype),
+        function: shift_style(&t.function),
+        lifetime: shift_style(&t.lifetime),
+        string: shift_style(&t.string),
+        fstring_prefix: shift_style(&t.fstring_prefix),
+        comment: shift_style(&t.comment),
+        number: shift_style(&t.number),
+        decorator: shift_style(&t.decorator),
+        operator: shift_style(&t.operator),
+        punctuation: shift_style(&t.punctuation),
+    }
+}
+fn color_to_rgb(c: Color) -> Option<(u8, u8, u8)> {
+    match c {
+        Color::Rgb(r, g, b) => Some((r, g, b)),
+        Color::Black => Some((0, 0, 0)),
+        Color::Red => Some((255, 0, 0)),
+        Color::Green => Some((0, 255, 0)),
+        Color::Yellow => Some((255, 255, 0)),
+        Color::Blue => Some((0, 0, 255)),
+        Color::Magenta => Some((255, 0, 255)),
+        Color::Cyan => Some((0, 255, 255)),
+        Color::Gray => Some((192, 192, 192)),
+        Color::DarkGray => Some((128, 128, 128)),
+        Color::LightRed => Some((255, 128, 128)),
+        Color::LightGreen => Some((128, 255, 128)),
+        Color::LightYellow => Some((255, 255, 128)),
+        Color::LightBlue => Some((128, 128, 255)),
+        Color::LightMagenta => Some((255, 128, 255)),
+        Color::LightCyan => Some((128, 255, 255)),
+        Color::White => Some((255, 255, 255)),
+        _ => None,
+    }
+}
 fn key_to_bytes(key: KeyEvent) -> Vec<u8> {
     match key.code {
         KeyCode::Char(c) => {
@@ -2732,7 +3007,96 @@ fn key_to_bytes(key: KeyEvent) -> Vec<u8> {
     }
 }
 
-/// Run a Python file and capture its stdout + stderr.
+/// Collect system information for the dashboard.
+fn collect_sys_info() -> String {
+    use std::process::Command;
+    let mut info = String::new();
+
+    // Host & user
+    if let Ok(host) = std::env::var("HOSTNAME").or_else(|_| std::env::var("HOST")) {
+        info.push_str(&format!("Host: {host}\n"));
+    }
+    if let Ok(user) = std::env::var("USER") {
+        info.push_str(&format!("User: {user}\n"));
+    }
+
+    // Uptime
+    if let Ok(out) = Command::new("uptime").output() {
+        let s = String::from_utf8_lossy(&out.stdout);
+        info.push_str(&format!("Uptime: {}\n", s.trim()));
+    }
+
+    // CPU
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(out) = Command::new("top").args(["-l", "1", "-n", "0", "-s", "0"]).output() {
+            let s = String::from_utf8_lossy(&out.stdout);
+            for line in s.lines() {
+                if line.contains("CPU usage") {
+                    info.push_str(&format!("CPU: {line}\n"));
+                    break;
+                }
+            }
+        }
+    }
+
+    // Memory
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(out) = Command::new("vm_stat").output() {
+            let s = String::from_utf8_lossy(&out.stdout);
+            let mut page_size: u64 = 16384;
+            let mut used: u64 = 0;
+            for line in s.lines() {
+                if line.contains("page size of") {
+                    if let Some(n) = line.split_whitespace().last() {
+                        page_size = n.parse().unwrap_or(16384);
+                    }
+                }
+                if line.contains("Pages active") || line.contains("Pages wired") {
+                    if let Some(n) = line.split(':').last() {
+                        let n: u64 = n.trim().trim_end_matches('.').parse().unwrap_or(0);
+                        used += n;
+                    }
+                }
+            }
+            let total = {
+                if let Ok(out) = Command::new("sysctl").args(["-n", "hw.memsize"]).output() {
+                    String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(0)
+                } else { 0u64 }
+            };
+            info.push_str(&format!("Memory: {} MB used / {} MB total\n",
+                used * page_size / 1024 / 1024, total / 1024 / 1024));
+        }
+    }
+
+    // Disk
+    if let Ok(out) = Command::new("df").args(["-h", "/"]).output() {
+        let s = String::from_utf8_lossy(&out.stdout);
+        if let Some(line) = s.lines().last() {
+            info.push_str(&format!("Disk: {line}\n"));
+        }
+    }
+
+    // Battery
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(out) = Command::new("pmset").args(["-g", "batt"]).output() {
+            let s = String::from_utf8_lossy(&out.stdout);
+            for line in s.lines() {
+                if line.contains('%') {
+                    info.push_str(&format!("Battery: {line}\n"));
+                    break;
+                }
+            }
+        }
+    }
+
+    if info.is_empty() {
+        info = "No system info available".to_string();
+    }
+    info
+}
 fn run_python(path: &str) -> String {
     let output = ProcCmd::new("python3")
         .arg(path)

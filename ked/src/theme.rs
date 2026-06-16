@@ -40,7 +40,7 @@ pub struct Theme {
     pub punctuation:   Style,   // `(`, `)`, `:`, `,`
 }
 
-/// The nine built-in theme variants.
+/// The eighteen built-in theme variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeKind {
     Default,
@@ -52,6 +52,15 @@ pub enum ThemeKind {
     Catppuccin,
     TokyoNight,
     Amber,
+    Dracula,
+    OneDark,
+    Everforest,
+    RosePine,
+    Oxocarbon,
+    System,
+    OpenCode,
+    Ayu,
+    Kanagawa,
 }
 
 impl ThemeKind {
@@ -67,6 +76,15 @@ impl ThemeKind {
             ThemeKind::Catppuccin => catppuccin(),
             ThemeKind::TokyoNight => tokyo_night(),
             ThemeKind::Amber      => amber(),
+            ThemeKind::Dracula    => dracula(),
+            ThemeKind::OneDark    => one_dark(),
+            ThemeKind::Everforest => everforest(),
+            ThemeKind::RosePine   => rose_pine(),
+            ThemeKind::Oxocarbon  => oxocarbon(),
+            ThemeKind::System     => system(),
+            ThemeKind::OpenCode   => opencode(),
+            ThemeKind::Ayu        => ayu(),
+            ThemeKind::Kanagawa   => kanagawa(),
         }
     }
 
@@ -82,6 +100,15 @@ impl ThemeKind {
             ThemeKind::Catppuccin => "catppuccin",
             ThemeKind::TokyoNight => "tokyonight",
             ThemeKind::Amber      => "amber",
+            ThemeKind::Dracula    => "dracula",
+            ThemeKind::OneDark    => "onedark",
+            ThemeKind::Everforest => "everforest",
+            ThemeKind::RosePine   => "rosepine",
+            ThemeKind::Oxocarbon  => "oxocarbon",
+            ThemeKind::System     => "system",
+            ThemeKind::OpenCode   => "opencode",
+            ThemeKind::Ayu        => "ayu",
+            ThemeKind::Kanagawa   => "kanagawa",
         }
     }
 
@@ -97,6 +124,15 @@ impl ThemeKind {
             ThemeKind::Catppuccin,
             ThemeKind::TokyoNight,
             ThemeKind::Amber,
+            ThemeKind::Dracula,
+            ThemeKind::OneDark,
+            ThemeKind::Everforest,
+            ThemeKind::RosePine,
+            ThemeKind::Oxocarbon,
+            ThemeKind::System,
+            ThemeKind::OpenCode,
+            ThemeKind::Ayu,
+            ThemeKind::Kanagawa,
         ]
     }
 
@@ -112,6 +148,15 @@ impl ThemeKind {
             "catppuccin" => Some(ThemeKind::Catppuccin),
             "tokyonight" => Some(ThemeKind::TokyoNight),
             "amber"      => Some(ThemeKind::Amber),
+            "dracula"    => Some(ThemeKind::Dracula),
+            "onedark"    => Some(ThemeKind::OneDark),
+            "everforest" => Some(ThemeKind::Everforest),
+            "rosepine"   => Some(ThemeKind::RosePine),
+            "oxocarbon"  => Some(ThemeKind::Oxocarbon),
+            "system"     => Some(ThemeKind::System),
+            "opencode"   => Some(ThemeKind::OpenCode),
+            "ayu"        => Some(ThemeKind::Ayu),
+            "kanagawa"   => Some(ThemeKind::Kanagawa),
             _           => None,
         }
     }
@@ -524,5 +569,223 @@ fn ansi_256_to_rgb(i: u8) -> (u8, u8, u8) {
             let grey = (i - 232) * 11 + 8;
             (grey, grey, grey)
         }
+    }
+}
+
+// ── new themes (matching pked) ────────────────────────────────
+
+fn dracula() -> Theme {
+    Theme {
+        fg:            Color::Rgb(0xf8, 0xf8, 0xf2),
+        bg:            Color::Rgb(0x28, 0x2a, 0x36),
+        selection_bg:  Color::Rgb(0x44, 0x47, 0x5a),
+        line_number:   Style::new().fg(Color::Rgb(0x62, 0x72, 0xa4)),
+        tilde:         Style::new().fg(Color::Rgb(0x62, 0x72, 0xa4)),
+        status_bg:     Color::Rgb(0x62, 0x72, 0xa4),
+        status_fg:     Color::Rgb(0xf8, 0xf8, 0xf2),
+        keyword:       fg(Color::Rgb(0xff, 0x79, 0xc6)),
+        builtin:       fg(Color::Rgb(0x8b, 0xe9, 0xfd)),
+        rstype:        fg(Color::Rgb(0x8b, 0xe9, 0xfd)),
+        function:      fg(Color::Rgb(0x50, 0xfa, 0x7b)),
+        lifetime:      fg(Color::Rgb(0x8b, 0xe9, 0xfd)),
+        string:        fg(Color::Rgb(0xf1, 0xfa, 0x8c)),
+        fstring_prefix:fg_bold(Color::Rgb(0xf1, 0xfa, 0x8c)),
+        comment:       fg(Color::Rgb(0x62, 0x72, 0xa4)),
+        number:        fg(Color::Rgb(0xbd, 0x93, 0xf9)),
+        decorator:     fg(Color::Rgb(0xff, 0x79, 0xc6)),
+        operator:      fg(Color::Rgb(0xff, 0x79, 0xc6)),
+        punctuation:   fg(Color::Rgb(0xf8, 0xf8, 0xf2)),
+    }
+}
+
+fn one_dark() -> Theme {
+    Theme {
+        fg:            Color::Rgb(0xab, 0xb2, 0xbf),
+        bg:            Color::Rgb(0x28, 0x2c, 0x34),
+        selection_bg:  Color::Rgb(0x3e, 0x44, 0x51),
+        line_number:   Style::new().fg(Color::Rgb(0x5c, 0x63, 0x70)),
+        tilde:         Style::new().fg(Color::Rgb(0x5c, 0x63, 0x70)),
+        status_bg:     Color::Rgb(0x28, 0x2c, 0x34),
+        status_fg:     Color::Rgb(0xab, 0xb2, 0xbf),
+        keyword:       fg(Color::Rgb(0xc6, 0x78, 0xdd)),
+        builtin:       fg(Color::Rgb(0x61, 0xaf, 0xef)),
+        rstype:        fg(Color::Rgb(0xe5, 0xc0, 0x7b)),
+        function:      fg(Color::Rgb(0x61, 0xaf, 0xef)),
+        lifetime:      fg(Color::Rgb(0x56, 0xb6, 0xc2)),
+        string:        fg(Color::Rgb(0x98, 0xc3, 0x79)),
+        fstring_prefix:fg_bold(Color::Rgb(0x98, 0xc3, 0x79)),
+        comment:       fg(Color::Rgb(0x5c, 0x63, 0x70)),
+        number:        fg(Color::Rgb(0xd1, 0x9a, 0x66)),
+        decorator:     fg(Color::Rgb(0xe5, 0xc0, 0x7b)),
+        operator:      fg(Color::Rgb(0x56, 0xb6, 0xc2)),
+        punctuation:   fg(Color::Rgb(0xab, 0xb2, 0xbf)),
+    }
+}
+
+fn everforest() -> Theme {
+    Theme {
+        fg:            Color::Rgb(0xd3, 0xc6, 0xaa),
+        bg:            Color::Rgb(0x2d, 0x35, 0x3b),
+        selection_bg:  Color::Rgb(0x38, 0x41, 0x48),
+        line_number:   Style::new().fg(Color::Rgb(0x7d, 0x83, 0x79)),
+        tilde:         Style::new().fg(Color::Rgb(0x7d, 0x83, 0x79)),
+        status_bg:     Color::Rgb(0x38, 0x41, 0x48),
+        status_fg:     Color::Rgb(0xd3, 0xc6, 0xaa),
+        keyword:       fg(Color::Rgb(0xe6, 0x7e, 0x80)),
+        builtin:       fg(Color::Rgb(0x7f, 0xbb, 0xb3)),
+        rstype:        fg(Color::Rgb(0xd6, 0x99, 0x9c)),
+        function:      fg(Color::Rgb(0xa7, 0xc0, 0x80)),
+        lifetime:      fg(Color::Rgb(0x7f, 0xbb, 0xb3)),
+        string:        fg(Color::Rgb(0xa7, 0xc0, 0x80)),
+        fstring_prefix:fg_bold(Color::Rgb(0xa7, 0xc0, 0x80)),
+        comment:       fg(Color::Rgb(0x7d, 0x83, 0x79)),
+        number:        fg(Color::Rgb(0xdf, 0xb8, 0x69)),
+        decorator:     fg(Color::Rgb(0xe6, 0x98, 0x75)),
+        operator:      fg(Color::Rgb(0xd3, 0xc6, 0xaa)),
+        punctuation:   fg(Color::Rgb(0xd3, 0xc6, 0xaa)),
+    }
+}
+
+fn rose_pine() -> Theme {
+    Theme {
+        fg:            Color::Rgb(0xe0, 0xde, 0xf4),
+        bg:            Color::Rgb(0x19, 0x17, 0x24),
+        selection_bg:  Color::Rgb(0x26, 0x23, 0x33),
+        line_number:   Style::new().fg(Color::Rgb(0x6f, 0x6a, 0x85)),
+        tilde:         Style::new().fg(Color::Rgb(0x6f, 0x6a, 0x85)),
+        status_bg:     Color::Rgb(0x26, 0x23, 0x33),
+        status_fg:     Color::Rgb(0xe0, 0xde, 0xf4),
+        keyword:       fg(Color::Rgb(0xc4, 0xa7, 0xe7)),
+        builtin:       fg(Color::Rgb(0x9e, 0xce, 0xdd)),
+        rstype:        fg(Color::Rgb(0xeb, 0xbc, 0xba)),
+        function:      fg(Color::Rgb(0xea, 0x9a, 0x97)),
+        lifetime:      fg(Color::Rgb(0x9e, 0xce, 0xdd)),
+        string:        fg(Color::Rgb(0x9c, 0xcf, 0xd8)),
+        fstring_prefix:fg_bold(Color::Rgb(0x9c, 0xcf, 0xd8)),
+        comment:       fg(Color::Rgb(0x6f, 0x6a, 0x85)),
+        number:        fg(Color::Rgb(0xea, 0x9a, 0x97)),
+        decorator:     fg(Color::Rgb(0xc4, 0xa7, 0xe7)),
+        operator:      fg(Color::Rgb(0x90, 0x8c, 0xaa)),
+        punctuation:   fg(Color::Rgb(0xe0, 0xde, 0xf4)),
+    }
+}
+
+fn oxocarbon() -> Theme {
+    Theme {
+        fg:            Color::Rgb(0xd2, 0xd1, 0xd2),
+        bg:            Color::Rgb(0x16, 0x16, 0x16),
+        selection_bg:  Color::Rgb(0x26, 0x26, 0x26),
+        line_number:   Style::new().fg(Color::Rgb(0x52, 0x52, 0x52)),
+        tilde:         Style::new().fg(Color::Rgb(0x52, 0x52, 0x52)),
+        status_bg:     Color::Rgb(0x26, 0x26, 0x26),
+        status_fg:     Color::Rgb(0xd2, 0xd1, 0xd2),
+        keyword:       fg(Color::Rgb(0xbe, 0x95, 0xff)),
+        builtin:       fg(Color::Rgb(0x33, 0xb0, 0xff)),
+        rstype:        fg(Color::Rgb(0x08, 0xbd, 0xae)),
+        function:      fg(Color::Rgb(0xbe, 0x95, 0xff)),
+        lifetime:      fg(Color::Rgb(0x33, 0xb0, 0xff)),
+        string:        fg(Color::Rgb(0x42, 0xbe, 0xa6)),
+        fstring_prefix:fg_bold(Color::Rgb(0x42, 0xbe, 0xa6)),
+        comment:       fg(Color::Rgb(0x52, 0x52, 0x52)),
+        number:        fg(Color::Rgb(0xff, 0x7e, 0xb6)),
+        decorator:     fg(Color::Rgb(0xbe, 0x95, 0xff)),
+        operator:      fg(Color::Rgb(0xbe, 0x95, 0xff)),
+        punctuation:   fg(Color::Rgb(0xd2, 0xd1, 0xd2)),
+    }
+}
+
+fn system() -> Theme {
+    Theme {
+        fg:            Color::Rgb(0xc8, 0xc8, 0xd0),
+        bg:            Color::Rgb(0x1c, 0x1c, 0x1e),
+        selection_bg:  Color::Rgb(0x36, 0x36, 0x40),
+        line_number:   Style::new().fg(Color::Rgb(0x5f, 0x5f, 0x69)),
+        tilde:         Style::new().fg(Color::Rgb(0x5f, 0x5f, 0x69)),
+        status_bg:     Color::Rgb(0x37, 0x37, 0x3e),
+        status_fg:     Color::Rgb(0xc8, 0xc8, 0xd0),
+        keyword:       fg(Color::Rgb(0x64, 0x8c, 0xb9)),
+        builtin:       fg(Color::Rgb(0x78, 0xa5, 0xc8)),
+        rstype:        fg(Color::Rgb(0xaa, 0x96, 0x87)),
+        function:      fg(Color::Rgb(0x64, 0x8c, 0xb9)),
+        lifetime:      fg(Color::Rgb(0x78, 0xa5, 0xc8)),
+        string:        fg(Color::Rgb(0x8c, 0xaf, 0x7d)),
+        fstring_prefix:fg_bold(Color::Rgb(0x8c, 0xaf, 0x7d)),
+        comment:       fg(Color::Rgb(0x5f, 0x5f, 0x69)),
+        number:        fg(Color::Rgb(0xc8, 0xaa, 0x7d)),
+        decorator:     fg(Color::Rgb(0x64, 0x8c, 0xb9)),
+        operator:      fg(Color::Rgb(0x5f, 0x5f, 0x69)),
+        punctuation:   fg(Color::Rgb(0xc8, 0xc8, 0xd0)),
+    }
+}
+
+fn opencode() -> Theme {
+    Theme {
+        fg:            Color::Rgb(0xee, 0xee, 0xee),
+        bg:            Color::Rgb(0x0a, 0x0a, 0x0a),
+        selection_bg:  Color::Rgb(0x14, 0x14, 0x14),
+        line_number:   Style::new().fg(Color::Rgb(0x60, 0x60, 0x60)),
+        tilde:         Style::new().fg(Color::Rgb(0x80, 0x80, 0x80)),
+        status_bg:     Color::Rgb(0x9d, 0x7c, 0xd8),
+        status_fg:     Color::Rgb(0xee, 0xee, 0xee),
+        keyword:       fg(Color::Rgb(0x9d, 0x7c, 0xd8)),
+        builtin:       fg(Color::Rgb(0x9d, 0x7c, 0xd8)),
+        rstype:        fg(Color::Rgb(0xe5, 0xc0, 0x7b)),
+        function:      fg(Color::Rgb(0xb2, 0x8c, 0xe6)),
+        lifetime:      fg(Color::Rgb(0x9d, 0x7c, 0xd8)),
+        string:        fg(Color::Rgb(0x7f, 0xd8, 0x8f)),
+        fstring_prefix:fg_bold(Color::Rgb(0x7f, 0xd8, 0x8f)),
+        comment:       fg(Color::Rgb(0x80, 0x80, 0x80)),
+        number:        fg(Color::Rgb(0xf5, 0xa7, 0x42)),
+        decorator:     fg(Color::Rgb(0xb2, 0x8c, 0xe6)),
+        operator:      fg(Color::Rgb(0x9d, 0x7c, 0xd8)),
+        punctuation:   fg(Color::Rgb(0xee, 0xee, 0xee)),
+    }
+}
+
+fn ayu() -> Theme {
+    Theme {
+        fg:            Color::Rgb(0xbf, 0xba, 0xae),
+        bg:            Color::Rgb(0x10, 0x10, 0x12),
+        selection_bg:  Color::Rgb(0x19, 0x19, 0x1c),
+        line_number:   Style::new().fg(Color::Rgb(0x6a, 0x67, 0x5f)),
+        tilde:         Style::new().fg(Color::Rgb(0x6a, 0x67, 0x5f)),
+        status_bg:     Color::Rgb(0x19, 0x19, 0x1c),
+        status_fg:     Color::Rgb(0xbf, 0xba, 0xae),
+        keyword:       fg(Color::Rgb(0xff, 0x8d, 0x52)),
+        builtin:       fg(Color::Rgb(0x73, 0xb6, 0xd1)),
+        rstype:        fg(Color::Rgb(0xff, 0xc6, 0x6d)),
+        function:      fg(Color::Rgb(0xff, 0xc6, 0x6d)),
+        lifetime:      fg(Color::Rgb(0x73, 0xb6, 0xd1)),
+        string:        fg(Color::Rgb(0xa6, 0xd2, 0x70)),
+        fstring_prefix:fg_bold(Color::Rgb(0xa6, 0xd2, 0x70)),
+        comment:       fg(Color::Rgb(0x6a, 0x67, 0x5f)),
+        number:        fg(Color::Rgb(0xd2, 0xaf, 0x73)),
+        decorator:     fg(Color::Rgb(0xff, 0xb5, 0x6a)),
+        operator:      fg(Color::Rgb(0xed, 0x93, 0x66)),
+        punctuation:   fg(Color::Rgb(0xbf, 0xba, 0xae)),
+    }
+}
+
+fn kanagawa() -> Theme {
+    Theme {
+        fg:            Color::Rgb(0xcd, 0xd0, 0xbe),
+        bg:            Color::Rgb(0x1d, 0x20, 0x27),
+        selection_bg:  Color::Rgb(0x25, 0x28, 0x2f),
+        line_number:   Style::new().fg(Color::Rgb(0x53, 0x56, 0x5a)),
+        tilde:         Style::new().fg(Color::Rgb(0x53, 0x56, 0x5a)),
+        status_bg:     Color::Rgb(0x25, 0x28, 0x2f),
+        status_fg:     Color::Rgb(0xcd, 0xd0, 0xbe),
+        keyword:       fg(Color::Rgb(0xcb, 0x94, 0x8f)),
+        builtin:       fg(Color::Rgb(0x8e, 0xa6, 0xb0)),
+        rstype:        fg(Color::Rgb(0xe6, 0xb4, 0x80)),
+        function:      fg(Color::Rgb(0xe5, 0xc0, 0x80)),
+        lifetime:      fg(Color::Rgb(0x8e, 0xa6, 0xb0)),
+        string:        fg(Color::Rgb(0x98, 0xbb, 0x79)),
+        fstring_prefix:fg_bold(Color::Rgb(0x98, 0xbb, 0x79)),
+        comment:       fg(Color::Rgb(0x53, 0x56, 0x5a)),
+        number:        fg(Color::Rgb(0xdc, 0x9e, 0x80)),
+        decorator:     fg(Color::Rgb(0xc7, 0x92, 0x8e)),
+        operator:      fg(Color::Rgb(0x8e, 0xa6, 0xb0)),
+        punctuation:   fg(Color::Rgb(0xcd, 0xd0, 0xbe)),
     }
 }
