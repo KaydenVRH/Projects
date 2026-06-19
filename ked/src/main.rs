@@ -54,7 +54,10 @@ fn main() -> Result<()> {
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        #[cfg(target_os = "macos")]
         let _ = std::process::Command::new("pkill").arg("-x").arg("afplay").output();
+        #[cfg(target_os = "linux")]
+        let _ = std::process::Command::new("pkill").arg("-x").arg("mpv").output();
         prev_hook(info);
     }));
 

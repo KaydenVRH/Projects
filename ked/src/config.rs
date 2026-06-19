@@ -26,10 +26,28 @@ pub struct Config {
     /// Make the content background transparent (terminal default).
     #[serde(default)]
     pub transparent: bool,
+
+    /// Enable/disable visual animations (tab shimmer, rainbow dashes,
+    /// splash logo cycling, spinner).  Defaults to true.
+    #[serde(default = "default_animations")]
+    pub animations: bool,
+
+    /// Show system stats (CPU/MEM/BATT/time) in the buffer bar.
+    /// Defaults to true.
+    #[serde(default = "default_true")]
+    pub bar_stats: bool,
 }
 
 const fn default_filetree_width() -> u16 {
     30
+}
+
+const fn default_animations() -> bool {
+    true
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 impl Config {

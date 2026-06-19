@@ -38,7 +38,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Position, Rect},
     style::{Color, Style, Modifier},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
 };
 
 use crate::highlight;
@@ -192,14 +192,23 @@ pub struct Editor {
     pub filetree_width: u16,
     pub music_dir: String,
     pub transparent: bool,
+    pub animations: bool,
+    pub bar_stats: bool,
     pub _frame: u64,
-    pub _mode_switched: Instant,
+    pub _mode_switched: u64,
     pub _last_mode: Mode,
-    pub _last_state: State,
     /// Cursor style to apply after rendering (set by render, consumed by main).
     pub cursor_style: SetCursorStyle,
-    /// System dashboard data
-    pub sys_info: String,
+
+    /// Cached system stats for the buffer bar (refreshed periodically)
+    pub sys_updated: Instant,
+    pub sys_cpu: f64,
+    pub sys_mem_used: u64,
+    pub sys_mem_total: u64,
+    pub sys_batt_pct: Option<u8>,
+    pub sys_batt_status: Option<String>,
+    /// Background thread for non-blocking stat collection
+    pub sys_task: Option<std::thread::JoinHandle<(f64, u64, u64, Option<u8>, Option<String>)>>,
 
     pub buffers: Vec<Buffer>,
     pub current: usize,
@@ -234,7 +243,7 @@ impl Editor {
             (vec![String::new()], None, None)
         };
 
-        let theme = ThemeKind::from_str(&cfg.theme).unwrap_or(ThemeKind::Default);
+        let theme = ThemeKind::from_str(&cfg.theme).unwrap_or(ThemeKind::Oxocarbon);
 
         let initial_buf = Buffer::new(lines.clone(), filename.clone(), last_mtime);
 
@@ -284,12 +293,19 @@ impl Editor {
                 cfg.music_dir.clone()
             },
             transparent: cfg.transparent,
+            animations: cfg.animations,
+            bar_stats: cfg.bar_stats,
             _frame: 0,
-            _mode_switched: Instant::now(),
+            _mode_switched: 0,
             _last_mode: Mode::Normal,
-            _last_state: State::Normal,
             cursor_style: SetCursorStyle::SteadyBlock,
-            sys_info: String::new(),
+            sys_updated: Instant::now(),
+            sys_cpu: 0.0,
+            sys_mem_used: 0,
+            sys_mem_total: 0,
+            sys_batt_pct: None,
+            sys_batt_status: None,
+            sys_task: None,
         })
     }
 
@@ -1203,7 +1219,9 @@ impl Editor {
                         .unwrap_or_default()
                         .join(path);
                     if let Ok(content) = fs::read_to_string(&full_path) {
-                        let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+                        let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+                        if content.ends_with('\n') { lines.push(String::new()); }
+                        if lines.is_empty() { lines.push(String::new()); }
                         let fname = full_path.to_string_lossy().to_string();
                         let mtime = fs::metadata(&fname).ok().and_then(|m| m.modified().ok());
                         self.sync_to_buffer();
@@ -1365,8 +1383,10 @@ impl Editor {
                     } else {
                         // Open file in new buffer
                         if let Ok(content) = fs::read_to_string(&e.path) {
-                            let lines: Vec<String> =
+                            let mut lines: Vec<String> =
                                 content.lines().map(|l| l.to_string()).collect();
+                            if content.ends_with('\n') { lines.push(String::new()); }
+                            if lines.is_empty() { lines.push(String::new()); }
                             let mtime =
                                 fs::metadata(&e.path).ok().and_then(|m| m.modified().ok());
                             self.sync_to_buffer();
@@ -1458,6 +1478,21 @@ impl Editor {
     pub fn tick(&mut self) {
         self.music_player.poll();
         self.auto_reload();
+        // Non-blocking system stats: poll completed task or spawn new one
+        if let Some(ref task) = self.sys_task {
+            if task.is_finished() {
+                if let Ok(task) = self.sys_task.take().unwrap().join() {
+                    self.sys_cpu = task.0;
+                    self.sys_mem_used = task.1;
+                    self.sys_mem_total = task.2;
+                    self.sys_batt_pct = task.3;
+                    self.sys_batt_status = task.4;
+                    self.sys_updated = Instant::now();
+                }
+            }
+        } else if self.sys_updated.elapsed().as_secs() >= 3 {
+            self.sys_task = Some(std::thread::spawn(collect_sys_stats));
+        }
         // Pump shell output and detect shell death.
         if let Some(ref mut s) = self.shell {
             s.tick();
@@ -1627,7 +1662,6 @@ impl Editor {
             }
             // :sys — system dashboard
             "sys" => {
-                self.sys_info = collect_sys_info();
                 self.state = State::SysInfo;
             }
             // Unknown command.
@@ -1954,10 +1988,9 @@ impl Editor {
     /// Draw the editor into the terminal frame.
     pub fn render(&mut self, f: &mut Frame) {
         self._frame = self._frame.wrapping_add(1);
-        if self.mode != self._last_mode || self.state != self._last_state {
-            self._mode_switched = Instant::now();
+        if self.mode != self._last_mode {
+            self._mode_switched = self._frame;
             self._last_mode = self.mode;
-            self._last_state = self.state;
         }
 
         let area = f.area();
@@ -2242,9 +2275,25 @@ impl Editor {
 
     /// Render a one‑line buffer (tab) bar at the top of the screen.
     fn render_buffer_bar(&self, f: &mut Frame, area: Rect, theme: &Theme) {
-        // Tab shimmer: oscillate the active tab's background brightness
-        let pulse = 0.5 + 0.5 * (self._frame as f64 * 0.12).sin();
-        let shimmer_bg = blend_colors(theme.status_bg, theme.status_fg, 0.0, (pulse * 0.10) as f32);
+        // Split: tabs on the left, system stats on the right (if enabled)
+        let stat_w = if self.bar_stats {
+            56u16.min(area.width.saturating_sub(20))
+        } else {
+            0
+        };
+        let [tabs_area, stats_area] = Layout::horizontal([
+            Constraint::Min(1),
+            Constraint::Length(stat_w),
+        ])
+        .areas(area);
+
+        // Tab shimmer
+        let active_bg = if self.animations {
+            let pulse = 0.5 + 0.5 * (self._frame as f64 * 0.12).sin();
+            blend_colors(theme.status_bg, theme.status_fg, 0.0, (pulse * 0.10) as f32)
+        } else {
+            theme.status_bg
+        };
 
         let items: Vec<Span> = self
             .buffers
@@ -2260,7 +2309,7 @@ impl Editor {
                 let mod_flag = if buf.modified { " +" } else { "" };
                 let label = format!(" {name}{mod_flag} ");
                 let style = if is_current {
-                    Style::new().fg(theme.status_fg).bg(shimmer_bg)
+                    Style::new().fg(theme.status_fg).bg(active_bg)
                 } else {
                     Style::new().fg(theme.comment.fg.unwrap_or(theme.fg)).bg(theme.bg)
                 };
@@ -2268,35 +2317,70 @@ impl Editor {
             })
             .collect::<Vec<_>>();
 
-        // Remove the trailing "│".
         let last_idx = items.len().saturating_sub(1);
         let spans: Vec<Span> = items.into_iter().take(last_idx).collect();
 
         f.render_widget(
             Paragraph::new(Line::from(spans)).style(Style::new().bg(theme.bg)),
-            area,
+            tabs_area,
+        );
+
+        // ── right-side system stats (only when bar_stats = true) ──
+        if !self.bar_stats {
+            return;
+        }
+        let now = chrono::Local::now();
+        let time_str = now.format("%H:%M:%S").to_string();
+        let date_str = now.format("%Y-%m-%d").to_string();
+
+        // Build stats line: CPU | MEM | BATT | time | holy pulse
+        let cpu_str = format!("CPU:{:3.0}%", self.sys_cpu.min(99.9));
+        let mem_str = if self.sys_mem_total > 0 {
+            let used_gb = self.sys_mem_used as f64 / (1 << 30) as f64;
+            let total_gb = self.sys_mem_total as f64 / (1 << 30) as f64;
+            format!("MEM:{:.1}/{:.1}G", used_gb, total_gb)
+        } else {
+            String::from("MEM:?")
+        };
+        let batt_str = if let Some(pct) = self.sys_batt_pct {
+            let icon = match self.sys_batt_status.as_deref() {
+                Some("charging") => "+",
+                Some("full") | Some("on AC") => "=",
+                _ => "",
+            };
+            format!("BAT:{}{}%", icon, pct)
+        } else {
+            String::from("BAT:?")
+        };
+
+        // TempleOS "holy pulse" indicator if animations are on
+        let holy = if self.animations {
+            let chars = ['▁','▂','▃','▄','▅','▆','▇','█'];
+            let idx = (self._frame as usize / 6) % chars.len();
+            format!("{}", chars[idx])
+        } else {
+            String::from("█")
+        };
+
+        let stats_text = format!(
+            " {cpu_str}  {mem_str}  {batt_str}  {date_str} {time_str} {holy} "
+        );
+        let stats_span = Span::styled(
+            stats_text,
+            Style::new()
+                .fg(theme.status_fg)
+                .bg(theme.status_bg),
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(stats_span))
+                .alignment(Alignment::Right)
+                .style(Style::new().bg(theme.status_bg)),
+            stats_area,
         );
     }
 
     /// Render the status bar at the bottom of the screen.
     fn render_status(&self, f: &mut Frame, area: Rect, _width: usize, theme: &Theme) {
-
-        // Mode-tint flash: briefly tint the status bar when switching modes.
-        let since = self._mode_switched.elapsed().as_secs_f64();
-        let tint_bg = if since < 0.3 && self.mode != Mode::Normal {
-            let tint = match self.mode {
-                Mode::Insert => Color::Rgb(80, 160, 80),
-                Mode::Normal => unreachable!(),
-            };
-            let alpha = (1.0 - since / 0.3) as f32;
-            blend_colors(theme.status_bg, tint, 0.0, alpha)
-        } else if since < 0.3 && self.state == State::Visual {
-            let tint = Color::Rgb(120, 120, 200);
-            let alpha = (1.0 - since / 0.3) as f32;
-            blend_colors(theme.status_bg, tint, 0.0, alpha)
-        } else {
-            theme.status_bg
-        };
 
         // Build the status text depending on state.
         let text: String = if let Some(ref msg) = self.flash {
@@ -2308,27 +2392,22 @@ impl Editor {
         } else {
             // Spinner (braille rotation) when music is playing
             let spinner_chars: &[char] = &['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
-            let spinner = if self.music_player.playing {
+            let spinner = if self.animations && self.music_player.playing {
                 format!("{} ", spinner_chars[self._frame as usize % spinner_chars.len()])
             } else {
                 String::new()
             };
 
-            // Mode with colour blink (text stays visible, fg alternates)
-            let (mode_text, blink_fg) = if self.state == State::Visual {
-                ("VISUAL", Color::Rgb(120, 120, 200))
+            // Mode text in solid colour while active
+            let (mode_text, mode_color) = if self.state == State::Visual {
+                ("VISUAL", Color::Rgb(100, 160, 255))
             } else {
                 match self.mode {
-                    Mode::Insert => ("INSERT", Color::Rgb(80, 160, 80)),
+                    Mode::Insert => ("INSERT", Color::Rgb(100, 220, 100)),
                     Mode::Normal => ("NORMAL", theme.status_fg),
                 }
             };
-            let blink_on = (self._frame / 15) % 2 == 0;
-            let mode_style = if blink_on && mode_text != "NORMAL" {
-                Style::new().fg(blink_fg).bg(tint_bg)
-            } else {
-                Style::new().fg(theme.status_fg).bg(tint_bg)
-            };
+            let mode_style = Style::new().fg(mode_color).bg(theme.status_bg);
 
             let fname = self.filename.as_deref().unwrap_or("[No Name]");
             let mod_str = if self.modified { " [+]" } else { "" };
@@ -2343,9 +2422,14 @@ impl Editor {
                     let name = s.rsplit('/').next().unwrap_or(s);
                     let max_len = (_width.saturating_sub(60)).max(10);
                     if name.len() > max_len {
-                        let pos = (self._frame as usize * 3) % (name.len() + 6);
+                        // Scroll at ~3 chars/sec (frame / 20 at 60fps)
+                        let pos_raw = (self._frame as usize / 20) % (name.len() + 7);
                         let scrolled = format!("{name}  ♫  {name}");
-                        let end = (pos + max_len).min(scrolled.len());
+                        let end_raw = (pos_raw + max_len).min(scrolled.len());
+                        // Snap to char boundaries so we never slice mid-char
+                        let pos = if scrolled.is_char_boundary(pos_raw) { pos_raw }
+                            else { scrolled.floor_char_boundary(pos_raw) };
+                        let end = scrolled.ceil_char_boundary(end_raw).min(scrolled.len());
                         let slice = &scrolled[pos..end];
                         format!("  ♫ {slice}")
                     } else {
@@ -2355,11 +2439,15 @@ impl Editor {
                 .unwrap_or_default();
 
             // Build spans with animated dash colours
-            let dash_colors = [theme.keyword.fg, theme.builtin.fg, theme.rstype.fg, theme.string.fg, theme.number.fg];
-            let dash_idx = (self._frame / 3) as usize % dash_colors.len();
-            let dash_color = dash_colors[dash_idx].unwrap_or(theme.status_fg);
-            let dash_style = Style::new().fg(dash_color).bg(tint_bg);
-            let plain_style = Style::new().fg(theme.status_fg).bg(tint_bg);
+            let dash_color = if self.animations {
+                let dash_colors = [theme.keyword.fg, theme.builtin.fg, theme.rstype.fg, theme.string.fg, theme.number.fg];
+                let dash_idx = (self._frame / 3) as usize % dash_colors.len();
+                dash_colors[dash_idx].unwrap_or(theme.status_fg)
+            } else {
+                theme.status_fg
+            };
+            let dash_style = Style::new().fg(dash_color).bg(theme.status_bg);
+            let plain_style = Style::new().fg(theme.status_fg).bg(theme.status_bg);
 
             let spans = vec![
                 Span::styled(format!(" {spinner}"), plain_style),
@@ -2374,7 +2462,7 @@ impl Editor {
             ];
 
             let bar = Paragraph::new(Line::from(spans))
-                .style(Style::new().bg(tint_bg));
+                .style(Style::new().bg(theme.status_bg));
             f.render_widget(ratatui::widgets::Clear, area);
             f.render_widget(bar, area);
             return;
@@ -2382,9 +2470,9 @@ impl Editor {
 
         let bar = Paragraph::new(Line::from(Span::styled(
             text.clone(),
-            Style::new().fg(theme.status_fg).bg(tint_bg),
+            Style::new().fg(theme.status_fg).bg(theme.status_bg),
         )))
-        .style(Style::new().bg(tint_bg));
+        .style(Style::new().bg(theme.status_bg));
         f.render_widget(ratatui::widgets::Clear, area);
         f.render_widget(bar, area);
     }
@@ -2408,14 +2496,26 @@ impl Editor {
         // Clear the area so the popup stands out.
         f.render_widget(Clear, popup);
 
-        // Outer block with "Find File" title.
+        // Outer block (borders only, no title — we render the title bar manually).
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(" Find File ")
-            .title_style(Style::new().fg(theme.fg))
             .border_style(Style::new().fg(theme.fg));
         let inner = block.inner(popup);
         f.render_widget(block, popup);
+
+        // ── scrolling title bar overlaid on top border ──────────
+        let title_area = Rect::new(popup.x + 1, popup.y, popup.width.saturating_sub(2), 1);
+        f.render_widget(Clear, title_area);
+        let title_text = scrolled_title("Find File", self._frame, self.animations);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                title_text,
+                Style::new().fg(theme.fg).bg(theme.status_bg),
+            )))
+            .alignment(Alignment::Center)
+            .style(Style::new().bg(theme.status_bg)),
+            title_area,
+        );
 
         // Split inner area: query bar (1 line) + results list (rest).
         if inner.height < 2 {
@@ -2510,11 +2610,23 @@ impl Editor {
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(" Music Player ")
-            .title_style(Style::new().fg(theme.fg))
             .border_style(Style::new().fg(theme.fg));
         let inner = block.inner(popup);
         f.render_widget(block, popup);
+
+        // ── scrolling title bar ─────────────────────────────────
+        let title_area = Rect::new(popup.x + 1, popup.y, popup.width.saturating_sub(2), 1);
+        f.render_widget(Clear, title_area);
+        let title_text = scrolled_title("Music Player", self._frame, self.animations);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                title_text,
+                Style::new().fg(theme.fg).bg(theme.status_bg),
+            )))
+            .alignment(Alignment::Center)
+            .style(Style::new().bg(theme.status_bg)),
+            title_area,
+        );
 
         if inner.height < 2 {
             return;
@@ -2622,11 +2734,23 @@ impl Editor {
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(" Theme Selector ")
-            .title_style(Style::new().fg(theme.fg))
             .border_style(Style::new().fg(theme.fg));
         let inner = block.inner(popup);
         f.render_widget(block, popup);
+
+        // ── scrolling title bar ─────────────────────────────────
+        let title_area = Rect::new(popup.x + 1, popup.y, popup.width.saturating_sub(2), 1);
+        f.render_widget(Clear, title_area);
+        let title_text = scrolled_title("Theme Selector", self._frame, self.animations);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                title_text,
+                Style::new().fg(theme.fg).bg(theme.status_bg),
+            )))
+            .alignment(Alignment::Center)
+            .style(Style::new().bg(theme.status_bg)),
+            title_area,
+        );
 
         if inner.height < 1 {
             return;
@@ -2680,18 +2804,150 @@ impl Editor {
     // ── system dashboard (:sys) ──────────────────────────────────
 
     fn render_sysinfo(&self, f: &mut Frame, area: Rect, theme: &Theme) {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" System Dashboard ")
-            .title_style(Style::new().fg(theme.fg))
-            .border_style(Style::new().fg(theme.fg));
-        let inner = block.inner(area);
-        f.render_widget(Clear, area);
-        f.render_widget(block, area);
-        let text = Text::from(self.sys_info.clone());
+        // Cached sys stats + fresh dashboard data
+        let cpu_pct = self.sys_cpu.min(100.0);
+        let mem_used = self.sys_mem_used;
+        let mem_total = self.sys_mem_total.max(1);
+        let mem_pct = ((mem_used as f64 / mem_total as f64) * 100.0).min(100.0);
+
+        let host = std::env::var("HOSTNAME")
+            .or_else(|_| std::env::var("HOST"))
+            .unwrap_or_else(|_| "?".into());
+        let user = std::env::var("USER").unwrap_or_else(|_| "?".into());
+        let kernel = std::process::Command::new("uname").arg("-r").output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|_| "?".into());
+
+        let uptime = std::process::Command::new("uptime").output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_else(|_| "?".into());
+
+        let disk_line = std::process::Command::new("df").args(["-h", "/"]).output()
+            .map(|o| {
+                let s = String::from_utf8_lossy(&o.stdout);
+                let parts: Vec<&str> = s.lines().last().unwrap_or("").split_whitespace().collect();
+                if parts.len() >= 5 {
+                    format!("Disk: {} used / {}  ({} free)", parts[2], parts[1], parts[3])
+                } else { "Disk: ?".into() }
+            })
+            .unwrap_or_else(|_| "Disk: ?".into());
+
+        let batt_line = {
+            #[cfg(target_os = "macos")]
+            { self.sys_batt_pct.map(|pct| {
+                let status = self.sys_batt_status.as_deref().unwrap_or("?");
+                format!("Battery: {}% ({})", pct, status)
+            })}
+            #[cfg(not(target_os = "macos"))]
+            { None::<String> }
+        };
+
+        // Log tail
+        let log_text = {
+            #[cfg(target_os = "macos")]
+            {
+                std::process::Command::new("log")
+                    .args(["show", "--last", "5m", "--style", "compact", "--predicate",
+                        "eventMessage contains[c] 'error' or messageType == 16 or messageType == 17"])
+                    .output().ok().map(|out| {
+                        let s = String::from_utf8_lossy(&out.stdout);
+                        let lines: Vec<&str> = s.lines().rev().take(15).collect();
+                        lines.into_iter().rev().collect::<Vec<_>>().join("\n")
+                    }).unwrap_or_else(|| "(no log data)".into())
+            }
+            #[cfg(target_os = "linux")]
+            {
+                std::process::Command::new("journalctl")
+                    .args(["--no-pager", "-n", "15", "-p", "3..4", "-o", "short-iso"])
+                    .output().ok().map(|out| {
+                        String::from_utf8_lossy(&out.stdout).trim().to_string()
+                    }).filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "(no log data)".into())
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            { String::new() }
+        };
+
+        // ── Layout ────────────────────────────────────────────────
+        // header (1) + info (1) + battery? (1) + gap (1) + log-header (1) + logs (rest)
+        let has_batt = batt_line.is_some();
+        let mut constraints = vec![
+            Constraint::Length(1),          // header
+            Constraint::Length(1),          // info
+        ];
+        if has_batt {
+            constraints.push(Constraint::Length(1)); // battery
+        }
+        constraints.push(Constraint::Length(1));     // gap
+        constraints.push(Constraint::Length(1));     // log header
+        constraints.push(Constraint::Min(4));       // logs
+        let areas = Layout::vertical(constraints).split(area);
+        let mut idx = 0;
+        let head_area      = areas[idx]; idx += 1;
+        let info_area      = areas[idx]; idx += 1;
+        let batt_area      = if has_batt { let r = areas[idx]; idx += 1; Some(r) } else { None };
+        let log_head_area  = areas[idx + 1]; // skip gap
+        let log_area       = areas[idx + 2];
+
+        // ── Header bar ────────────────────────────────────────────
+        let header = format!(" System Dashboard ─ {host} ─ {user} ─ kernel {kernel} ");
+        f.render_widget(Clear, head_area);
         f.render_widget(
-            Paragraph::new(text).style(Style::new().fg(theme.fg).bg(theme.bg)),
-            inner,
+            Paragraph::new(Line::from(Span::styled(header,
+                Style::new().fg(theme.status_fg).bg(theme.status_bg))))
+            .style(Style::new().bg(theme.status_bg)),
+            head_area,
+        );
+
+        // ── Info row ──────────────────────────────────────────────
+        let info_text = format!(
+            "  CPU: {:.1}%     Memory: {:.1}/{:.1} GB ({:.0}%)     {}     {}  ",
+            cpu_pct,
+            mem_used as f64 / (1<<30) as f64,
+            mem_total as f64 / (1<<30) as f64,
+            mem_pct,
+            disk_line,
+            uptime,
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(info_text,
+                Style::new().fg(theme.fg).bg(theme.bg))))
+            .style(Style::new().bg(theme.bg)),
+            info_area,
+        );
+
+        // ── Battery row (optional) ────────────────────────────────
+        if let (Some(area), Some(bl)) = (batt_area, &batt_line) {
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(format!("  {bl}  "),
+                    Style::new().fg(theme.fg).bg(theme.bg))))
+                .style(Style::new().bg(theme.bg)),
+                area,
+            );
+        }
+
+        // ── Log header ────────────────────────────────────────────
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled("  System Log ─ recent errors  ",
+                Style::new().fg(theme.status_fg).bg(theme.status_bg))))
+            .style(Style::new().bg(theme.status_bg)),
+            log_head_area,
+        );
+
+        // ── Log content ───────────────────────────────────────────
+        let log_lines: Vec<Line> = if log_text.is_empty() {
+            vec![Line::from(Span::styled("  (no log data)",
+                Style::new().fg(theme.comment.fg.unwrap_or(theme.fg)).bg(theme.bg)))]
+        } else {
+            log_text.lines().map(|l|
+                Line::from(Span::styled(format!("  {l}"),
+                    Style::new().fg(theme.fg).bg(theme.bg)))
+            ).collect()
+        };
+        f.render_widget(
+            Paragraph::new(Text::from(log_lines))
+                .style(Style::new().bg(theme.bg)),
+            log_area,
         );
     }
 
@@ -2757,16 +3013,33 @@ impl Editor {
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(" Run Output ")
-            .title_style(Style::new().fg(theme.fg))
             .border_style(Style::new().fg(theme.fg));
+        let inner = block.inner(popup);
+        f.render_widget(block, popup);
 
-        let output_paragraph = Paragraph::new(Text::from(self.run_output.clone()))
-            .block(block)
-            .style(Style::new().fg(theme.fg).bg(theme.bg))
-            .wrap(Wrap { trim: false });
-
-        f.render_widget(output_paragraph, popup);
+        // ── scrolling title bar ─────────────────────────────────
+        let title_area = Rect::new(popup.x + 1, popup.y, popup.width.saturating_sub(2), 1);
+        f.render_widget(Clear, title_area);
+        let title_text = scrolled_title("Run Output", self._frame, self.animations);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                title_text,
+                Style::new().fg(theme.fg).bg(theme.status_bg),
+            )))
+            .alignment(Alignment::Center)
+            .style(Style::new().bg(theme.status_bg)),
+            title_area,
+        );
+        // Output text — show last inner_h lines.
+        let inner_h = inner.height as usize;
+        let lines: Vec<&str> = self.run_output.split('\n').collect();
+        let visible = if lines.len() > inner_h { &lines[lines.len() - inner_h..] } else { &lines[..] };
+        let text: String = visible.join("\n");
+        f.render_widget(
+            Paragraph::new(Text::from(text))
+                .style(Style::new().fg(theme.fg).bg(theme.bg)),
+            inner,
+        );
     }
 
     fn render_shell(&mut self, f: &mut Frame, area: Rect) {
@@ -2868,7 +3141,11 @@ impl Editor {
         }
 
         for (li, line) in figlet.iter().enumerate() {
-            let color = splash_colors[(li as f64 + anim_offset) as usize % splash_colors.len()].0;
+            let color = if self.animations {
+                splash_colors[(li as f64 + anim_offset) as usize % splash_colors.len()].0
+            } else {
+                theme.keyword.fg.unwrap_or(theme.fg)
+            };
             lines.push(Line::from(Span::styled(*line, Style::new().fg(color))));
         }
 
@@ -2959,6 +3236,30 @@ impl Editor {
             List::new(visible).style(Style::new().bg(theme.bg)),
             inner,
         );
+    }
+}
+
+/// TempleOS-style scrolling title bar text.
+/// Pads with `═` and scrolls left based on frame counter.
+/// When `animated` is false, returns a static centered title.
+fn scrolled_title(label: &str, frame: u64, animated: bool) -> String {
+    let label = &label.to_uppercase();
+    if !animated {
+        return format!("═══ {label} ═══");
+    }
+    let pad = 6usize;
+    let scrolled = format!("{}═══ {} ═══{}",
+        "═".repeat(pad), label, "═".repeat(pad));
+    let chars: Vec<char> = scrolled.chars().collect();
+    let visible = 24usize.min(chars.len());
+    let offset = (frame as usize / 5) % chars.len();
+    if offset + visible <= chars.len() {
+        chars[offset..offset + visible].iter().collect()
+    } else {
+        let mut s: String = chars[offset..].iter().collect();
+        let remain = visible - (chars.len() - offset);
+        s.push_str(&chars[..remain].iter().collect::<String>());
+        s
     }
 }
 
@@ -3104,96 +3405,142 @@ fn key_to_bytes(key: KeyEvent) -> Vec<u8> {
     }
 }
 
-/// Collect system information for the dashboard.
-fn collect_sys_info() -> String {
+// ── System stats collection (runs in background thread) ──────────
+
+#[cfg(target_os = "macos")]
+fn collect_sys_stats() -> (f64, u64, u64, Option<u8>, Option<String>) {
     use std::process::Command;
-    let mut info = String::new();
-
-    // Host & user
-    if let Ok(host) = std::env::var("HOSTNAME").or_else(|_| std::env::var("HOST")) {
-        info.push_str(&format!("Host: {host}\n"));
-    }
-    if let Ok(user) = std::env::var("USER") {
-        info.push_str(&format!("User: {user}\n"));
-    }
-
-    // Uptime
-    if let Ok(out) = Command::new("uptime").output() {
-        let s = String::from_utf8_lossy(&out.stdout);
-        info.push_str(&format!("Uptime: {}\n", s.trim()));
-    }
+    let mut cpu: f64 = 0.0;
+    let mut mem_used: u64 = 0;
+    let mut mem_total: u64 = 0;
+    let mut batt_pct: Option<u8> = None;
+    let mut batt_status: Option<String> = None;
 
     // CPU
-    #[cfg(target_os = "macos")]
+    if let Ok(out) = Command::new("top")
+        .args(["-l", "1", "-n", "0", "-s", "0"])
+        .output()
     {
-        if let Ok(out) = Command::new("top").args(["-l", "1", "-n", "0", "-s", "0"]).output() {
-            let s = String::from_utf8_lossy(&out.stdout);
-            for line in s.lines() {
-                if line.contains("CPU usage") {
-                    info.push_str(&format!("CPU: {line}\n"));
-                    break;
-                }
-            }
-        }
-    }
-
-    // Memory
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(out) = Command::new("vm_stat").output() {
-            let s = String::from_utf8_lossy(&out.stdout);
-            let mut page_size: u64 = 16384;
-            let mut used: u64 = 0;
-            for line in s.lines() {
-                if line.contains("page size of") {
-                    if let Some(n) = line.split_whitespace().last() {
-                        page_size = n.parse().unwrap_or(16384);
-                    }
-                }
-                if line.contains("Pages active") || line.contains("Pages wired") {
-                    if let Some(n) = line.split(':').last() {
-                        let n: u64 = n.trim().trim_end_matches('.').parse().unwrap_or(0);
-                        used += n;
-                    }
-                }
-            }
-            let total = {
-                if let Ok(out) = Command::new("sysctl").args(["-n", "hw.memsize"]).output() {
-                    String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(0)
-                } else { 0u64 }
-            };
-            info.push_str(&format!("Memory: {} MB used / {} MB total\n",
-                used * page_size / 1024 / 1024, total / 1024 / 1024));
-        }
-    }
-
-    // Disk
-    if let Ok(out) = Command::new("df").args(["-h", "/"]).output() {
         let s = String::from_utf8_lossy(&out.stdout);
-        if let Some(line) = s.lines().last() {
-            info.push_str(&format!("Disk: {line}\n"));
+        for line in s.lines() {
+            if let Some(idx) = line.find("CPU usage") {
+                if let Some(pct) = line[idx..].split_whitespace()
+                    .find(|w| w.ends_with('%'))
+                    .and_then(|w| w.trim_end_matches('%').parse::<f64>().ok())
+                {
+                    cpu = pct;
+                }
+                break;
+            }
         }
     }
-
+    // Memory
+    if let Ok(out) = Command::new("vm_stat").output() {
+        let s = String::from_utf8_lossy(&out.stdout);
+        let mut page_size: u64 = 16384;
+        let mut used: u64 = 0;
+        for line in s.lines() {
+            if line.contains("page size of") {
+                page_size = line.split_whitespace().last()
+                    .and_then(|n| n.parse().ok()).unwrap_or(16384);
+            }
+            if line.contains("Pages active") || line.contains("Pages wired") {
+                if let Some(n) = line.split(':').last()
+                    .and_then(|n| n.trim().trim_end_matches('.').parse::<u64>().ok())
+                {
+                    used += n;
+                }
+            }
+        }
+        mem_used = used * page_size;
+        if let Ok(out) = Command::new("sysctl").args(["-n", "hw.memsize"]).output() {
+            mem_total = String::from_utf8_lossy(&out.stdout)
+                .trim().parse().unwrap_or(0);
+        }
+    }
     // Battery
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(out) = Command::new("pmset").args(["-g", "batt"]).output() {
-            let s = String::from_utf8_lossy(&out.stdout);
-            for line in s.lines() {
-                if line.contains('%') {
-                    info.push_str(&format!("Battery: {line}\n"));
-                    break;
+    if let Ok(out) = Command::new("pmset").args(["-g", "batt"]).output() {
+        let s = String::from_utf8_lossy(&out.stdout);
+        for line in s.lines() {
+            if let Some(pct) = line.split('%').next()
+                .and_then(|p| p.split_whitespace().last())
+                .and_then(|n| n.parse::<u8>().ok())
+            {
+                batt_pct = Some(pct);
+                let status = if line.contains("discharging") { "discharging" }
+                    else if line.contains("charging") { "charging" }
+                    else if line.contains("AC") && pct == 100 { "full" }
+                    else if line.contains("AC") { "on AC" }
+                    else { "?" };
+                batt_status = Some(status.to_string());
+                break;
+            }
+        }
+    }
+    (cpu, mem_used, mem_total, batt_pct, batt_status)
+}
+
+#[cfg(target_os = "linux")]
+fn collect_sys_stats() -> (f64, u64, u64, Option<u8>, Option<String>) {
+    use std::fs;
+    let mut cpu: f64 = 0.0;
+    let mut mem_used: u64 = 0;
+    let mut mem_total: u64 = 0;
+    let mut batt_pct: Option<u8> = None;
+    let mut batt_status: Option<String> = None;
+
+    // CPU from /proc/stat
+    if let Ok(s) = fs::read_to_string("/proc/stat") {
+        if let Some(line) = s.lines().next() {
+            let parts: Vec<u64> = line.split_whitespace().skip(1)
+                .filter_map(|v| v.parse().ok()).collect();
+            if parts.len() >= 4 {
+                let total: u64 = parts.iter().sum();
+                let idle = parts[3];
+                // Rough CPU usage estimate
+                if total > 0 {
+                    cpu = 100.0 * (1.0 - idle as f64 / total as f64);
                 }
             }
         }
     }
 
-    if info.is_empty() {
-        info = "No system info available".to_string();
+    // Memory from /proc/meminfo
+    if let Ok(s) = fs::read_to_string("/proc/meminfo") {
+        for line in s.lines() {
+            if line.starts_with("MemTotal:") {
+                mem_total = line.split_whitespace().nth(1)
+                    .and_then(|v| v.parse().ok()).unwrap_or(0) * 1024;
+            }
+            if line.starts_with("MemAvailable:") {
+                let avail = line.split_whitespace().nth(1)
+                    .and_then(|v| v.parse::<u64>().ok()).unwrap_or(0) * 1024;
+                mem_used = mem_total.saturating_sub(avail);
+            }
+        }
     }
-    info
+
+    // Battery from /sys/class/power_supply
+    let batt_dirs = ["BAT0", "BAT1", "BATT"];
+    for name in &batt_dirs {
+        let base = format!("/sys/class/power_supply/{name}");
+        if let Ok(pct) = fs::read_to_string(format!("{base}/capacity")) {
+            batt_pct = pct.trim().parse().ok();
+        }
+        if let Ok(status) = fs::read_to_string(format!("{base}/status")) {
+            batt_status = Some(status.trim().to_lowercase());
+        }
+        if batt_pct.is_some() { break; }
+    }
+
+    (cpu, mem_used, mem_total, batt_pct, batt_status)
 }
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn collect_sys_stats() -> (f64, u64, u64, Option<u8>, Option<String>) {
+    (0.0, 0, 0, None, None)
+}
+
 fn run_python(path: &str) -> String {
     let output = ProcCmd::new("python3")
         .arg(path)

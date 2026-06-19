@@ -61,6 +61,11 @@ pub enum ThemeKind {
     OpenCode,
     Ayu,
     Kanagawa,
+    TempleOS,
+    Palenight,
+    DarkPlus,
+    Moonlight,
+    Poimandres,
 }
 
 impl ThemeKind {
@@ -85,6 +90,11 @@ impl ThemeKind {
             ThemeKind::OpenCode   => opencode(),
             ThemeKind::Ayu        => ayu(),
             ThemeKind::Kanagawa   => kanagawa(),
+            ThemeKind::TempleOS   => templeos(),
+            ThemeKind::Palenight  => palenight(),
+            ThemeKind::DarkPlus   => dark_plus(),
+            ThemeKind::Moonlight  => moonlight(),
+            ThemeKind::Poimandres => poimandres(),
         }
     }
 
@@ -109,6 +119,11 @@ impl ThemeKind {
             ThemeKind::OpenCode   => "opencode",
             ThemeKind::Ayu        => "ayu",
             ThemeKind::Kanagawa   => "kanagawa",
+            ThemeKind::TempleOS   => "templeos",
+            ThemeKind::Palenight  => "palenight",
+            ThemeKind::DarkPlus   => "darkplus",
+            ThemeKind::Moonlight  => "moonlight",
+            ThemeKind::Poimandres => "poimandres",
         }
     }
 
@@ -133,6 +148,11 @@ impl ThemeKind {
             ThemeKind::OpenCode,
             ThemeKind::Ayu,
             ThemeKind::Kanagawa,
+            ThemeKind::TempleOS,
+            ThemeKind::Palenight,
+            ThemeKind::DarkPlus,
+            ThemeKind::Moonlight,
+            ThemeKind::Poimandres,
         ]
     }
 
@@ -157,6 +177,11 @@ impl ThemeKind {
             "opencode"   => Some(ThemeKind::OpenCode),
             "ayu"        => Some(ThemeKind::Ayu),
             "kanagawa"   => Some(ThemeKind::Kanagawa),
+            "templeos"   => Some(ThemeKind::TempleOS),
+            "palenight"  => Some(ThemeKind::Palenight),
+            "darkplus"   => Some(ThemeKind::DarkPlus),
+            "moonlight"  => Some(ThemeKind::Moonlight),
+            "poimandres" => Some(ThemeKind::Poimandres),
             _           => None,
         }
     }
@@ -787,5 +812,135 @@ fn kanagawa() -> Theme {
         decorator:     fg(Color::Rgb(0xc7, 0x92, 0x8e)),
         operator:      fg(Color::Rgb(0x8e, 0xa6, 0xb0)),
         punctuation:   fg(Color::Rgb(0xcd, 0xd0, 0xbe)),
+    }
+}
+
+fn templeos() -> Theme {
+    // Classic TempleOS / VGA-cyan aesthetic
+    // bg: deep teal, fg: white, highlights: bright yellow
+    Theme {
+        fg:            Color::Rgb(0xd0, 0xd0, 0xd0),
+        bg:            Color::Rgb(0x00, 0x5f, 0x5f),
+        selection_bg:  Color::Rgb(0x00, 0x80, 0x80),
+        line_number:   Style::new().fg(Color::Rgb(0x00, 0x87, 0x87)),
+        tilde:         Style::new().fg(Color::Rgb(0x70, 0x70, 0x70)),
+        status_bg:     Color::Rgb(0x00, 0x40, 0x40),
+        status_fg:     Color::Rgb(0xff, 0xff, 0x00),
+        keyword:       fg(Color::Rgb(0xff, 0xff, 0x00)),
+        builtin:       fg(Color::Rgb(0x00, 0xff, 0xff)),
+        rstype:        fg(Color::Rgb(0xff, 0xff, 0xff)),
+        function:      fg(Color::Rgb(0xff, 0xa0, 0x00)),
+        lifetime:      fg(Color::Rgb(0x00, 0xff, 0xff)),
+        string:        fg(Color::Rgb(0x00, 0xff, 0x00)),
+        fstring_prefix:fg_bold(Color::Rgb(0x00, 0xff, 0x00)),
+        comment:       fg(Color::Rgb(0x70, 0x70, 0x70)),
+        number:        fg(Color::Rgb(0xff, 0x40, 0xff)),
+        decorator:     fg(Color::Rgb(0xff, 0xff, 0x00)),
+        operator:      fg(Color::Rgb(0xff, 0xff, 0x00)),
+        punctuation:   fg(Color::Rgb(0xd0, 0xd0, 0xd0)),
+    }
+}
+
+// ── Palenight (Material Palenight) ─────────────────────────────
+
+fn palenight() -> Theme {
+    Theme {
+        fg:            Color::Rgb(0xbf, 0xc7, 0xd5),
+        bg:            Color::Rgb(0x29, 0x2d, 0x3e),
+        selection_bg:  Color::Rgb(0x3e, 0x43, 0x57),
+        line_number:   Style::new().fg(Color::Rgb(0x67, 0x6e, 0x95)),
+        tilde:         Style::new().fg(Color::Rgb(0x67, 0x6e, 0x95)),
+        status_bg:     Color::Rgb(0x1e, 0x21, 0x30),
+        status_fg:     Color::Rgb(0xbf, 0xc7, 0xd5),
+        keyword:       fg(Color::Rgb(0xc7, 0x92, 0xea)),
+        builtin:       fg(Color::Rgb(0x82, 0xaa, 0xff)),
+        rstype:        fg(Color::Rgb(0xff, 0xcb, 0x6b)),
+        function:      fg(Color::Rgb(0x82, 0xaa, 0xff)),
+        lifetime:      fg(Color::Rgb(0x89, 0xdd, 0xff)),
+        string:        fg(Color::Rgb(0xc3, 0xe8, 0x8d)),
+        fstring_prefix:fg_bold(Color::Rgb(0xc3, 0xe8, 0x8d)),
+        comment:       fg(Color::Rgb(0x67, 0x6e, 0x95)),
+        number:        fg(Color::Rgb(0xf7, 0x8c, 0x6c)),
+        decorator:     fg(Color::Rgb(0xc7, 0x92, 0xea)),
+        operator:      fg(Color::Rgb(0x89, 0xdd, 0xff)),
+        punctuation:   fg(Color::Rgb(0xbf, 0xc7, 0xd5)),
+    }
+}
+
+// ── Dark+ (VS Code default dark) ───────────────────────────────
+
+fn dark_plus() -> Theme {
+    Theme {
+        fg:            Color::Rgb(0xd4, 0xd4, 0xd4),
+        bg:            Color::Rgb(0x1e, 0x1e, 0x1e),
+        selection_bg:  Color::Rgb(0x26, 0x4f, 0x78),
+        line_number:   Style::new().fg(Color::Rgb(0x85, 0x85, 0x85)),
+        tilde:         Style::new().fg(Color::Rgb(0x6a, 0x6a, 0x6a)),
+        status_bg:     Color::Rgb(0x00, 0x73, 0x3e),
+        status_fg:     Color::Rgb(0xff, 0xff, 0xff),
+        keyword:       fg(Color::Rgb(0x56, 0x9c, 0xd6)),
+        builtin:       fg(Color::Rgb(0xdc, 0xdc, 0xaa)),
+        rstype:        fg(Color::Rgb(0x4e, 0xc9, 0xb0)),
+        function:      fg(Color::Rgb(0xdc, 0xdc, 0xaa)),
+        lifetime:      fg(Color::Rgb(0x4e, 0xc9, 0xb0)),
+        string:        fg(Color::Rgb(0xce, 0x91, 0x78)),
+        fstring_prefix:fg_bold(Color::Rgb(0xce, 0x91, 0x78)),
+        comment:       fg(Color::Rgb(0x6a, 0x99, 0x56)),
+        number:        fg(Color::Rgb(0xb5, 0xce, 0xa8)),
+        decorator:     fg(Color::Rgb(0xdc, 0xdc, 0xaa)),
+        operator:      fg(Color::Rgb(0xd4, 0xd4, 0xd4)),
+        punctuation:   fg(Color::Rgb(0xd4, 0xd4, 0xd4)),
+    }
+}
+
+// ── Moonlight ──────────────────────────────────────────────────
+
+fn moonlight() -> Theme {
+    Theme {
+        fg:            Color::Rgb(0xc8, 0xd3, 0xf5),
+        bg:            Color::Rgb(0x22, 0x24, 0x36),
+        selection_bg:  Color::Rgb(0x36, 0x38, 0x4e),
+        line_number:   Style::new().fg(Color::Rgb(0x63, 0x65, 0x7e)),
+        tilde:         Style::new().fg(Color::Rgb(0x63, 0x65, 0x7e)),
+        status_bg:     Color::Rgb(0x19, 0x1a, 0x2a),
+        status_fg:     Color::Rgb(0xc8, 0xd3, 0xf5),
+        keyword:       fg(Color::Rgb(0xc7, 0x90, 0xe8)),
+        builtin:       fg(Color::Rgb(0x82, 0xaa, 0xff)),
+        rstype:        fg(Color::Rgb(0xff, 0xcc, 0x66)),
+        function:      fg(Color::Rgb(0x82, 0xaa, 0xff)),
+        lifetime:      fg(Color::Rgb(0x86, 0xe1, 0xfc)),
+        string:        fg(Color::Rgb(0xc3, 0xe8, 0x8d)),
+        fstring_prefix:fg_bold(Color::Rgb(0xc3, 0xe8, 0x8d)),
+        comment:       fg(Color::Rgb(0x63, 0x65, 0x7e)),
+        number:        fg(Color::Rgb(0xff, 0x96, 0x6c)),
+        decorator:     fg(Color::Rgb(0xc7, 0x90, 0xe8)),
+        operator:      fg(Color::Rgb(0x86, 0xe1, 0xfc)),
+        punctuation:   fg(Color::Rgb(0xc8, 0xd3, 0xf5)),
+    }
+}
+
+// ── Poimandres ─────────────────────────────────────────────────
+
+fn poimandres() -> Theme {
+    Theme {
+        fg:            Color::Rgb(0xd6, 0xde, 0xeb),
+        bg:            Color::Rgb(0x1b, 0x1e, 0x2b),
+        selection_bg:  Color::Rgb(0x2d, 0x31, 0x43),
+        line_number:   Style::new().fg(Color::Rgb(0x5a, 0x5e, 0x73)),
+        tilde:         Style::new().fg(Color::Rgb(0x5a, 0x5e, 0x73)),
+        status_bg:     Color::Rgb(0x12, 0x15, 0x21),
+        status_fg:     Color::Rgb(0x5d, 0xe4, 0xc7),
+        keyword:       fg(Color::Rgb(0x5d, 0xe4, 0xc7)),
+        builtin:       fg(Color::Rgb(0xae, 0xd0, 0xf5)),
+        rstype:        fg(Color::Rgb(0xff, 0xcc, 0x66)),
+        function:      fg(Color::Rgb(0xfb, 0xf0, 0x79)),
+        lifetime:      fg(Color::Rgb(0x5d, 0xe4, 0xc7)),
+        string:        fg(Color::Rgb(0xae, 0xd0, 0xf5)),
+        fstring_prefix:fg_bold(Color::Rgb(0xae, 0xd0, 0xf5)),
+        comment:       fg(Color::Rgb(0x5a, 0x5e, 0x73)),
+        number:        fg(Color::Rgb(0xd0, 0x67, 0x9d)),
+        decorator:     fg(Color::Rgb(0x5d, 0xe4, 0xc7)),
+        operator:      fg(Color::Rgb(0x91, 0x89, 0x9c)),
+        punctuation:   fg(Color::Rgb(0xd6, 0xde, 0xeb)),
     }
 }

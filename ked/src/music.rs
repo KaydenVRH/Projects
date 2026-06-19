@@ -21,8 +21,29 @@ use std::{
 };
 
 // ═══════════════════════════════════════════════════════════════════
-//  Message types for the editor ↔ audio-thread channel
+//  Platform-specific player backend
 // ═══════════════════════════════════════════════════════════════════
+
+/// Build the command to play an audio file.
+fn player_cmd(path: &str) -> Command {
+    #[cfg(target_os = "macos")]
+    { let mut c = Command::new("afplay"); c.arg(path); c }
+
+    #[cfg(target_os = "linux")]
+    { let mut c = Command::new("mpv"); c.args(["--no-video", "--really-quiet", "--no-terminal", path]); c }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    { let mut c = Command::new("echo"); c.arg("no audio player"); c }
+}
+
+/// Kill orphaned players from a previous session.
+fn kill_orphans() {
+    #[cfg(target_os = "macos")]
+    { let _ = Command::new("pkill").arg("-x").arg("afplay").output(); }
+
+    #[cfg(target_os = "linux")]
+    { let _ = Command::new("pkill").arg("-x").arg("mpv").output(); }
+}
 
 /// Commands sent FROM the editor TO the audio thread.
 pub enum PlayerCmd {
@@ -75,11 +96,7 @@ impl MusicPlayer {
     /// Create a fresh player, kill any orphaned `afplay` from a
     /// previous ked session, and spawn the background audio thread.
     pub fn new() -> Self {
-        // Kill afplay processes left behind by a previously-crashed
-        // (or normally-exited) ked instance.  `afplay` is macOS's
-        // built-in CLI player — nothing else uses it on a typical
-        // system, so this is safe.
-        let _ = Command::new("pkill").arg("-x").arg("afplay").output();
+        kill_orphans();
 
         let (cmd_tx, cmd_rx) = mpsc::channel();
         let (event_tx, event_rx) = mpsc::channel();
@@ -101,7 +118,7 @@ impl MusicPlayer {
                                 let _ = c.wait();
                             }
                             // Start afplay (shipped with macOS).
-                            match Command::new("afplay").arg(&path).spawn() {
+                            match player_cmd(&path).spawn() {
                                 Ok(c) => {
                                     let _ = event_tx.send(PlayerEvent::Started(path));
                                     child = Some(c);
