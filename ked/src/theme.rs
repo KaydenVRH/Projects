@@ -398,28 +398,27 @@ fn tokyo_night() -> Theme {
 }
 
 fn amber() -> Theme {
-    // Amber Amethyst: deep purple base, warm gold accent
-    // Mirrors the kitty amber-amethyst theme.
+    // Amber Amethyst: deep purple base, purple accents, amber highlights
     Theme {
-        fg:            Color::Rgb(0xdd, 0xd6, 0xf0),  // lavender
-        bg:            Color::Rgb(0x18, 0x14, 0x25),  // deep purple
-        selection_bg:  Color::Rgb(0xf5, 0xc8, 0x42),  // gold
+        fg:            Color::Rgb(0xe2, 0xe8, 0xf0),  // white
+        bg:            Color::Rgb(0x1e, 0x1a, 0x2e),  // deep purple
+        selection_bg:  Color::Rgb(0xa8, 0x55, 0xf7),  // purple
         line_number:   Style::new().fg(Color::Rgb(0x88, 0x80, 0xa0)),
         tilde:         Style::new().fg(Color::Rgb(0x88, 0x80, 0xa0)),
-        status_bg:     Color::Rgb(0xf5, 0xc8, 0x42),  // gold
-        status_fg:     Color::Rgb(0x18, 0x14, 0x25),  // bg
-        keyword:       fg(Color::Rgb(0xf5, 0xc8, 0x42)),  // gold
-        builtin:       fg(Color::Rgb(0xb8, 0x9c, 0xf0)),  // medium purple
-        rstype:        fg(Color::Rgb(0x9b, 0x7d, 0xd6)),  // medium purple
-        function:      fg(Color::Rgb(0xdd, 0xd6, 0xf0)),  // lavender
-        lifetime:      fg(Color::Rgb(0xc4, 0xa9, 0xf8)),  // light purple
-        string:        fg(Color::Rgb(0xa8, 0x8a, 0xe0)),  // purple
-        fstring_prefix:fg_bold(Color::Rgb(0xf5, 0xc8, 0x42)),  // gold
+        status_bg:     Color::Rgb(0x2a, 0x24, 0x40),  // darker purple
+        status_fg:     Color::Rgb(0xfb, 0xbf, 0x24),  // amber
+        keyword:       fg(Color::Rgb(0xa8, 0x55, 0xf7)),  // purple
+        builtin:       fg(Color::Rgb(0x81, 0x8c, 0xf8)),  // blue
+        rstype:        fg(Color::Rgb(0x22, 0xd3, 0xee)),  // cyan
+        function:      fg(Color::Rgb(0x81, 0x8c, 0xf8)),  // blue
+        lifetime:      fg(Color::Rgb(0x22, 0xd3, 0xee)),  // cyan
+        string:        fg(Color::Rgb(0x34, 0xd3, 0x99)),  // green
+        fstring_prefix:fg_bold(Color::Rgb(0x34, 0xd3, 0x99)),
         comment:       fg(Color::Rgb(0x88, 0x80, 0xa0)),
-        number:        fg(Color::Rgb(0xc4, 0xa9, 0xf8)),
-        decorator:     fg(Color::Rgb(0x7b, 0x5d, 0xb8)),  // deep purple
-        operator:      fg(Color::Rgb(0xdd, 0xd6, 0xf0)),
-        punctuation:   fg(Color::Rgb(0xdd, 0xd6, 0xf0)),
+        number:        fg(Color::Rgb(0xfb, 0xbf, 0x24)),  // amber
+        decorator:     fg(Color::Rgb(0xa8, 0x55, 0xf7)),  // purple
+        operator:      fg(Color::Rgb(0xe2, 0xe8, 0xf0)),
+        punctuation:   fg(Color::Rgb(0xe2, 0xe8, 0xf0)),
     }
 }
 

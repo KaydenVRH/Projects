@@ -1128,6 +1128,9 @@ fn tokenize_markdown(line: &str) -> Vec<Token> {
 
 // ── Conf-file tokeniser (Kitty, etc.) ─────────────────────────
 
+/// Common boolean / null keywords in config files.
+const CONF_KW: &[&str] = &["true", "false", "null", "on", "off", "yes", "no"];
+
 /// Tokenise a line from a `.conf` file.
 ///
 /// Highlights:
@@ -1243,10 +1246,13 @@ fn tokenize_conf(line: &str) -> Vec<Token> {
             while i < n && (chars[i].is_alphanumeric() || chars[i] == '_') {
                 i += 1;
             }
-            tokens.push(Token {
-                kind: TokenKind::Plain,
-                text: chars[start..i].iter().collect(),
-            });
+            let word: String = chars[start..i].iter().collect();
+            let kind = if CONF_KW.contains(&word.as_str()) {
+                TokenKind::Keyword
+            } else {
+                TokenKind::Plain
+            };
+            tokens.push(Token { kind, text: word });
             continue;
         }
 

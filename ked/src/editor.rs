@@ -1664,6 +1664,57 @@ impl Editor {
             "sys" => {
                 self.state = State::SysInfo;
             }
+            // :e <file> — open file
+            "e" if parts.len() > 1 => {
+                let path = parts[1..].join(" ");
+                match fs::read_to_string(&path) {
+                    Ok(content) => {
+                        let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+                        if content.ends_with('\n') { lines.push(String::new()); }
+                        if lines.is_empty() { lines.push(String::new()); }
+                        let mtime = fs::metadata(&path).ok().and_then(|m| m.modified().ok());
+                        self.sync_to_buffer();
+                        self.buffers.push(Buffer::new(lines, Some(path.clone()), mtime));
+                        self.current = self.buffers.len() - 1;
+                        self.sync_from_buffer(self.current);
+                        self.flash = Some(format!("Opened {path}"));
+                    }
+                    Err(e) => {
+                        self.flash = Some(format!("Can't open {path}: {e}"));
+                    }
+                }
+            }
+            // :theme <name> — switch theme
+            "theme" if parts.len() > 1 => {
+                let name = parts[1].to_lowercase();
+                if let Some(tk) = ThemeKind::from_str(&name) {
+                    self.theme = tk;
+                    self.flash = Some(format!("Theme: {}", tk.name()));
+                } else {
+                    self.flash = Some(format!("Unknown theme: {name}"));
+                }
+            }
+            // :wq! — save and force close
+            "wq!" => {
+                let fname = self.filename.clone().unwrap_or_default();
+                if !fname.is_empty() && self.save_to_disk(&fname).is_err() {
+                    self.flash = Some("Error saving".to_string());
+                    return true;
+                }
+                self.modified = false;
+                self.sync_to_buffer();
+                self.buffers.remove(self.current);
+                if self.buffers.is_empty() { return false; }
+                self.current = min(self.current, self.buffers.len().saturating_sub(1));
+                self.sync_from_buffer(self.current);
+            }
+            // :<number> — jump to line
+            cmd_name if cmd_name.parse::<usize>().is_ok() => {
+                let num: usize = cmd_name.parse().unwrap();
+                let line = num.saturating_sub(1);
+                self.cy = line.min(self.lines.len().saturating_sub(1));
+                self.cx = 0;
+            }
             // Unknown command.
             _ => {
                 self.flash = Some(format!("Unknown command: {cmd_name}"));
@@ -2365,17 +2416,23 @@ impl Editor {
         let stats_text = format!(
             " {cpu_str}  {mem_str}  {batt_str}  {date_str} {time_str} {holy} "
         );
-        let stats_span = Span::styled(
-            stats_text,
-            Style::new()
-                .fg(theme.status_fg)
-                .bg(theme.status_bg),
+        // Split stats area: separator char on left, stats text on right
+        let [sep_area, text_area] = Layout::horizontal([
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ]).areas(stats_area);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled("",
+                Style::new().fg(theme.status_bg).bg(theme.bg))))
+            .style(Style::new().bg(theme.status_bg)),
+            sep_area,
         );
         f.render_widget(
-            Paragraph::new(Line::from(stats_span))
+            Paragraph::new(Line::from(Span::styled(stats_text,
+                Style::new().fg(theme.status_fg).bg(theme.status_bg))))
                 .alignment(Alignment::Right)
                 .style(Style::new().bg(theme.status_bg)),
-            stats_area,
+            text_area,
         );
     }
 
