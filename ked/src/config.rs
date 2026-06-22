@@ -36,6 +36,17 @@ pub struct Config {
     /// Defaults to true.
     #[serde(default = "default_true")]
     pub bar_stats: bool,
+
+    /// Set the colour fx mode at startup.
+    /// 0 = off, 1 = gentle, 2 = breathing, 3 = warm.
+    #[serde(default)]
+    pub fx_mode: u8,
+
+    /// UI element opacity (0.0 = transparent, 1.0 = solid).
+    /// Affects status bar, buffer bar, and popup backgrounds.
+    /// Defaults to 1.0 (fully opaque).
+    #[serde(default = "default_opacity")]
+    pub opacity: f32,
 }
 
 const fn default_filetree_width() -> u16 {
@@ -48,6 +59,10 @@ const fn default_animations() -> bool {
 
 const fn default_true() -> bool {
     true
+}
+
+const fn default_opacity() -> f32 {
+    1.0
 }
 
 impl Config {

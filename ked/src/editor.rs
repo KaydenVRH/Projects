@@ -194,6 +194,7 @@ pub struct Editor {
     pub transparent: bool,
     pub animations: bool,
     pub bar_stats: bool,
+    pub opacity: f32,
     pub _frame: u64,
     pub _mode_switched: u64,
     pub _last_mode: Mode,
@@ -282,7 +283,7 @@ impl Editor {
             cache_h: 24,
             shell: None,
             shell_reader: None,
-            fx_mode: 0,
+            fx_mode: cfg.fx_mode.min(3),
             fx_start: Instant::now(),
             filetree_width: cfg.filetree_width.max(10),
             music_dir: if cfg.music_dir.is_empty() {
@@ -295,6 +296,7 @@ impl Editor {
             transparent: cfg.transparent,
             animations: cfg.animations,
             bar_stats: cfg.bar_stats,
+            opacity: cfg.opacity.max(0.0).min(1.0),
             _frame: 0,
             _mode_switched: 0,
             _last_mode: Mode::Normal,
@@ -2105,6 +2107,10 @@ impl Editor {
         if self.transparent {
             theme.bg = Color::Reset;
         }
+        // Apply opacity to UI chrome
+        if self.opacity < 1.0 {
+            theme.status_bg = Color::Reset;
+        }
         let is_splash = self.filename.is_none()
             && self.lines.len() == 1
             && self.lines[0].is_empty();
@@ -2359,20 +2365,30 @@ impl Editor {
                     .unwrap_or("[No Name]");
                 let mod_flag = if buf.modified { " +" } else { "" };
                 let label = format!(" {name}{mod_flag} ");
-                let style = if is_current {
-                    Style::new().fg(theme.status_fg).bg(active_bg)
+                let tab_bg = if is_current { active_bg } else { theme.bg };
+                let tab_fg = if is_current { theme.status_fg }
+                    else { theme.comment.fg.unwrap_or(theme.fg) };
+                let tab_style = Style::new().fg(tab_fg).bg(tab_bg);
+                let edge_style = Style::new().fg(tab_bg).bg(theme.bg);
+                let show_pills = is_current && tab_bg != Color::Reset;
+                if show_pills {
+                    vec![
+                        Span::styled("", edge_style),
+                        Span::styled(label, tab_style),
+                        Span::styled("", edge_style),
+                    ]
+                } else if is_current {
+                    vec![Span::styled(label, tab_style)]
                 } else {
-                    Style::new().fg(theme.comment.fg.unwrap_or(theme.fg)).bg(theme.bg)
-                };
-                vec![Span::styled(label, style), Span::raw("│")]
+                    vec![
+                        Span::styled(label, tab_style),
+                    ]
+                }
             })
             .collect::<Vec<_>>();
 
-        let last_idx = items.len().saturating_sub(1);
-        let spans: Vec<Span> = items.into_iter().take(last_idx).collect();
-
         f.render_widget(
-            Paragraph::new(Line::from(spans)).style(Style::new().bg(theme.bg)),
+            Paragraph::new(Line::from(items)).style(Style::new().bg(theme.bg)),
             tabs_area,
         );
 
@@ -2422,7 +2438,8 @@ impl Editor {
             Constraint::Min(1),
         ]).areas(stats_area);
         f.render_widget(
-            Paragraph::new(Line::from(Span::styled("",
+            Paragraph::new(Line::from(Span::styled(
+                if theme.status_bg == Color::Reset { " " } else { "" },
                 Style::new().fg(theme.status_bg).bg(theme.bg))))
             .style(Style::new().bg(theme.status_bg)),
             sep_area,
@@ -2553,26 +2570,16 @@ impl Editor {
         // Clear the area so the popup stands out.
         f.render_widget(Clear, popup);
 
-        // Outer block (borders only, no title — we render the title bar manually).
+        // Outer block with scrolling title (border shows through on sides)
+        let title_text = scrolled_title("Find File", self._frame, self.animations);
         let block = Block::default()
             .borders(Borders::ALL)
+            .title(title_text)
+            .title_alignment(Alignment::Center)
+            .title_style(Style::new().fg(theme.fg).bg(theme.status_bg))
             .border_style(Style::new().fg(theme.fg));
         let inner = block.inner(popup);
         f.render_widget(block, popup);
-
-        // ── scrolling title bar overlaid on top border ──────────
-        let title_area = Rect::new(popup.x + 1, popup.y, popup.width.saturating_sub(2), 1);
-        f.render_widget(Clear, title_area);
-        let title_text = scrolled_title("Find File", self._frame, self.animations);
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                title_text,
-                Style::new().fg(theme.fg).bg(theme.status_bg),
-            )))
-            .alignment(Alignment::Center)
-            .style(Style::new().bg(theme.status_bg)),
-            title_area,
-        );
 
         // Split inner area: query bar (1 line) + results list (rest).
         if inner.height < 2 {
@@ -2665,25 +2672,15 @@ impl Editor {
 
         f.render_widget(Clear, popup);
 
+        let title_text = scrolled_title("Music Player", self._frame, self.animations);
         let block = Block::default()
             .borders(Borders::ALL)
+            .title(title_text)
+            .title_alignment(Alignment::Center)
+            .title_style(Style::new().fg(theme.fg).bg(theme.status_bg))
             .border_style(Style::new().fg(theme.fg));
         let inner = block.inner(popup);
         f.render_widget(block, popup);
-
-        // ── scrolling title bar ─────────────────────────────────
-        let title_area = Rect::new(popup.x + 1, popup.y, popup.width.saturating_sub(2), 1);
-        f.render_widget(Clear, title_area);
-        let title_text = scrolled_title("Music Player", self._frame, self.animations);
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                title_text,
-                Style::new().fg(theme.fg).bg(theme.status_bg),
-            )))
-            .alignment(Alignment::Center)
-            .style(Style::new().bg(theme.status_bg)),
-            title_area,
-        );
 
         if inner.height < 2 {
             return;
@@ -2789,25 +2786,15 @@ impl Editor {
 
         f.render_widget(Clear, popup);
 
+        let title_text = scrolled_title("Theme Selector", self._frame, self.animations);
         let block = Block::default()
             .borders(Borders::ALL)
+            .title(title_text)
+            .title_alignment(Alignment::Center)
+            .title_style(Style::new().fg(theme.fg).bg(theme.status_bg))
             .border_style(Style::new().fg(theme.fg));
         let inner = block.inner(popup);
         f.render_widget(block, popup);
-
-        // ── scrolling title bar ─────────────────────────────────
-        let title_area = Rect::new(popup.x + 1, popup.y, popup.width.saturating_sub(2), 1);
-        f.render_widget(Clear, title_area);
-        let title_text = scrolled_title("Theme Selector", self._frame, self.animations);
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                title_text,
-                Style::new().fg(theme.fg).bg(theme.status_bg),
-            )))
-            .alignment(Alignment::Center)
-            .style(Style::new().bg(theme.status_bg)),
-            title_area,
-        );
 
         if inner.height < 1 {
             return;
@@ -3068,25 +3055,15 @@ impl Editor {
 
         f.render_widget(Clear, popup);
 
+        let title_text = scrolled_title("Run Output", self._frame, self.animations);
         let block = Block::default()
             .borders(Borders::ALL)
+            .title(title_text)
+            .title_alignment(Alignment::Center)
+            .title_style(Style::new().fg(theme.fg).bg(theme.status_bg))
             .border_style(Style::new().fg(theme.fg));
         let inner = block.inner(popup);
         f.render_widget(block, popup);
-
-        // ── scrolling title bar ─────────────────────────────────
-        let title_area = Rect::new(popup.x + 1, popup.y, popup.width.saturating_sub(2), 1);
-        f.render_widget(Clear, title_area);
-        let title_text = scrolled_title("Run Output", self._frame, self.animations);
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                title_text,
-                Style::new().fg(theme.fg).bg(theme.status_bg),
-            )))
-            .alignment(Alignment::Center)
-            .style(Style::new().bg(theme.status_bg)),
-            title_area,
-        );
         // Output text — show last inner_h lines.
         let inner_h = inner.height as usize;
         let lines: Vec<&str> = self.run_output.split('\n').collect();
@@ -3150,6 +3127,15 @@ impl Editor {
         let paragraph = Paragraph::new(Text::from(styled_lines))
             .style(Style::new().bg(theme.bg));
         f.render_widget(paragraph, inner);
+
+        // ── visible cursor ───────────────────────────────────────
+        let cur_row = self.shell.as_ref().map(|s| s.cursor_row).unwrap_or(0);
+        let cur_col = self.shell.as_ref().map(|s| s.cursor_col).unwrap_or(0);
+        if cur_row < max_rows {
+            let cy = inner.y + cur_row as u16;
+            let cx = inner.x + (cur_col as u16).min(inner.width.saturating_sub(1));
+            f.set_cursor_position(Position::new(cx, cy));
+        }
     }
 
     fn render_splash(&self, f: &mut Frame, area: Rect, theme: &Theme) {

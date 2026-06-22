@@ -22,6 +22,10 @@ pub struct ShellProcess {
     cache_style: Style,           // current SGR style
     cache_default: Style,         // default_style from last call
     cache_out: Vec<Line<'static>>, // flattened result (cache_lines + cur line)
+
+    /// Cursor position in the logical output (row, col).
+    pub cursor_row: usize,
+    pub cursor_col: usize,
 }
 
 impl ShellProcess {
@@ -133,6 +137,8 @@ impl ShellProcess {
                 cache_style: Style::new(),
                 cache_default: Style::new(),
                 cache_out: Vec::new(),
+                cursor_row: 0,
+                cursor_col: 0,
             }, reader))
         }
     }
@@ -266,6 +272,33 @@ impl ShellProcess {
         &self.cache_out
     }
 
+    /// Track the logical cursor position for render_shell.
+    fn cursor_up(&mut self) {
+        if self.cursor_row > 0 {
+            self.cursor_row -= 1
+        };
+        self.cache_cursor = self.cursor_col.min(self.cache_cur.len());
+    }
+    fn cursor_down(&mut self) {
+        self.cursor_row += 1;
+        self.cache_cursor = self.cursor_col.min(self.cache_cur.len());
+    }
+    fn cursor_forward(&mut self) {
+        if self.cache_cursor < self.cache_cur.len() {
+            self.cache_cursor += 1;
+        }
+        self.cursor_col = self.cache_cursor;
+    }
+    fn cursor_back(&mut self) {
+        self.cache_cursor = self.cache_cursor.saturating_sub(1);
+        self.cursor_col = self.cache_cursor;
+    }
+    fn cursor_goto(&mut self, row: usize, col: usize) {
+        self.cursor_row = row;
+        self.cursor_col = col;
+        self.cache_cursor = col.min(self.cache_cur.len());
+    }
+
     /// Parse `bytes` as UTF‑8 and feed the characters into the line
     /// buffer, handling \\r, \\b, \\t and ANSI escapes.
     fn process_bytes(&mut self, bytes: &[u8], default_style: Style) {
@@ -289,6 +322,31 @@ impl ShellProcess {
                                     self.cache_lines.clear();
                                     self.cache_cur.clear();
                                     self.cache_cursor = 0;
+                                } else if term == 'A' {
+                                    let n: usize = params.parse().unwrap_or(1);
+                                    for _ in 0..n { self.cursor_up(); }
+                                } else if term == 'B' {
+                                    let n: usize = params.parse().unwrap_or(1);
+                                    for _ in 0..n { self.cursor_down(); }
+                                } else if term == 'C' {
+                                    let n: usize = params.parse().unwrap_or(1);
+                                    for _ in 0..n { self.cursor_forward(); }
+                                } else if term == 'D' {
+                                    let n: usize = params.parse().unwrap_or(1);
+                                    for _ in 0..n { self.cursor_back(); }
+                                } else if term == 'H' || term == 'f' {
+                                    let parts: Vec<&str> = params.split(';').collect();
+                                    let row: usize = parts.first().and_then(|s| s.parse().ok()).unwrap_or(1usize).saturating_sub(1);
+                                    let col: usize = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(1usize).saturating_sub(1);
+                                    self.cursor_goto(row, col);
+                                } else if term == 'K' {
+                                    if params == "0" || params.is_empty() {
+                                        // clear from cursor to end of line
+                                        self.cache_cur.truncate(self.cache_cursor);
+                                    } else if params == "2" {
+                                        self.cache_cur.clear();
+                                        self.cache_cursor = 0;
+                                    }
                                 }
                                 break;
                             }
@@ -312,12 +370,15 @@ impl ShellProcess {
                 },
                 '\r' => {
                     self.cache_cursor = 0;
+                    self.cursor_col = 0;
                 }
                 '\n' => {
                     let line = std::mem::take(&mut self.cache_cur);
                     self.cache_lines
                         .push(collapse_styled(line));
                     self.cache_cursor = 0;
+                    self.cursor_row += 1;
+                    self.cursor_col = 0;
                 }
                 '\x08' => {
                     if self.cache_cursor > 0 {
@@ -352,6 +413,7 @@ impl ShellProcess {
                         },
                     );
                     self.cache_cursor += 1;
+                    self.cursor_col = self.cache_cursor;
                 }
             }
         }

@@ -198,51 +198,52 @@ const fn fg_bold(c: Color) -> Style {
 // ── theme definitions ────────────────────────────────────────────
 
 fn default() -> Theme {
+    // Clean dark scheme: dark gray bg, white text, muted syntax
     Theme {
-        fg:            Color::White,
-        bg:            Color::Reset,
-        selection_bg:  Color::DarkGray,
-        line_number:   Style::new().fg(Color::DarkGray),
-        tilde:         Style::new().fg(Color::DarkGray),
-        status_bg:     Color::DarkGray,
-        status_fg:     Color::White,
-        keyword:       fg(Color::Blue),
-        builtin:       fg(Color::Cyan),
-        rstype:        fg(Color::Yellow),
-        function:      fg(Color::White),
-        lifetime:      fg(Color::Rgb(0x5e, 0xbc, 0xce)),
-        string:        fg(Color::Green),
-        fstring_prefix:fg_bold(Color::Green),
-        comment:       fg(Color::Rgb(120, 120, 120)),
-        number:        fg(Color::Yellow),
-        decorator:     fg(Color::Magenta),
-        operator:      fg(Color::White),
-        punctuation:   fg(Color::White),
+        fg:            Color::Rgb(0xd4, 0xd4, 0xd4),
+        bg:            Color::Rgb(0x28, 0x28, 0x28),
+        selection_bg:  Color::Rgb(0x3c, 0x3c, 0x3c),
+        line_number:   Style::new().fg(Color::Rgb(0x6e, 0x6e, 0x6e)),
+        tilde:         Style::new().fg(Color::Rgb(0x6e, 0x6e, 0x6e)),
+        status_bg:     Color::Rgb(0x1e, 0x1e, 0x1e),
+        status_fg:     Color::Rgb(0xd4, 0xd4, 0xd4),
+        keyword:       fg(Color::Rgb(0x56, 0x9c, 0xd6)),
+        builtin:       fg(Color::Rgb(0x4e, 0xc9, 0xb0)),
+        rstype:        fg(Color::Rgb(0x4e, 0xc9, 0xb0)),
+        function:      fg(Color::Rgb(0xdc, 0xdc, 0xaa)),
+        lifetime:      fg(Color::Rgb(0x4e, 0xc9, 0xb0)),
+        string:        fg(Color::Rgb(0xce, 0x91, 0x78)),
+        fstring_prefix:fg_bold(Color::Rgb(0xce, 0x91, 0x78)),
+        comment:       fg(Color::Rgb(0x6a, 0x99, 0x56)),
+        number:        fg(Color::Rgb(0xb5, 0xce, 0xa8)),
+        decorator:     fg(Color::Rgb(0xdc, 0xdc, 0xaa)),
+        operator:      fg(Color::Rgb(0xd4, 0xd4, 0xd4)),
+        punctuation:   fg(Color::Rgb(0xd4, 0xd4, 0xd4)),
     }
 }
 
 fn monokai() -> Theme {
-    // Monokai: dark bg, high saturation pastels
+    // Monokai: dark charcoal bg, bright pastels, clean
     Theme {
-        fg:            Color::Rgb(0xd6, 0xd6, 0xd6),
+        fg:            Color::Rgb(0xf8, 0xf8, 0xf2),
         bg:            Color::Rgb(0x27, 0x28, 0x22),
-        selection_bg:  Color::Rgb(0x49, 0x43, 0x3e),
-        line_number:   Style::new().fg(Color::Rgb(0x75, 0x75, 0x5e)),
-        tilde:         Style::new().fg(Color::Rgb(0x75, 0x75, 0x5e)),
-        status_bg:     Color::Rgb(0x75, 0x75, 0x5e),
-        status_fg:     Color::Rgb(0x27, 0x28, 0x22),
-        keyword:       fg(Color::Rgb(0xf9, 0x26, 0x72)),  // pink
+        selection_bg:  Color::Rgb(0x49, 0x48, 0x3e),
+        line_number:   Style::new().fg(Color::Rgb(0x90, 0x90, 0x80)),
+        tilde:         Style::new().fg(Color::Rgb(0x3e, 0x3d, 0x32)),
+        status_bg:     Color::Rgb(0x3e, 0x3d, 0x32),
+        status_fg:     Color::Rgb(0xf8, 0xf8, 0xf2),
+        keyword:       fg(Color::Rgb(0xf9, 0x26, 0x72)),  // hot pink
         builtin:       fg(Color::Rgb(0xae, 0x81, 0xff)),  // purple
-        rstype:        fg(Color::Rgb(0xa6, 0xe2, 0x2e)),  // green
-        function:      fg(Color::Rgb(0xe6, 0xdb, 0x74)),  // yellow
+        rstype:        fg(Color::Rgb(0xa6, 0xe2, 0x2e)),  // lime green
+        function:      fg(Color::Rgb(0xa6, 0xe2, 0x2e)),  // lime green
         lifetime:      fg(Color::Rgb(0x66, 0xd9, 0xef)),  // cyan
-        string:        fg(Color::Rgb(0xe6, 0xdb, 0x74)),  // yellow
+        string:        fg(Color::Rgb(0xe6, 0xdb, 0x74)),  // warm yellow
         fstring_prefix:fg_bold(Color::Rgb(0xe6, 0xdb, 0x74)),
-        comment:       fg(Color::Rgb(0x75, 0x75, 0x5e)),
+        comment:       fg(Color::Rgb(0x75, 0x71, 0x5e)),
         number:        fg(Color::Rgb(0xae, 0x81, 0xff)),  // purple
         decorator:     fg(Color::Rgb(0xa6, 0xe2, 0x2e)),  // green
         operator:      fg(Color::Rgb(0xf9, 0x26, 0x72)),  // pink
-        punctuation:   fg(Color::Rgb(0xd6, 0xd6, 0xd6)),
+        punctuation:   fg(Color::Rgb(0xf8, 0xf8, 0xf2)),
     }
 }
 
@@ -322,28 +323,27 @@ fn gruvbox() -> Theme {
 }
 
 fn bi() -> Theme {
-    // Bi pride flag inspired: pink #D70270, purple #734F96, blue #0038A8
-    // Dark bg with pink/purple/blue accents.
+    // Deep midnight blue-purple bg, vibrant blue/purple/magenta text
     Theme {
-        fg:            Color::Rgb(0xe6, 0xdf, 0xf0),  // light lavender
-        bg:            Color::Rgb(0x0d, 0x0a, 0x14),  // deep purple-black
-        selection_bg:  Color::Rgb(0x2a, 0x1a, 0x3a),
-        line_number:   Style::new().fg(Color::Rgb(0x4a, 0x3a, 0x60)),
-        tilde:         Style::new().fg(Color::Rgb(0x4a, 0x3a, 0x60)),
-        status_bg:     Color::Rgb(0xd7, 0x02, 0x70),  // bi-pink
-        status_fg:     Color::Rgb(0xff, 0xff, 0xff),
-        keyword:       fg(Color::Rgb(0xd7, 0x02, 0x70)),  // bi-pink
-        builtin:       fg(Color::Rgb(0xb0, 0x7c, 0xc6)),  // purple
-        rstype:        fg(Color::Rgb(0x5b, 0x9b, 0xd5)),  // soft blue
-        function:      fg(Color::Rgb(0xd4, 0xc5, 0xe8)),  // soft lavender
-        lifetime:      fg(Color::Rgb(0x7e, 0xc8, 0xe3)),  // light cyan
-        string:        fg(Color::Rgb(0xe8, 0x8a, 0xb0)),  // rose pink
-        fstring_prefix:fg_bold(Color::Rgb(0xe8, 0x8a, 0xb0)),
-        comment:       fg(Color::Rgb(0x60, 0x50, 0x7a)),  // muted purple
-        number:        fg(Color::Rgb(0xb0, 0x7c, 0xc6)),  // purple
-        decorator:     fg(Color::Rgb(0x5b, 0x9b, 0xd5)),  // soft blue
-        operator:      fg(Color::Rgb(0xe6, 0xdf, 0xf0)),
-        punctuation:   fg(Color::Rgb(0xe6, 0xdf, 0xf0)),
+        fg:            Color::Rgb(0xd4, 0xd8, 0xee),
+        bg:            Color::Rgb(0x14, 0x11, 0x24),
+        selection_bg:  Color::Rgb(0x2e, 0x28, 0x52),
+        line_number:   Style::new().fg(Color::Rgb(0x5a, 0x52, 0x82)),
+        tilde:         Style::new().fg(Color::Rgb(0x5a, 0x52, 0x82)),
+        status_bg:     Color::Rgb(0x0e, 0x0c, 0x1a),
+        status_fg:     Color::Rgb(0xc0, 0xa0, 0xf0),
+        keyword:       fg(Color::Rgb(0xb0, 0x80, 0xf0)),  // bright purple
+        builtin:       fg(Color::Rgb(0x68, 0xa8, 0xf8)),  // vivid blue
+        rstype:        fg(Color::Rgb(0xf0, 0x80, 0xc0)),  // magenta
+        function:      fg(Color::Rgb(0x68, 0xa8, 0xf8)),  // blue
+        lifetime:      fg(Color::Rgb(0x88, 0xc8, 0xf8)),  // light blue
+        string:        fg(Color::Rgb(0x90, 0xd0, 0xc0)),  // teal
+        fstring_prefix:fg_bold(Color::Rgb(0x90, 0xd0, 0xc0)),
+        comment:       fg(Color::Rgb(0x5a, 0x52, 0x82)),
+        number:        fg(Color::Rgb(0xf0, 0xa0, 0xd0)),  // pink
+        decorator:     fg(Color::Rgb(0xb0, 0x80, 0xf0)),  // purple
+        operator:      fg(Color::Rgb(0xc0, 0xa0, 0xf0)),
+        punctuation:   fg(Color::Rgb(0xd4, 0xd8, 0xee)),
     }
 }
 
