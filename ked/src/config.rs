@@ -47,6 +47,10 @@ pub struct Config {
     /// Defaults to 1.0 (fully opaque).
     #[serde(default = "default_opacity")]
     pub opacity: f32,
+
+    /// Number of characters to scroll horizontally with Option+Left/Right.
+    #[serde(default = "default_alt_scroll")]
+    pub alt_scroll: usize,
 }
 
 const fn default_filetree_width() -> u16 {
@@ -63,6 +67,10 @@ const fn default_true() -> bool {
 
 const fn default_opacity() -> f32 {
     1.0
+}
+
+const fn default_alt_scroll() -> usize {
+    5
 }
 
 impl Config {

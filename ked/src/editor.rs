@@ -194,6 +194,7 @@ pub struct Editor {
     pub transparent: bool,
     pub animations: bool,
     pub bar_stats: bool,
+    pub alt_scroll: usize,
     pub opacity: f32,
     pub _frame: u64,
     pub _mode_switched: u64,
@@ -296,6 +297,7 @@ impl Editor {
             transparent: cfg.transparent,
             animations: cfg.animations,
             bar_stats: cfg.bar_stats,
+            alt_scroll: cfg.alt_scroll.max(1),
             opacity: cfg.opacity.max(0.0).min(1.0),
             _frame: 0,
             _mode_switched: 0,
@@ -490,6 +492,48 @@ impl Editor {
                 KeyCode::Char('c') | KeyCode::Char('d') => return false,
                 KeyCode::Char('k') => {
                     self.state = State::Help;
+                    return true;
+                }
+                KeyCode::Char('l') => {
+                    self.state = State::Command;
+                    self.cmd_buf.clear();
+                    return true;
+                }
+                _ => {}
+            }
+        }
+
+        // Cmd/Option+arrows / Cmd/Option+hjkl: jump cursor (works in any mode).
+        let mods = key.modifiers;
+        if mods.intersects(KeyModifiers::SUPER) || mods.intersects(KeyModifiers::ALT) {
+            match key.code {
+                KeyCode::Left | KeyCode::Char('h') => {
+                    for _ in 0..self.alt_scroll {
+                        if self.cx == 0 { break; }
+                        self.cx = self.left_cx();
+                    }
+                    self.clamp_scroll();
+                    return true;
+                }
+                KeyCode::Right | KeyCode::Char('l') => {
+                    for _ in 0..self.alt_scroll {
+                        let max = self.lines[self.cy].len();
+                        if self.cx >= max { break; }
+                        self.cx = self.right_cx();
+                    }
+                    self.clamp_scroll();
+                    return true;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.cy = self.cy.saturating_sub(self.alt_scroll);
+                    self.cx = self.cx.min(self.lines[self.cy].len());
+                    self.clamp_scroll();
+                    return true;
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.cy = (self.cy + self.alt_scroll).min(self.lines.len().saturating_sub(1));
+                    self.cx = self.cx.min(self.lines[self.cy].len());
+                    self.clamp_scroll();
                     return true;
                 }
                 _ => {}
@@ -1065,6 +1109,7 @@ impl Editor {
                 self.search_query.clear();
                 self.state = State::Normal;
                 self.search_next();
+                self.clamp_scroll();
             }
             // Backspace: remove last char.
             KeyCode::Backspace => {
@@ -1716,6 +1761,10 @@ impl Editor {
                 let line = num.saturating_sub(1);
                 self.cy = line.min(self.lines.len().saturating_sub(1));
                 self.cx = 0;
+                self.left = 0;
+                let page = (self.terminal_height() as usize).saturating_sub(1);
+                self.top = self.cy.saturating_sub(page / 2);
+                self.clamp_scroll();
             }
             // Unknown command.
             _ => {
@@ -1871,7 +1920,7 @@ impl Editor {
     fn clamp_scroll(&mut self) {
         // The gutter width (line number string + "| ") we need to
         // account for in horizontal scrolling.
-        let gutter = self.gutter_width() + 2; // "│ " after the number
+        let gutter = self.gutter_width() + 1; // number + "│"
 
         // Vertical: make sure cursor line is on screen.
         let height = self.terminal_height() as usize;
@@ -2127,6 +2176,7 @@ impl Editor {
         let gutter = self.gutter_width() + 1;
         let mut lines_vec: Vec<Line> = Vec::new();
         let visible_lines = editor_area.height as usize;
+        let visible_content_cols = editor_area.width.saturating_sub(gutter as u16) as usize;
 
         for row in 0..visible_lines {
             let buf_row = self.top + row;
@@ -2266,7 +2316,41 @@ impl Editor {
                 }
             }
 
-            lines_vec.push(Line::from(spans).style(line_style));
+            // Trim content spans to the visible horizontal window.
+            if visible_content_cols > 0 {
+                let gutter_span = spans.remove(0);
+                let mut trimmed = vec![gutter_span];
+                let mut byte_offset = 0usize;
+                let right = self.left.saturating_add(visible_content_cols);
+                for span in spans {
+                    let span_len = span.content.len();
+                    let span_end = byte_offset + span_len;
+                    if span_end <= self.left {
+                        byte_offset = span_end;
+                        continue;
+                    }
+                    if byte_offset >= right {
+                        break;
+                    }
+                    let local_start = self.left.saturating_sub(byte_offset);
+                    let local_end = right.saturating_sub(byte_offset).min(span_len);
+                    if local_start < local_end {
+                        // Stay on UTF-8 char boundaries.
+                        let start = span.content.floor_char_boundary(local_start);
+                        let end = span.content.ceil_char_boundary(local_end).min(span_len);
+                        if start < end {
+                            trimmed.push(Span::styled(
+                                span.content[start..end].to_string(),
+                                span.style,
+                            ));
+                        }
+                    }
+                    byte_offset = span_end;
+                }
+                lines_vec.push(Line::from(trimmed).style(line_style));
+            } else {
+                lines_vec.push(Line::from(spans).style(line_style));
+            }
         }
 
         // Wrap in Paragraph and render.  We explicitly set the width
