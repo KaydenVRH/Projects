@@ -1,6 +1,6 @@
 # projects
 
-Personal tools built for my daily workflow.
+Personal tools built for fun.
 
 ## ked
 
