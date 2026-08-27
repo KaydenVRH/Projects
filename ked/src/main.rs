@@ -2,18 +2,18 @@
 //!
 //! Uses ratatui (crossterm backend) for terminal rendering.
 //! Provides vim-style normal/insert editing modes with:
-//!   - Python syntax highlighting
-//!   - 5 colour themes (default, monokai, solarized, nord, gruvbox)
+//!   - Syntax highlighting (Rust, Python, C, JS/TS, HTML, CSS,
+//!     Markdown, config files)
+//!   - 23 colour themes
 //!   - Fuzzy file finder (Ctrl+P)
-//!   - Run Python in buffer (Ctrl+R)
+//!   - Run code in buffer (Ctrl+E: .py, .rs, .c, .h, .go)
 //!   - Command mode (:w, :q, :q!, :wq, :theme ...)
-//!   - Undo / redo (u / Ctrl+r)
+//!   - Undo / redo (u / Ctrl+R)
 //!   - Yank / delete / paste (yy / dd / p / P)
-//!   - Scroll wheel support
 //!
 //! USAGE:
 //!   ked [file]
-//!   ked main.py          # open a file
+//!   ked main.rs          # open a file
 //!   ked                  # empty buffer
 
 mod config;
@@ -30,7 +30,10 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::{
-    event::{poll, read, Event, KeyEventKind},
+    event::{
+        poll, read, Event, KeyEventKind, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -45,6 +48,13 @@ fn main() -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
+    // Ask for the kitty keyboard protocol so Ctrl+M is distinguishable
+    // from Enter (used by the music player binding).  Terminals without
+    // support simply ignore the request.
+    let _ = execute!(
+        stdout,
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+    );
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
@@ -53,10 +63,9 @@ fn main() -> Result<()> {
     let prev_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
         let _ = execute!(io::stdout(), LeaveAlternateScreen);
-        #[cfg(target_os = "macos")]
-        let _ = std::process::Command::new("pkill").arg("-x").arg("afplay").output();
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         let _ = std::process::Command::new("pkill").arg("-x").arg("mpv").output();
         prev_hook(info);
     }));
@@ -99,6 +108,7 @@ fn main() -> Result<()> {
 
     // ---- cleanup ----
     disable_raw_mode()?;
+    execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 

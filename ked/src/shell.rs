@@ -5,6 +5,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
+use crate::editor::char_width;
+
 pub struct ShellProcess {
     fd: i32,
     slave_fd: i32,
@@ -15,13 +17,13 @@ pub struct ShellProcess {
 
     // Incremental-processing state so we don't re-process the
     // entire buffer on every frame.
-    processed_up_to: usize,       // bytes of `output` already consumed
-    cache_lines: Vec<Line<'static>>, // styled output lines
-    cache_cur: Vec<StyledChar>,   // current (incomplete) line
-    cache_cursor: usize,          // cursor position within cache_cur
-    cache_style: Style,           // current SGR style
-    cache_default: Style,         // default_style from last call
-    cache_out: Vec<Line<'static>>, // flattened result (cache_lines + cur line)
+    processed_up_to: usize,           // bytes of `output` already consumed
+    cache_lines: Vec<Vec<StyledChar>>,// row-indexed editable lines
+    cache_cur: Vec<StyledChar>,       // working buffer for current row
+    cache_cursor: usize,              // cursor position within cache_cur
+    cache_style: Style,               // current SGR style
+    cache_default: Style,             // default_style from last call
+    cache_out: Vec<Line<'static>>,    // flattened result for rendering
 
     /// Cursor position in the logical output (row, col).
     pub cursor_row: usize,
@@ -35,23 +37,11 @@ impl ShellProcess {
             let mut slave: i32 = 0;
             let mut slave_name: [libc::c_char; 256] = [0; 256];
 
-            let mut t: libc::termios = std::mem::zeroed();
-            libc::tcgetattr(libc::STDIN_FILENO, &mut t);
-            t.c_iflag &= !(libc::IGNBRK | libc::BRKINT | libc::PARMRK
-                | libc::ISTRIP | libc::INLCR | libc::IGNCR
-                | libc::ICRNL | libc::IXON);
-            t.c_oflag &= !libc::OPOST;
-            t.c_lflag &= !(libc::ECHO | libc::ECHONL | libc::ICANON
-                | libc::IEXTEN);
-            t.c_lflag |= libc::ISIG;
-            t.c_cflag &= !(libc::CSIZE | libc::PARENB);
-            t.c_cflag |= libc::CS8;
-            t.c_cc[libc::VMIN] = 1;
-            t.c_cc[libc::VTIME] = 0;
-
+            // Use system-default terminal settings — don't inherit
+            // the raw-mode termios from crossterm's STDIN.
             let ret = libc::openpty(&mut master, &mut slave,
                 slave_name.as_mut_ptr(),
-                &mut t,
+                std::ptr::null_mut(),
                 std::ptr::null_mut());
             if ret != 0 {
                 return Err(io::Error::last_os_error());
@@ -73,17 +63,23 @@ impl ShellProcess {
 
                 let mut t: libc::termios = std::mem::zeroed();
                 libc::tcgetattr(slave, &mut t);
-                t.c_iflag &= !(libc::IGNBRK | libc::BRKINT | libc::PARMRK
-                    | libc::ISTRIP | libc::INLCR | libc::IGNCR
-                    | libc::ICRNL | libc::IXON);
-                t.c_oflag &= !libc::OPOST;
-                t.c_lflag &= !(libc::ECHO | libc::ECHONL | libc::ICANON
-                    | libc::IEXTEN);
-                t.c_lflag |= libc::ISIG;
-                t.c_cflag &= !(libc::CSIZE | libc::PARENB);
-                t.c_cflag |= libc::CS8;
+                // Standard c_cc control characters so line editing works.
+                t.c_cc[libc::VERASE] = 0x08; // ^H (Backspace)
+                t.c_cc[libc::VWERASE] = 0x17; // Ctrl+W
+                t.c_cc[libc::VKILL] = 0x15; // Ctrl+U
+                t.c_cc[libc::VEOF] = 0x04; // Ctrl+D
+                t.c_cc[libc::VINTR] = 0x03; // Ctrl+C
+                t.c_cc[libc::VQUIT] = 0x1c; // Ctrl+\
+                t.c_cc[libc::VSUSP] = 0x1a; // Ctrl+Z
+                t.c_cc[libc::VSTART] = 0x11; // Ctrl+Q
+                t.c_cc[libc::VSTOP] = 0x13; // Ctrl+S
                 t.c_cc[libc::VMIN] = 1;
                 t.c_cc[libc::VTIME] = 0;
+                // Input processing: keep CR→NL so Enter works, disable flow control.
+                t.c_iflag &= !(libc::IXON | libc::IXOFF | libc::ISTRIP);
+                t.c_iflag |= libc::ICRNL;
+                // Enable signal generation so Ctrl+C works.
+                t.c_lflag |= libc::ISIG;
                 libc::tcsetattr(slave, libc::TCSANOW, &t);
 
                 libc::dup2(slave, 0);
@@ -91,12 +87,20 @@ impl ShellProcess {
                 libc::dup2(slave, 2);
                 if slave > 2 { libc::close(slave); }
 
+                // Set TERM so TUI programs can render properly.
+                let term = std::ffi::CString::new("xterm-256color").unwrap();
+                libc::setenv(
+                    std::ffi::CString::new("TERM").unwrap().as_ptr(),
+                    term.as_ptr(),
+                    1,
+                );
+
                 let shell = std::env::var("SHELL")
                     .unwrap_or_else(|_| "bash".to_string());
                 let c_shell = std::ffi::CString::new(shell).unwrap();
                 let args: [*const libc::c_char; 2] = [
                     c_shell.as_ptr(),
-                    std::ptr::null(),
+                std::ptr::null_mut(),
                 ];
                 libc::execvp(c_shell.as_ptr(), args.as_ptr());
                 libc::_exit(1);
@@ -111,6 +115,22 @@ impl ShellProcess {
             let reader = std::thread::spawn(move || {
                 let mut buf = [0u8; 4096];
                 loop {
+                    // Poll instead of a blocking read so the thread
+                    // can notice a closed master fd when the shell is
+                    // dropped (a blocked read would never wake up and
+                    // joining the thread would hang the editor).
+                    let mut pfd = libc::pollfd {
+                        fd: master,
+                        events: libc::POLLIN,
+                        revents: 0,
+                    };
+                    let rc = libc::poll(&mut pfd, 1, 100);
+                    if rc < 0 {
+                        break;
+                    }
+                    if rc == 0 {
+                        continue; // timeout — poll again
+                    }
                     let n = libc::read(master, buf.as_mut_ptr() as *mut libc::c_void, buf.len());
                     if n <= 0 {
                         let _ = tx.send(Vec::new());
@@ -263,40 +283,69 @@ impl ShellProcess {
             self.process_bytes(&new, default_style);
         }
 
-        // Flatten completed lines + the incomplete current line.
+        // Flatten cache_lines into cache_out for rendering.
         self.cache_out.clear();
-        self.cache_out.extend(self.cache_lines.iter().cloned());
-        if !self.cache_cur.is_empty() {
-            self.cache_out.push(collapse_styled(self.cache_cur.clone()));
+        // Soft-commit: copy cache_cur to cache_lines so it appears
+        // in the output, but don't lose the working buffer.
+        while self.cache_lines.len() <= self.cursor_row {
+            self.cache_lines.push(Vec::new());
+        }
+        if !self.cache_cur.is_empty() || self.cache_lines[self.cursor_row].is_empty() {
+            self.cache_lines[self.cursor_row] = self.cache_cur.clone();
+        }
+        for line in &self.cache_lines {
+            self.cache_out.push(collapse_styled(line.clone()));
         }
         &self.cache_out
     }
 
+    /// Flush the current working line into cache_lines at cursor_row.
+    fn commit_line(&mut self) {
+        while self.cache_lines.len() <= self.cursor_row {
+            self.cache_lines.push(Vec::new());
+        }
+        self.cache_lines[self.cursor_row] = std::mem::take(&mut self.cache_cur);
+    }
+
+    /// Load cache_lines[row] into the working buffer (or start fresh).
+    fn load_line(&mut self, row: usize) {
+        self.cursor_row = row;
+        while self.cache_lines.len() <= row {
+            self.cache_lines.push(Vec::new());
+        }
+        self.cache_cur = std::mem::take(&mut self.cache_lines[row]);
+        self.cache_cursor = char_index_for_col(&self.cache_cur, self.cursor_col);
+    }
+
     /// Track the logical cursor position for render_shell.
     fn cursor_up(&mut self) {
-        if self.cursor_row > 0 {
-            self.cursor_row -= 1
-        };
-        self.cache_cursor = self.cursor_col.min(self.cache_cur.len());
+        self.commit_line();
+        let row = self.cursor_row.saturating_sub(1);
+        self.load_line(row);
     }
     fn cursor_down(&mut self) {
-        self.cursor_row += 1;
-        self.cache_cursor = self.cursor_col.min(self.cache_cur.len());
+        self.commit_line();
+        let row = self.cursor_row + 1;
+        self.load_line(row);
     }
     fn cursor_forward(&mut self) {
         if self.cache_cursor < self.cache_cur.len() {
+            let w = char_width(self.cache_cur[self.cache_cursor].ch);
             self.cache_cursor += 1;
+            self.cursor_col += w;
         }
-        self.cursor_col = self.cache_cursor;
     }
     fn cursor_back(&mut self) {
-        self.cache_cursor = self.cache_cursor.saturating_sub(1);
-        self.cursor_col = self.cache_cursor;
+        if self.cache_cursor > 0 {
+            self.cache_cursor -= 1;
+            let w = char_width(self.cache_cur[self.cache_cursor].ch);
+            self.cursor_col = self.cursor_col.saturating_sub(w);
+        }
     }
     fn cursor_goto(&mut self, row: usize, col: usize) {
-        self.cursor_row = row;
+        self.commit_line();
         self.cursor_col = col;
-        self.cache_cursor = col.min(self.cache_cur.len());
+        self.load_line(row);
     }
 
     /// Parse `bytes` as UTF‑8 and feed the characters into the line
@@ -322,6 +371,8 @@ impl ShellProcess {
                                     self.cache_lines.clear();
                                     self.cache_cur.clear();
                                     self.cache_cursor = 0;
+                                    self.cursor_row = 0;
+                                    self.cursor_col = 0;
                                 } else if term == 'A' {
                                     let n: usize = params.parse().unwrap_or(1);
                                     for _ in 0..n { self.cursor_up(); }
@@ -341,7 +392,6 @@ impl ShellProcess {
                                     self.cursor_goto(row, col);
                                 } else if term == 'K' {
                                     if params == "0" || params.is_empty() {
-                                        // clear from cursor to end of line
                                         self.cache_cur.truncate(self.cache_cursor);
                                     } else if params == "2" {
                                         self.cache_cur.clear();
@@ -353,18 +403,53 @@ impl ShellProcess {
                             params.push(chars.next().unwrap());
                         }
                     }
+                    Some('O') => {
+                        // SS3 — application-mode cursor keys (ESC O A/B/C/D).
+                        if let Some(&c) = chars.peek() {
+                            if c as u32 >= 0x40 && c as u32 <= 0x7e {
+                                let term = chars.next().unwrap();
+                                match term {
+                                    'A' => self.cursor_up(),
+                                    'B' => self.cursor_down(),
+                                    'C' => self.cursor_forward(),
+                                    'D' => self.cursor_back(),
+                                    'H' => self.cursor_goto(0, 0),
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
                     Some(']') => {
                         for c2 in &mut chars {
-                            if c2 == '\x07' {
-                                break;
-                            }
+                            if c2 == '\x07' { break; }
                             if c2 == '\x1b' {
                                 if let Some('\\') = chars.next() {}
                                 break;
                             }
                         }
                     }
-                    Some(c) if c as u32 >= 0x40 && c as u32 <= 0x7e => {}
+                    Some(c) if (c as u32) >= 0x20 && (c as u32) <= 0x2f => {
+                        // Two-char sequences: ESC ( B (charset), ESC # 8, etc.
+                        chars.next();
+                    }
+                    Some(c) if (c as u32) >= 0x30 && (c as u32) <= 0x7e => {
+                        // Single-char sequences: ESC 7/8 (save/restore cursor),
+                        // ESC D/E/M (vertical cursor movement).
+                        match c {
+                            '7' => {} // save cursor — not yet supported
+                            '8' => {} // restore cursor — not yet supported
+                            'D' => self.cursor_down(),
+                            'M' => self.cursor_up(),
+                            'E' => {
+                                self.commit_line();
+                                self.cursor_col = 0;
+                                let next = self.cursor_row + 1;
+                                self.load_line(next);
+                                self.cache_cursor = 0;
+                            }
+                            _ => {}
+                        }
+                    }
                     Some(_) => {}
                     None => break,
                 },
@@ -373,21 +458,22 @@ impl ShellProcess {
                     self.cursor_col = 0;
                 }
                 '\n' => {
-                    let line = std::mem::take(&mut self.cache_cur);
-                    self.cache_lines
-                        .push(collapse_styled(line));
-                    self.cache_cursor = 0;
-                    self.cursor_row += 1;
+                    self.commit_line();
                     self.cursor_col = 0;
+                    let next = self.cursor_row + 1;
+                    self.load_line(next);
+                    self.cache_cursor = 0;
                 }
                 '\x08' => {
                     if self.cache_cursor > 0 {
+                        let w = char_width(self.cache_cur[self.cache_cursor - 1].ch);
                         self.cache_cur.remove(self.cache_cursor - 1);
                         self.cache_cursor -= 1;
+                        self.cursor_col = self.cursor_col.saturating_sub(w);
                     }
                 }
                 '\t' => {
-                    let spaces = 8 - (self.cache_cursor % 8);
+                    let spaces = 8 - (self.cursor_col % 8);
                     for _ in 0..spaces {
                         insert_styled(
                             &mut self.cache_cur,
@@ -399,6 +485,7 @@ impl ShellProcess {
                         );
                         self.cache_cursor += 1;
                     }
+                    self.cursor_col += spaces;
                 }
                 _ => {
                     if ch.is_control() {
@@ -413,8 +500,27 @@ impl ShellProcess {
                         },
                     );
                     self.cache_cursor += 1;
-                    self.cursor_col = self.cache_cursor;
+                    self.cursor_col += char_width(ch);
                 }
+            }
+        }
+    }
+}
+
+impl Drop for ShellProcess {
+    /// Close the PTY, kill the child shell, and reap it so ked never
+    /// leaks processes or hangs joining the reader thread.
+    fn drop(&mut self) {
+        unsafe {
+            libc::close(self.fd);
+            libc::close(self.slave_fd);
+            libc::kill(self.pid, libc::SIGKILL);
+            let mut status: libc::c_int = 0;
+            for _ in 0..10 {
+                if libc::waitpid(self.pid, &mut status, libc::WNOHANG) != 0 {
+                    break; // reaped, or ECHILD (already reaped)
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
             }
         }
     }
@@ -431,6 +537,18 @@ impl ShellProcess {
 struct StyledChar {
     ch: char,
     style: Style,
+}
+
+/// Map a terminal column (cells) to a char index within `chars`.
+fn char_index_for_col(chars: &[StyledChar], col: usize) -> usize {
+    let mut w = 0usize;
+    for (i, sc) in chars.iter().enumerate() {
+        if w >= col {
+            return i;
+        }
+        w += char_width(sc.ch);
+    }
+    chars.len()
 }
 
 /// Insert `sc` at `pos`, overwriting if within bounds.

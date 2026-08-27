@@ -94,11 +94,10 @@ fn load_config() -> Option<Config> {
 
 // ---- commands -------------------------------------------------------------
 
-pub fn cmd_set_inner(path: &str) {
+pub fn cmd_set_inner(path: &str) -> String {
     let abs = PathBuf::from(path);
     if !abs.is_file() {
-        eprintln!("error: file not found: {}", abs.display());
-        return;
+        return format!("error: file not found: {}", abs.display());
     }
     ensure_state_dir();
     stop_wallpaper();
@@ -121,7 +120,7 @@ pub fn cmd_set_inner(path: &str) {
         });
     let pid = child.id();
     fs::write(PID_PATH, pid.to_string()).ok();
-    println!("wallpaper started (pid: {pid})");
+    format!("wallpaper started (pid: {pid})")
 }
 
 fn cmd_set(path: &str, hide_icons: bool) {
@@ -165,17 +164,17 @@ fn cmd_set(path: &str, hide_icons: bool) {
     println!("wallpaper started (pid: {pid})");
 }
 
-pub fn cmd_stop_inner() {
+pub fn cmd_stop_inner() -> String {
     ensure_state_dir();
     stop_wallpaper();
     if icons_hidden() {
         show_desktop_icons();
     }
-    println!("wallpaper stopped");
+    "wallpaper stopped".to_string()
 }
 
 fn cmd_stop() {
-    cmd_stop_inner();
+    println!("{}", cmd_stop_inner());
 }
 
 fn cmd_status() {
@@ -216,7 +215,7 @@ fn autostart_plist() -> PathBuf {
         .join("com.lwp.wallpaper.plist")
 }
 
-pub fn cmd_autostart_on_inner() {
+pub fn cmd_autostart_on_inner() -> String {
     let exe = std::env::current_exe().unwrap();
     let plist = autostart_plist();
     fs::create_dir_all(plist.parent().unwrap()).ok();
@@ -258,14 +257,14 @@ pub fn cmd_autostart_on_inner() {
             break;
         }
     }
-    println!("autostart enabled ({})", plist.display());
+    format!("autostart enabled ({})", plist.display())
 }
 
 fn cmd_autostart_on() {
-    cmd_autostart_on_inner();
+    println!("{}", cmd_autostart_on_inner());
 }
 
-pub fn cmd_autostart_off_inner() {
+pub fn cmd_autostart_off_inner() -> String {
     let plist = autostart_plist();
     let uid = unsafe { libc::getuid() };
     Command::new("launchctl")
@@ -278,14 +277,14 @@ pub fn cmd_autostart_off_inner() {
         .ok();
     if plist.exists() {
         fs::remove_file(&plist).ok();
-        println!("autostart disabled");
+        "autostart disabled".to_string()
     } else {
-        println!("autostart not enabled");
+        "autostart not enabled".to_string()
     }
 }
 
 fn cmd_autostart_off() {
-    cmd_autostart_off_inner();
+    println!("{}", cmd_autostart_off_inner());
 }
 
 fn cmd_autostart_status() {
@@ -358,6 +357,6 @@ fn main() {
         Commands::AutostartStatus => cmd_autostart_status(),
         Commands::AutostartRun => cmd_autostart_run(),
         Commands::Run { path, hide_icons } => cmd_run(&path, hide_icons),
-        Commands::Interactive => tui::run(),
+        Commands::Interactive => tui::run().unwrap_or_else(|e| eprintln!("tui error: {e}")),
     }
 }

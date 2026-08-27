@@ -12,7 +12,7 @@
 //!   - Mode::Insert  — type text directly
 //!   - State::Command — typing a `:` command on the status line
 //!   - State::Finder — fuzzy file finder overlay (Ctrl+P)
-//!   - State::Run    — Python run output overlay (Ctrl+R)
+//!   - State::Run    — run output overlay (Ctrl+E)
 //!   - State::Shell  — pop‑up shell overlay (Ctrl+J)
 //!
 //! Multi‑buffer:
@@ -64,9 +64,9 @@ pub enum State {
     Normal,  // editing normally (no overlay)
     Command, // typing a : command on the status line
     Finder,  // fuzzy file finder open
-    Run,     // Python run output displayed
-    Music,   // music player picker (Ctrl+T)
-    Theme,   // theme selector (Ctrl+E)
+    Run,     // run output displayed (Ctrl+E)
+    Music,   // music player picker (Ctrl+M)
+    Theme,   // theme selector (Ctrl+T)
     Shell,   // pop-up shell (Ctrl+J) — handled in main.rs
     Visual,  // visual mode: selecting text with movement keys
     Search,  // typing a / search query on the status line
@@ -76,6 +76,21 @@ pub enum State {
 }
 
 // ── Buffer ───────────────────────────────────────────────────────
+
+/// A full-buffer undo/redo snapshot: the text plus the cursor
+/// position at the moment the snapshot was taken.
+#[derive(Debug, Clone)]
+pub struct Snapshot {
+    lines: Vec<String>,
+    cy: usize,
+    cx: usize,
+}
+
+impl Snapshot {
+    fn of(lines: Vec<String>, cy: usize, cx: usize) -> Self {
+        Snapshot { lines, cy, cx }
+    }
+}
 
 /// Per‑buffer state that gets swapped when the user switches tabs.
 #[derive(Debug, Clone)]
@@ -88,8 +103,11 @@ pub struct Buffer {
     filename: Option<String>,
     modified: bool,
     last_mtime: Option<SystemTime>,
-    undo_stack: Vec<Vec<String>>,
-    redo_stack: Vec<Vec<String>>,
+    undo_stack: Vec<Snapshot>,
+    redo_stack: Vec<Snapshot>,
+    /// Has the undo snapshot for the current insert session been
+    /// taken?  (We snapshot once per insert session, not per key.)
+    insert_saved: bool,
     selection_anchor: Option<(usize, usize)>,
     clipboard_text: String,
 }
@@ -104,6 +122,7 @@ impl Buffer {
             last_mtime,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            insert_saved: false,
             selection_anchor: None,
             clipboard_text: String::new(),
         }
@@ -158,8 +177,10 @@ pub struct Editor {
     pub last_mtime: Option<SystemTime>,
 
     // ── undo / redo ──
-    pub undo_stack: Vec<Vec<String>>,
-    pub redo_stack: Vec<Vec<String>>,
+    pub undo_stack: Vec<Snapshot>,
+    pub redo_stack: Vec<Snapshot>,
+    /// Has the undo snapshot for the current insert session been taken?
+    pub insert_saved: bool,
 
     // ── visual mode ──
     pub selection_anchor: Option<(usize, usize)>,
@@ -192,6 +213,7 @@ pub struct Editor {
     pub filetree_width: u16,
     pub music_dir: String,
     pub transparent: bool,
+    pub status_bar_top: bool,
     pub animations: bool,
     pub bar_stats: bool,
     pub alt_scroll: usize,
@@ -274,6 +296,7 @@ impl Editor {
             modified: false,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            insert_saved: false,
             selection_anchor: None,
             clipboard_text: String::new(),
             theme,
@@ -295,6 +318,7 @@ impl Editor {
                 cfg.music_dir.clone()
             },
             transparent: cfg.transparent,
+            status_bar_top: cfg.status_bar_top,
             animations: cfg.animations,
             bar_stats: cfg.bar_stats,
             alt_scroll: cfg.alt_scroll.max(1),
@@ -338,6 +362,7 @@ impl Editor {
             buf.last_mtime = self.last_mtime.take();
             buf.undo_stack = std::mem::take(&mut self.undo_stack);
             buf.redo_stack = std::mem::take(&mut self.redo_stack);
+            buf.insert_saved = self.insert_saved;
             buf.selection_anchor = self.selection_anchor.take();
             buf.clipboard_text = std::mem::take(&mut self.clipboard_text);
         }
@@ -356,6 +381,7 @@ impl Editor {
             self.last_mtime = buf.last_mtime;
             self.undo_stack = buf.undo_stack.clone();
             self.redo_stack = buf.redo_stack.clone();
+            self.insert_saved = buf.insert_saved;
             self.selection_anchor = buf.selection_anchor;
             self.clipboard_text = buf.clipboard_text.clone();
         }
@@ -387,19 +413,21 @@ impl Editor {
         // Clear any flash message on the next keypress.
         self.flash = None;
 
-        // Ctrl+T = music player (opens from any state).  We can't use
-        // Ctrl+M — it sends the same byte (0x0D) as Enter in most
-        // terminals so crossterm never sees it as Ctrl+M.
-        // Check this BEFORE overlay dispatch so it works everywhere.
-        if key.code == KeyCode::Char('t') && key.modifiers == KeyModifiers::CONTROL {
+        // Ctrl+M = music player (opens from any state).  This only
+        // works on terminals with kitty keyboard protocol support
+        // (kitty, foot, wezterm, iTerm2, ghostty, …) — we push the
+        // enhancement flags in main.rs so crossterm can tell Ctrl+M
+        // apart from Enter.  Check BEFORE overlay dispatch so it
+        // works everywhere.
+        if key.code == KeyCode::Char('m') && key.modifiers == KeyModifiers::CONTROL {
             self.state = State::Music;
             self.music_player.selected = 0;
             self.music_player.scan(&self.music_dir);
             return true;
         }
 
-        // Ctrl+E = theme selector (opens from any state).
-        if key.code == KeyCode::Char('e') && key.modifiers == KeyModifiers::CONTROL {
+        // Ctrl+T = theme selector (opens from any state).
+        if key.code == KeyCode::Char('t') && key.modifiers == KeyModifiers::CONTROL {
             self.state = State::Theme;
             self.theme_selected = 0;
             return true;
@@ -467,7 +495,7 @@ impl Editor {
 
         // Global keybindings that work in both normal and insert modes
         // (and also visual mode, via the fall-through above):
-        // Ctrl+P = finder, Ctrl+R = run Python, Ctrl+C/D = quit.
+        // Ctrl+P = finder, Ctrl+E = run, Ctrl+S = save, Ctrl+C = quit.
         if key.modifiers == KeyModifiers::CONTROL {
             match key.code {
                 KeyCode::Char('p') => {
@@ -478,7 +506,7 @@ impl Editor {
                     self.finder.search("");
                     return true;
                 }
-                KeyCode::Char('r') => {
+                KeyCode::Char('e') => {
                     if let Some(ref fname) = self.filename.clone() {
                         let _ = self.save_to_disk(fname);
                         self.run_output = self.run_file(fname);
@@ -489,7 +517,40 @@ impl Editor {
                     self.state = State::Run;
                     return true;
                 }
-                KeyCode::Char('c') | KeyCode::Char('d') => return false,
+                KeyCode::Char('s') => {
+                    if let Some(ref fname) = self.filename.clone() {
+                        match self.save_to_disk(fname) {
+                            Ok(()) => {
+                                self.modified = false;
+                                self.flash = Some(format!("'{}' written", fname));
+                            }
+                            Err(e) => {
+                                self.flash = Some(format!("Error: {e}"));
+                            }
+                        }
+                    } else {
+                        self.flash = Some("No filename.  Use :w <name>".to_string());
+                    }
+                    return true;
+                }
+                // Ctrl+C: exit visual mode → normal, exit insert mode
+                // → normal (like vim), quit everywhere else.
+                KeyCode::Char('c') => {
+                    if self.state == State::Visual {
+                        self.state = State::Normal;
+                        self.selection_anchor = None;
+                        return true;
+                    }
+                    if self.mode == Mode::Insert {
+                        self.mode = Mode::Normal;
+                        self.insert_saved = false;
+                        if self.cx > 0 && self.cx > self.lines[self.cy].len() {
+                            self.cx = self.lines[self.cy].len();
+                        }
+                        return true;
+                    }
+                    return false;
+                }
                 KeyCode::Char('k') => {
                     self.state = State::Help;
                     return true;
@@ -555,34 +616,6 @@ impl Editor {
     // ═══════════════════════════════════════════════════════════════
 
     fn handle_normal_mode(&mut self, key: KeyEvent) -> bool {
-        // Emergency quit: Ctrl+C or Ctrl+D (check BEFORE matching
-        // on key.code so we don't conflict with 'c'/'d' motions).
-        if key.modifiers == KeyModifiers::CONTROL
-            && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'))
-        {
-            return false;
-        }
-
-        // Ctrl+S: save.
-        if key.modifiers == KeyModifiers::CONTROL
-            && key.code == KeyCode::Char('s')
-        {
-            if let Some(ref fname) = self.filename.clone() {
-                match self.save_to_disk(fname) {
-                    Ok(()) => {
-                        self.modified = false;
-                        self.flash = Some(format!("'{}' written", fname));
-                    }
-                    Err(e) => {
-                        self.flash = Some(format!("Error: {e}"));
-                    }
-                }
-            } else {
-                self.flash = Some("No filename.  Use :w <name>".to_string());
-            }
-            return true;
-        }
-
         match key.code {
             // ── cursor motion ──
             KeyCode::Char('h') | KeyCode::Left => {
@@ -615,10 +648,14 @@ impl Editor {
 
             // ── word motion ──
             KeyCode::Char('w') => {
-                self.cx = self.next_word_pos(self.cy, self.cx);
+                let (r, c) = self.next_word_pos(self.cy, self.cx);
+                self.cy = r;
+                self.cx = c;
             }
             KeyCode::Char('b') => {
-                self.cx = self.prev_word_pos(self.cy, self.cx);
+                let (r, c) = self.prev_word_pos(self.cy, self.cx);
+                self.cy = r;
+                self.cx = c;
             }
 
             // ── page motion ──
@@ -629,6 +666,17 @@ impl Editor {
             KeyCode::PageDown => {
                 let page = (self.terminal_height() as usize).saturating_sub(2).max(1);
                 self.cy = min(self.cy + page / 2, self.lines.len().saturating_sub(1));
+            }
+            // vim-style half-page scroll.
+            KeyCode::Char('d') if key.modifiers == KeyModifiers::CONTROL => {
+                let page = (self.terminal_height() as usize / 2).max(1);
+                self.cy = min(self.cy + page, self.lines.len().saturating_sub(1));
+                self.cx = self.cx.min(self.lines[self.cy].len());
+            }
+            KeyCode::Char('u') if key.modifiers == KeyModifiers::CONTROL => {
+                let page = (self.terminal_height() as usize / 2).max(1);
+                self.cy = self.cy.saturating_sub(page);
+                self.cx = self.cx.min(self.lines[self.cy].len());
             }
 
             // ── jump to first / last line ──
@@ -656,20 +704,26 @@ impl Editor {
             }
 
             // ── enter insert mode ──
-            KeyCode::Char('i') => self.mode = Mode::Insert,
+            KeyCode::Char('i') => {
+                self.mode = Mode::Insert;
+                self.insert_saved = false;
+            }
             KeyCode::Char('a') => {
                 if self.cx < self.lines[self.cy].len() {
                     self.cx = self.right_cx();
                 }
                 self.mode = Mode::Insert;
+                self.insert_saved = false;
             }
             KeyCode::Char('I') => {
                 self.cx = 0;
                 self.mode = Mode::Insert;
+                self.insert_saved = false;
             }
             KeyCode::Char('A') => {
                 self.cx = self.lines[self.cy].len();
                 self.mode = Mode::Insert;
+                self.insert_saved = false;
             }
 
             // ── open new lines ──
@@ -679,6 +733,7 @@ impl Editor {
                 self.cy += 1;
                 self.cx = 0;
                 self.mode = Mode::Insert;
+                self.insert_saved = true; // snapshot already taken above
                 self.modified = true;
             }
             KeyCode::Char('O') => {
@@ -686,6 +741,7 @@ impl Editor {
                 self.lines.insert(self.cy, String::new());
                 self.cx = 0;
                 self.mode = Mode::Insert;
+                self.insert_saved = true; // snapshot already taken above
                 self.modified = true;
             }
 
@@ -765,14 +821,8 @@ impl Editor {
             }
 
             // ── undo / redo ──
-            KeyCode::Char('u') => {
-                if let Some(prev) = self.undo_stack.pop() {
-                    self.redo_stack.push(self.lines.clone());
-                    self.lines = prev;
-                    self.cy = min(self.cy, self.lines.len().saturating_sub(1));
-                    self.cx = min(self.cx, self.lines[self.cy].len());
-                }
-            }
+            KeyCode::Char('u') => self.undo(),
+            KeyCode::Char('r') if key.modifiers == KeyModifiers::CONTROL => self.redo(),
 
             // ── enter command mode ──
             KeyCode::Char(':') => {
@@ -829,19 +879,20 @@ impl Editor {
     // ═══════════════════════════════════════════════════════════════
 
     fn handle_insert_mode(&mut self, key: KeyEvent) -> bool {
-        // Save undo snapshot before the first modification in insert
-        // mode (best-effort: we save once per insert session).
-        // We track this by checking if undo_stack's last entry matches.
-        // This is a simplistic approach — a real editor would use a
-        // coalescing undo mechanism.
-        if self.undo_stack.last().map(|s| *s != self.lines).unwrap_or(true) {
-            self.save_undo();
+        // Take one undo snapshot per insert session — right before the
+        // first modification — so `u` undoes the whole typed run like
+        // vim, instead of one character at a time.
+        let modifies = matches!(key.code, KeyCode::Char(_))
+            || matches!(key.code, KeyCode::Enter | KeyCode::Backspace | KeyCode::Delete | KeyCode::Tab);
+        if modifies {
+            self.save_undo_if_needed();
         }
 
         match key.code {
             // Escape returns to normal mode.
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
+                self.insert_saved = false;
                 // Move cursor one left if past end of line (vim does this
                 // so the block cursor sits on the last character).
                 if self.cx > 0 && self.cx > self.lines[self.cy].len() {
@@ -939,8 +990,9 @@ impl Editor {
                 }
             }
 
-            // Regular character: insert at cursor.
-            KeyCode::Char(ch) => {
+            // Regular character: insert at cursor (Ctrl-modified
+            // chars are reserved for editor actions, so ignore them).
+            KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 let line = &mut self.lines[self.cy];
                 let pos = line.floor_char_boundary(self.cx);
                 line.insert(pos, ch);
@@ -960,13 +1012,6 @@ impl Editor {
     // ═══════════════════════════════════════════════════════════════
 
     fn handle_visual_mode(&mut self, key: KeyEvent) -> bool {
-        // Ctrl+C/D: quit.
-        if key.modifiers == KeyModifiers::CONTROL
-            && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'))
-        {
-            return false;
-        }
-
         match key.code {
             // Esc or v: exit visual mode.
             KeyCode::Esc => {
@@ -1007,10 +1052,25 @@ impl Editor {
                 self.cx = self.lines[self.cy].len();
             }
             KeyCode::Char('w') => {
-                self.cx = self.next_word_pos(self.cy, self.cx);
+                let (r, c) = self.next_word_pos(self.cy, self.cx);
+                self.cy = r;
+                self.cx = c;
             }
             KeyCode::Char('b') => {
-                self.cx = self.prev_word_pos(self.cy, self.cx);
+                let (r, c) = self.prev_word_pos(self.cy, self.cx);
+                self.cy = r;
+                self.cx = c;
+            }
+            // vim-style half-page scroll (extends the selection).
+            KeyCode::Char('d') if key.modifiers == KeyModifiers::CONTROL => {
+                let page = (self.terminal_height() as usize / 2).max(1);
+                self.cy = min(self.cy + page, self.lines.len().saturating_sub(1));
+                self.cx = self.cx.min(self.lines[self.cy].len());
+            }
+            KeyCode::Char('u') if key.modifiers == KeyModifiers::CONTROL => {
+                let page = (self.terminal_height() as usize / 2).max(1);
+                self.cy = self.cy.saturating_sub(page);
+                self.cx = self.cx.min(self.lines[self.cy].len());
             }
 
             // Yank selection (y or c both copy).
@@ -1063,6 +1123,7 @@ impl Editor {
                 self.state = State::Normal;
                 self.selection_anchor = None;
                 self.mode = Mode::Insert;
+                self.insert_saved = false;
             }
             KeyCode::Char('a') => {
                 self.state = State::Normal;
@@ -1071,18 +1132,21 @@ impl Editor {
                     self.cx = self.right_cx();
                 }
                 self.mode = Mode::Insert;
+                self.insert_saved = false;
             }
             KeyCode::Char('I') => {
                 self.state = State::Normal;
                 self.selection_anchor = None;
                 self.cx = 0;
                 self.mode = Mode::Insert;
+                self.insert_saved = false;
             }
             KeyCode::Char('A') => {
                 self.state = State::Normal;
                 self.selection_anchor = None;
                 self.cx = self.lines[self.cy].len();
                 self.mode = Mode::Insert;
+                self.insert_saved = false;
             }
 
             _ => {}
@@ -1317,21 +1381,13 @@ impl Editor {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    //  Run-state key handling (Ctrl+R overlay)
+    //  Run-state key handling (Ctrl+E overlay)
     // ═══════════════════════════════════════════════════════════════
 
-    fn handle_run_state(&mut self, key: KeyEvent) -> bool {
-        // Any key dismisses the run output.
-        match key.code {
-            KeyCode::Char('c') | KeyCode::Char('d')
-                if key.modifiers == KeyModifiers::CONTROL =>
-            {
-                return false;
-            }
-            _ => {
-                self.state = State::Normal;
-            }
-        }
+    fn handle_run_state(&mut self, _key: KeyEvent) -> bool {
+        // Any key dismisses the run output (Ctrl+C/D included — they
+        // shouldn't quit the whole editor while the overlay is open).
+        self.state = State::Normal;
         true
     }
 
@@ -1354,6 +1410,10 @@ impl Editor {
             KeyCode::Char('s') | KeyCode::Backspace => {
                 self.music_player.stop();
             }
+            // 'l': toggle looping.
+            KeyCode::Char('l') => {
+                self.music_player.looping = !self.music_player.looping;
+            }
             // Navigation.
             KeyCode::Up | KeyCode::Char('k') => {
                 self.music_player.selected =
@@ -1374,7 +1434,8 @@ impl Editor {
                     (self.music_player.selected + 10).min(max);
             }
 
-            KeyCode::Char('c') | KeyCode::Char('d')
+            // Ctrl+C: quit.
+            KeyCode::Char('c')
                 if key.modifiers == KeyModifiers::CONTROL =>
             {
                 return false;
@@ -1405,7 +1466,8 @@ impl Editor {
                 self.theme_selected = (self.theme_selected + 1).min(max);
             }
             // Ctrl+C/D: quit.
-            KeyCode::Char('c') | KeyCode::Char('d')
+            // Ctrl+C: quit.
+            KeyCode::Char('c')
                 if key.modifiers == KeyModifiers::CONTROL =>
             {
                 return false;
@@ -1483,7 +1545,8 @@ impl Editor {
                 }
             }
             // Ctrl+C/D: quit
-            KeyCode::Char('c') | KeyCode::Char('d')
+            // Ctrl+C: quit.
+            KeyCode::Char('c')
                 if key.modifiers == KeyModifiers::CONTROL =>
             {
                 return false;
@@ -1642,20 +1705,29 @@ impl Editor {
                 self.current = min(self.current, self.buffers.len().saturating_sub(1));
                 self.sync_from_buffer(self.current);
             }
-            // :w — save
+            // :w [file] — save (optionally to a new name)
             "w" => {
-                if let Some(ref fname) = self.filename.clone() {
-                    match self.save_to_disk(fname) {
-                        Ok(_) => {
-                            self.modified = false;
-                            self.flash = Some(format!("'{}' written", fname));
-                        }
-                        Err(e) => {
-                            self.flash = Some(format!("Error: {e}"));
+                let fname = if parts.len() > 1 {
+                    let name = parts[1..].join(" ");
+                    self.filename = Some(name.clone());
+                    name
+                } else {
+                    match self.filename.clone() {
+                        Some(f) => f,
+                        None => {
+                            self.flash = Some("No filename.  Use :w <name>".to_string());
+                            return true;
                         }
                     }
-                } else {
-                    self.flash = Some("No filename.  Use :w <name>".to_string());
+                };
+                match self.save_to_disk(&fname) {
+                    Ok(_) => {
+                        self.modified = false;
+                        self.flash = Some(format!("'{}' written", fname));
+                    }
+                    Err(e) => {
+                        self.flash = Some(format!("Error: {e}"));
+                    }
                 }
             }
             // :wq — save and close buffer (quit if last)
@@ -1762,7 +1834,7 @@ impl Editor {
                 self.cy = line.min(self.lines.len().saturating_sub(1));
                 self.cx = 0;
                 self.left = 0;
-                let page = (self.terminal_height() as usize).saturating_sub(1);
+                let page = (self.terminal_height() as usize).saturating_sub(2).max(1);
                 self.top = self.cy.saturating_sub(page / 2);
                 self.clamp_scroll();
             }
@@ -1795,13 +1867,18 @@ impl Editor {
             "c" | "h" => self.run_c(path),
             "rs" => self.run_rust(path),
             "py" => run_python(path),
-            _ => format!("Don't know how to run .{ext} files.  Use .py, .rs, .c, or .h."),
+            "go" => run_go(path),
+            _ => format!("Don't know how to run .{ext} files.  Use .py, .rs, .c, .h, or .go."),
         }
     }
 
     /// Compile and run a C source file.
     fn run_c(&self, path: &str) -> String {
         let bin = "/tmp/ked_c_bin";
+
+        // Remove any stale binary so a failed compile can't leave an
+        // old executable behind that "succeeds" on the next run.
+        let _ = fs::remove_file(bin);
 
         // Compile
         let comp = ProcCmd::new("cc")
@@ -1861,6 +1938,10 @@ impl Editor {
     fn run_rust(&self, path: &str) -> String {
         let bin = "/tmp/ked_rust_bin";
 
+        // Remove any stale binary so a failed compile can't leave an
+        // old executable behind that "succeeds" on the next run.
+        let _ = fs::remove_file(bin);
+
         let comp = ProcCmd::new("rustup")
             .args(["run", "stable", "rustc", "-o", bin, path])
             .output();
@@ -1917,14 +1998,20 @@ impl Editor {
     // ═══════════════════════════════════════════════════════════════
 
     /// Clamp `top` and `left` so the cursor stays visible.
+    ///
+    /// Horizontal math is done in terminal *cells* (not bytes): `cx`
+    /// and `left` are UTF-8 byte offsets, but the screen is laid out
+    /// in columns — wide characters (CJK/emoji) take 2 cells and tabs
+    /// advance to the next multiple of 8.
     fn clamp_scroll(&mut self) {
-        // The gutter width (line number string + "| ") we need to
+        // The gutter width (line number string + "│") we need to
         // account for in horizontal scrolling.
         let gutter = self.gutter_width() + 1; // number + "│"
 
-        // Vertical: make sure cursor line is on screen.
+        // Vertical: make sure the cursor line is on screen.  Reserve
+        // one row for the buffer bar and one for the status bar.
         let height = self.terminal_height() as usize;
-        let page_lines = height.saturating_sub(1); // reserve 1 for status bar
+        let page_lines = height.saturating_sub(2).max(1);
         if self.cy < self.top {
             self.top = self.cy;
         }
@@ -1932,17 +2019,21 @@ impl Editor {
             self.top = self.cy.saturating_sub(page_lines) + 1;
         }
 
-        // Horizontal: make sure cursor column is on screen.
+        // Horizontal: make sure the cursor column is on screen.
         let width = self.terminal_width() as usize;
         let visible_cols = width.saturating_sub(gutter);
         if visible_cols == 0 {
             return;
         }
-        if self.cx < self.left {
-            self.left = self.cx;
-        }
-        if self.cx >= self.left + visible_cols {
-            self.left = self.cx.saturating_sub(visible_cols) + 1;
+        let line = &self.lines[self.cy];
+        let left = line.floor_char_boundary(self.left.min(line.len()));
+        let cx = line.floor_char_boundary(self.cx.min(line.len()));
+        let left_col = col_width(&line[..left]);
+        let cx_col = col_width(&line[..cx]);
+        if cx_col < left_col {
+            self.left = cx;
+        } else if cx_col >= left_col + visible_cols {
+            self.left = byte_at_col(line, cx_col.saturating_sub(visible_cols) + 1);
         }
     }
 
@@ -1987,8 +2078,9 @@ impl Editor {
     //  Word-motion helpers
     // ═══════════════════════════════════════════════════════════════
 
-    /// Find the start position of the next word on or after `col`.
-    fn next_word_pos(&self, row: usize, col: usize) -> usize {
+    /// Find the end of the next word on or after `col`, wrapping to
+    /// the start of the next line when the word runs off the end.
+    fn next_word_pos(&self, row: usize, col: usize) -> (usize, usize) {
         let line = &self.lines[row];
         let mut pos = col;
         // Skip whitespace.
@@ -2001,19 +2093,19 @@ impl Editor {
         }
         if pos >= line.len() && row + 1 < self.lines.len() {
             // Wrap to next line.
-            return 0;
+            return (row + 1, 0);
         }
-        pos
+        (row, pos)
     }
 
-    /// Find the start position of the previous word before `col`.
-    #[allow(dead_code)]
-    fn prev_word_pos(&self, row: usize, col: usize) -> usize {
+    /// Find the start of the word before `col`, wrapping to the end
+    /// of the previous line when already at column 0.
+    fn prev_word_pos(&self, row: usize, col: usize) -> (usize, usize) {
         if col == 0 {
             if row > 0 {
-                return self.lines[row - 1].len();
+                return (row - 1, self.lines[row - 1].len());
             }
-            return 0;
+            return (0, 0);
         }
         let line = &self.lines[row];
         let mut pos = col;
@@ -2025,18 +2117,54 @@ impl Editor {
         while pos > 0 && line.as_bytes()[pos.saturating_sub(1)] != b' ' {
             pos -= 1;
         }
-        pos
+        (row, pos)
     }
 
-    /// Save the current buffer state onto the undo stack.
+    /// Save the current buffer state (text + cursor) onto the undo
+    /// stack.  Called before every edit in normal/visual mode.
     fn save_undo(&mut self) {
-        self.undo_stack.push(self.lines.clone());
+        self.undo_stack.push(Snapshot::of(self.lines.clone(), self.cy, self.cx));
         // Keep undo stack manageable (max 100 entries).
         if self.undo_stack.len() > 100 {
             self.undo_stack.remove(0);
         }
         // Redo is invalidated on new changes.
         self.redo_stack.clear();
+    }
+
+    /// Save the undo snapshot for this insert session, unless it was
+    /// already taken (we snapshot once per insert session so `u`
+    /// undoes the whole typed run like vim).
+    fn save_undo_if_needed(&mut self) {
+        if self.insert_saved {
+            return;
+        }
+        self.save_undo();
+        self.insert_saved = true;
+    }
+
+    /// Restore a snapshot into the editor, clamping the cursor to the
+    /// restored text.
+    fn restore(&mut self, snap: Snapshot) {
+        self.lines = snap.lines;
+        self.cy = snap.cy.min(self.lines.len().saturating_sub(1));
+        self.cx = snap.cx.min(self.lines[self.cy].len());
+    }
+
+    /// Undo one step (`u`).
+    fn undo(&mut self) {
+        if let Some(prev) = self.undo_stack.pop() {
+            self.redo_stack.push(Snapshot::of(self.lines.clone(), self.cy, self.cx));
+            self.restore(prev);
+        }
+    }
+
+    /// Redo one step (Ctrl+R).
+    fn redo(&mut self) {
+        if let Some(next) = self.redo_stack.pop() {
+            self.undo_stack.push(Snapshot::of(self.lines.clone(), self.cy, self.cx));
+            self.restore(next);
+        }
     }
 
     // ── visual mode helpers ─────────────────────────────────────
@@ -2112,13 +2240,25 @@ impl Editor {
         let _height = area.height as usize;
         let width  = area.width as usize;
 
-        // Split the screen: buffer bar (top) + main content + status bar (bottom).
-        let [bufbar_area, content_area, status_area] = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Min(1),
-            Constraint::Length(1),
-        ])
-        .areas(area);
+        // Split the screen: buffer bar + main content + status bar.
+        // With `status_bar_top` the status bar sits above the buffer bar.
+        let (bufbar_area, content_area, status_area) = if self.status_bar_top {
+            let [status_area, bufbar_area, content_area] = Layout::vertical([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Min(1),
+            ])
+            .areas(area);
+            (bufbar_area, content_area, status_area)
+        } else {
+            let [bufbar_area, content_area, status_area] = Layout::vertical([
+                Constraint::Length(1),
+                Constraint::Min(1),
+                Constraint::Length(1),
+            ])
+            .areas(area);
+            (bufbar_area, content_area, status_area)
+        };
 
         // When the file tree is open, split content area horizontally.
         let (editor_area, tree_area) = if self.state == State::FileTree {
@@ -2316,41 +2456,13 @@ impl Editor {
                 }
             }
 
-            // Trim content spans to the visible horizontal window.
-            if visible_content_cols > 0 {
-                let gutter_span = spans.remove(0);
-                let mut trimmed = vec![gutter_span];
-                let mut byte_offset = 0usize;
-                let right = self.left.saturating_add(visible_content_cols);
-                for span in spans {
-                    let span_len = span.content.len();
-                    let span_end = byte_offset + span_len;
-                    if span_end <= self.left {
-                        byte_offset = span_end;
-                        continue;
-                    }
-                    if byte_offset >= right {
-                        break;
-                    }
-                    let local_start = self.left.saturating_sub(byte_offset);
-                    let local_end = right.saturating_sub(byte_offset).min(span_len);
-                    if local_start < local_end {
-                        // Stay on UTF-8 char boundaries.
-                        let start = span.content.floor_char_boundary(local_start);
-                        let end = span.content.ceil_char_boundary(local_end).min(span_len);
-                        if start < end {
-                            trimmed.push(Span::styled(
-                                span.content[start..end].to_string(),
-                                span.style,
-                            ));
-                        }
-                    }
-                    byte_offset = span_end;
-                }
-                lines_vec.push(Line::from(trimmed).style(line_style));
-            } else {
-                lines_vec.push(Line::from(spans).style(line_style));
-            }
+            // Clip content spans to the visible horizontal window
+            // (in terminal cells), expanding tabs to spaces so the
+            // frame never desynchronises.
+            lines_vec.push(
+                Line::from(visible_spans(raw, spans, self.left, visible_content_cols))
+                    .style(line_style),
+            );
         }
 
         // Wrap in Paragraph and render.  We explicitly set the width
@@ -2375,7 +2487,15 @@ impl Editor {
             f.set_cursor_position(Position::new(0, 0));
         } else if let Some(gutter) = self.gutter_width().checked_add(1) {
             let cy_screen = (self.cy.saturating_sub(self.top)) as u16;
-            let cx_screen = (self.cx.saturating_sub(self.left)) as u16 + gutter as u16;
+            // Cursor column in cells: convert byte offsets through
+            // visual widths so wide chars / tabs don't push the
+            // cursor off its column.
+            let line = &self.lines[self.cy];
+            let cx = line.floor_char_boundary(self.cx.min(line.len()));
+            let left = line.floor_char_boundary(self.left.min(line.len()));
+            let cx_screen = col_width(&line[..cx])
+                .saturating_sub(col_width(&line[..left])) as u16
+                + gutter as u16;
             if cy_screen < editor_area.height {
                 let cursor_x = editor_area.x + cx_screen;
                 let cursor_y = editor_area.y + cy_screen;
@@ -2776,13 +2896,15 @@ impl Editor {
         .areas(inner);
 
         // Status line: now-playing or hint.
+        let loop_indicator = if self.music_player.looping { " ↻" } else { "" };
         let status_text = if let Some(ref song) = self.music_player.current_song {
             let name = song.rsplit('/').next().unwrap_or(song);
-            format!(" Now Playing: {name}")
+            format!(" Now Playing: {name}{loop_indicator}")
         } else if self.music_player.files.is_empty() {
             " No MP3 files found in this directory.".to_string()
         } else {
-            format!(" {} files — Enter=play  s=stop  Esc=close", self.music_player.files.len())
+            format!(" {} files — Enter=play  s=stop  l=loop{}  Esc=close",
+                self.music_player.files.len(), loop_indicator)
         };
         let status_span = Span::styled(
             status_text,
@@ -3097,7 +3219,8 @@ impl Editor {
             Line::from("  0/$/gg/G    line start/end, first/last"),
             Line::from("  i/a/I/A     insert mode           o/O      open line below/above"),
             Line::from("  x/dd        delete char/line      yy/p/P   yank/paste"),
-            Line::from("  u           undo                  v        visual mode"),
+            Line::from("  u           undo                  Ctrl+R   redo"),
+            Line::from("  v           visual mode           Ctrl+C   exit to normal"),
             Line::from(""),
             Line::from(Span::styled("Buffers & Files", theme.keyword)),
             Line::from("  Tab/S-Tab   next/prev buffer      :bn/:bp  next/prev buffer"),
@@ -3105,8 +3228,8 @@ impl Editor {
             Line::from("  Ctrl+S      save                  :e <f>   open file"),
             Line::from(""),
             Line::from(Span::styled("Tools", theme.keyword)),
-            Line::from("  Ctrl+R      run python            Ctrl+T   music player"),
-            Line::from("  Ctrl+E      theme selector        Ctrl+K   this manual"),
+            Line::from("  Ctrl+E      run file              Ctrl+M   music player"),
+            Line::from("  Ctrl+T      theme selector        Ctrl+K   this manual"),
             Line::from("  :sys        system dashboard      :3       colour fx cycle"),
             Line::from(""),
             Line::from(Span::styled("Commands", theme.keyword)),
@@ -3247,9 +3370,10 @@ impl Editor {
             ("Ctrl+P", "find file"),
             ("Ctrl+F", "file tree"),
             ("Ctrl+J", "terminal"),
-            ("Ctrl+R", "run python"),
-            ("Ctrl+T", "music"),
-            ("Ctrl+E", "theme"),
+            ("Ctrl+M", "music"),
+            ("Ctrl+T", "theme"),
+            ("Ctrl+E", "run"),
+            ("Ctrl+R", "redo"),
             ("Ctrl+K", "keybinds"),
             ("Tab",    "switch buf"),
             (":wq",    "save & quit"),
@@ -3499,6 +3623,154 @@ fn color_to_rgb(c: Color) -> Option<(u8, u8, u8)> {
         _ => None,
     }
 }
+// ── terminal-cell (visual column) helpers ───────────────────────
+
+/// Approximate terminal cell width of a character (wcwidth).
+/// ASCII is 1 cell, combining marks are 0, East Asian wide/fullwidth
+/// characters and common emoji are 2.  Good enough to keep the
+/// cursor aligned with the text it edits.
+pub fn char_width(c: char) -> usize {
+    if c == '\0' {
+        return 0;
+    }
+    if c.is_ascii() {
+        return 1;
+    }
+    match c as u32 {
+        // Combining diacritics — zero width.
+        0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF
+        | 0x20D0..=0x20FF | 0xFE20..=0xFE2F => 0,
+        // East Asian wide & fullwidth, Hangul, emoji, CJK extensions.
+        0x1100..=0x115F | 0x2E80..=0x303E | 0x3041..=0x33FF
+        | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xA000..=0xA4CF
+        | 0xAC00..=0xD7A3 | 0xF900..=0xFAFF | 0xFE10..=0xFE19
+        | 0xFE30..=0xFE6F | 0xFF00..=0xFF60 | 0xFFE0..=0xFFE6
+        | 0x16FE0..=0x16FFF | 0x17000..=0x187F7 | 0x1B000..=0x1B2FF
+        | 0x1F300..=0x1F64F | 0x1F680..=0x1F6FF | 0x1F900..=0x1F9FF
+        | 0x20000..=0x2FFFD | 0x30000..=0x3FFFD => 2,
+        _ => 1,
+    }
+}
+
+/// Number of terminal cells a string occupies: tabs advance to the
+/// next multiple of 8, control characters are zero-width (they are
+/// dropped by [`visible_spans`]).
+fn col_width(s: &str) -> usize {
+    let mut w = 0usize;
+    for c in s.chars() {
+        if c == '\t' {
+            w = (w / 8 + 1) * 8;
+        } else if !c.is_control() {
+            w += char_width(c);
+        }
+    }
+    w
+}
+
+/// Smallest char-boundary byte offset in `s` whose visual column is
+/// at least `col`.  Returns `s.len()` if `col` is past the end.
+fn byte_at_col(s: &str, col: usize) -> usize {
+    let mut w = 0usize;
+    for (b, c) in s.char_indices() {
+        if w >= col {
+            return b;
+        }
+        if c == '\t' {
+            w = (w / 8 + 1) * 8;
+        } else if !c.is_control() {
+            w += char_width(c);
+        }
+    }
+    s.len()
+}
+
+/// Clip the content spans of one rendered line to the visible
+/// horizontal window (measured in terminal cells, not bytes).
+///
+/// `spans[0]` is the line-number gutter and is always kept; the rest
+/// must concatenate to `raw`.  Tabs are expanded to spaces and stray
+/// control characters are dropped so the terminal frame never
+/// desynchronises.
+fn visible_spans(
+    raw: &str,
+    mut spans: Vec<Span<'static>>,
+    left: usize,
+    visible_cols: usize,
+) -> Vec<Span<'static>> {
+    if spans.is_empty() {
+        return spans;
+    }
+    let gutter = spans.remove(0);
+    let mut out = vec![gutter];
+
+    let left = raw.floor_char_boundary(left.min(raw.len()));
+    let left_col = col_width(&raw[..left]);
+    let end_byte = byte_at_col(raw, left_col.saturating_add(visible_cols));
+    if end_byte <= left {
+        return out;
+    }
+
+    let mut byte_off = 0usize;
+    let mut current: Option<(Style, String)> = None;
+
+    for span in spans {
+        let text = span.content.as_ref();
+        let span_start = byte_off;
+        let span_end = span_start + text.len();
+        byte_off = span_end;
+
+        let s = span_start.max(left);
+        let e = span_end.min(end_byte);
+        if s >= e {
+            continue;
+        }
+        let slice = &text[s - span_start..e - span_start];
+        let mut col = col_width(&raw[..s]);
+        for c in slice.chars() {
+            if col >= left_col + visible_cols {
+                break;
+            }
+            if c == '\t' {
+                let stop = (col / 8 + 1) * 8;
+                let spaces = (stop - col).min(left_col + visible_cols - col);
+                push_text(&mut out, &mut current, " ".repeat(spaces), span.style);
+                col = stop;
+            } else if c.is_control() {
+                // Drop — control characters would corrupt the frame.
+            } else {
+                push_text(&mut out, &mut current, c.to_string(), span.style);
+                col += char_width(c);
+            }
+        }
+    }
+    if let Some((style, text)) = current {
+        out.push(Span::styled(text, style));
+    }
+    out
+}
+
+/// Append `text` to the current run in `current`, flushing to `out`
+/// when the style changes (keeps adjacent same-styled spans merged).
+fn push_text(
+    out: &mut Vec<Span<'static>>,
+    current: &mut Option<(Style, String)>,
+    text: String,
+    style: Style,
+) {
+    if text.is_empty() {
+        return;
+    }
+    match current.as_mut() {
+        Some((cs, ct)) if *cs == style => ct.push_str(&text),
+        Some((cs, ct)) => {
+            out.push(Span::styled(std::mem::take(ct), *cs));
+            *cs = style;
+            ct.push_str(&text);
+        }
+        None => *current = Some((style, text)),
+    }
+}
+
 fn key_to_bytes(key: KeyEvent) -> Vec<u8> {
     match key.code {
         KeyCode::Char(c) => {
@@ -3516,7 +3788,7 @@ fn key_to_bytes(key: KeyEvent) -> Vec<u8> {
             }
         }
         KeyCode::Enter => vec![b'\r'],
-        KeyCode::Backspace => vec![0x7f],
+        KeyCode::Backspace => vec![0x08],
         KeyCode::Tab => vec![b'\t'],
         KeyCode::Esc => vec![0x1b],
         KeyCode::Left => vec![0x1b, b'[', b'D'],
@@ -3528,6 +3800,20 @@ fn key_to_bytes(key: KeyEvent) -> Vec<u8> {
         KeyCode::Delete => vec![0x1b, b'[', b'3', b'~'],
         KeyCode::PageUp => vec![0x1b, b'[', b'5', b'~'],
         KeyCode::PageDown => vec![0x1b, b'[', b'6', b'~'],
+        KeyCode::Insert => vec![0x1b, b'[', b'2', b'~'],
+        KeyCode::F(1) => vec![0x1b, b'O', b'P'],
+        KeyCode::F(2) => vec![0x1b, b'O', b'Q'],
+        KeyCode::F(3) => vec![0x1b, b'O', b'R'],
+        KeyCode::F(4) => vec![0x1b, b'O', b'S'],
+        KeyCode::F(5) => vec![0x1b, b'[', b'1', b'5', b'~'],
+        KeyCode::F(6) => vec![0x1b, b'[', b'1', b'7', b'~'],
+        KeyCode::F(7) => vec![0x1b, b'[', b'1', b'8', b'~'],
+        KeyCode::F(8) => vec![0x1b, b'[', b'1', b'9', b'~'],
+        KeyCode::F(9) => vec![0x1b, b'[', b'2', b'0', b'~'],
+        KeyCode::F(10) => vec![0x1b, b'[', b'2', b'1', b'~'],
+        KeyCode::F(11) => vec![0x1b, b'[', b'2', b'3', b'~'],
+        KeyCode::F(12) => vec![0x1b, b'[', b'2', b'4', b'~'],
+        KeyCode::BackTab => vec![0x1b, b'[', b'Z'],
         _ => vec![],
     }
 }
@@ -3610,27 +3896,34 @@ fn collect_sys_stats() -> (f64, u64, u64, Option<u8>, Option<String>) {
 #[cfg(target_os = "linux")]
 fn collect_sys_stats() -> (f64, u64, u64, Option<u8>, Option<String>) {
     use std::fs;
-    let mut cpu: f64 = 0.0;
     let mut mem_used: u64 = 0;
     let mut mem_total: u64 = 0;
     let mut batt_pct: Option<u8> = None;
     let mut batt_status: Option<String> = None;
 
-    // CPU from /proc/stat
-    if let Ok(s) = fs::read_to_string("/proc/stat") {
-        if let Some(line) = s.lines().next() {
-            let parts: Vec<u64> = line.split_whitespace().skip(1)
-                .filter_map(|v| v.parse().ok()).collect();
-            if parts.len() >= 4 {
-                let total: u64 = parts.iter().sum();
-                let idle = parts[3];
-                // Rough CPU usage estimate
-                if total > 0 {
-                    cpu = 100.0 * (1.0 - idle as f64 / total as f64);
-                }
-            }
+    // CPU from /proc/stat.  A single sample is meaningless (the
+    // counters are cumulative since boot) — take two samples ~120 ms
+    // apart and compute the percentage from the deltas.
+    let read_cpu = || -> Option<(u64, u64)> {
+        let s = fs::read_to_string("/proc/stat").ok()?;
+        let line = s.lines().next()?;
+        let parts: Vec<u64> = line.split_whitespace().skip(1)
+            .filter_map(|v| v.parse().ok()).collect();
+        if parts.len() < 4 {
+            return None;
         }
-    }
+        let total: u64 = parts.iter().sum();
+        Some((total, parts[3]))
+    };
+    let cpu: f64 = match (read_cpu(), {
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        read_cpu()
+    }) {
+        (Some((t0, i0)), Some((t1, i1))) if t1 > t0 => {
+            100.0 * (1.0 - (i1.saturating_sub(i0)) as f64 / (t1 - t0) as f64)
+        }
+        _ => 0.0,
+    };
 
     // Memory from /proc/meminfo
     if let Ok(s) = fs::read_to_string("/proc/meminfo") {
@@ -3690,5 +3983,129 @@ fn run_python(path: &str) -> String {
             result
         }
         Err(e) => format!("Error running python3: {e}"),
+    }
+}
+
+fn run_go(path: &str) -> String {
+    let output = ProcCmd::new("go").args(["run", path]).output();
+    match output {
+        Ok(out) => {
+            let mut result = String::new();
+            if !out.stdout.is_empty() {
+                result.push_str(&String::from_utf8_lossy(&out.stdout));
+            }
+            if !out.stderr.is_empty() {
+                if !result.is_empty() {
+                    result.push('\n');
+                }
+                result.push_str(&String::from_utf8_lossy(&out.stderr));
+            }
+            if result.is_empty() {
+                result = "(no output)".to_string();
+            }
+            result
+        }
+        Err(e) => format!("Error running go: {e}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn col_width_counts_cells_not_bytes() {
+        assert_eq!(col_width("abc"), 3);
+        assert_eq!(col_width("héllo"), 5); // 2-byte char, 1 cell
+        assert_eq!(col_width("日本語"), 6); // 3 wide chars
+        assert_eq!(col_width("🐍"), 2); // emoji is 2 cells
+        assert_eq!(col_width("a\tb"), 9); // tab advances to col 8
+        assert_eq!(col_width("e\u{301}"), 1); // combining mark is 0
+    }
+
+    #[test]
+    fn byte_at_col_finds_char_boundaries() {
+        let s = "héllo";
+        assert_eq!(byte_at_col(s, 1), 1); // after 'h'
+        assert_eq!(byte_at_col(s, 2), 3); // after 'é' (1 byte + 2 bytes)
+        assert_eq!(byte_at_col(s, 99), s.len());
+    }
+
+    #[test]
+    fn visible_spans_clips_and_expands_tabs() {
+        let raw = "ab\tcd";
+        let gutter = Span::styled("1│".to_string(), Style::new());
+
+        // Window: columns [0, 4) → "ab  " (tab clipped at the edge).
+        let spans = vec![
+            gutter.clone(),
+            Span::styled(raw.to_string(), Style::new()),
+        ];
+        let out = visible_spans(raw, spans, 0, 4);
+        let text: String = out.iter().skip(1).map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "ab  ");
+
+        // Window: columns [8, 12) → "cd" (tab is left of the window).
+        let spans = vec![gutter, Span::styled(raw.to_string(), Style::new())];
+        let out = visible_spans(raw, spans, byte_at_col(raw, 8), 4);
+        let text: String = out.iter().skip(1).map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "cd");
+    }
+
+    #[test]
+    fn visible_spans_drops_control_chars() {
+        let raw = "a\x08b";
+        let gutter = Span::styled("1│".to_string(), Style::new());
+        let spans = vec![gutter, Span::styled(raw.to_string(), Style::new())];
+        let out = visible_spans(raw, spans, 0, 8);
+        let text: String = out.iter().skip(1).map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "ab");
+    }
+
+    #[test]
+    fn undo_redo_roundtrip_restores_cursor() {
+        let cfg = crate::config::Config::default();
+        let mut ed = Editor::new(None, &cfg).unwrap();
+
+        // One insert session: type "hello".
+        ed.mode = Mode::Insert;
+        ed.insert_saved = false;
+        for ch in "hello".chars() {
+            let _ = ed.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        ed.mode = Mode::Normal;
+        assert_eq!(ed.lines[0], "hello");
+        assert_eq!(ed.cx, 5);
+
+        // u — undo the whole session at once.
+        let _ = ed.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE));
+        assert!(ed.lines[0].is_empty());
+        assert_eq!(ed.cx, 0);
+
+        // Ctrl+R — redo it back (cursor restored too).
+        let _ = ed.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+        assert_eq!(ed.lines[0], "hello");
+        assert_eq!(ed.cx, 5);
+
+        // Undo again — redo stack must still round-trip.
+        let _ = ed.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE));
+        assert!(ed.lines[0].is_empty());
+    }
+
+    #[test]
+    fn ctrl_chars_do_not_insert_in_insert_mode() {
+        let cfg = crate::config::Config::default();
+        let mut ed = Editor::new(None, &cfg).unwrap();
+
+        ed.mode = Mode::Insert;
+        ed.insert_saved = false;
+        let _ = ed.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        let _ = ed.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+        assert!(ed.lines[0].is_empty());
+
+        // Ctrl+C exits insert mode back to normal.
+        let keep = ed.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert!(keep);
+        assert_eq!(ed.mode, Mode::Normal);
     }
 }

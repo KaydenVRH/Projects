@@ -26,10 +26,7 @@ use std::{
 
 /// Build the command to play an audio file.
 fn player_cmd(path: &str) -> Command {
-    #[cfg(target_os = "macos")]
-    { let mut c = Command::new("afplay"); c.arg(path); c }
-
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     { let mut c = Command::new("mpv"); c.args(["--no-video", "--really-quiet", "--no-terminal", path]); c }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -38,10 +35,7 @@ fn player_cmd(path: &str) -> Command {
 
 /// Kill orphaned players from a previous session.
 fn kill_orphans() {
-    #[cfg(target_os = "macos")]
-    { let _ = Command::new("pkill").arg("-x").arg("afplay").output(); }
-
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     { let _ = Command::new("pkill").arg("-x").arg("mpv").output(); }
 }
 
@@ -84,6 +78,9 @@ pub struct MusicPlayer {
     /// The full ordered playlist (same as `files` while playing).
     pub playlist: Vec<String>,
 
+    /// Whether the playlist loops back to the first track after the last.
+    pub looping: bool,
+
     /// The directory we last scanned (for potential re-scan).
     pub scan_dir: Option<String>,
 
@@ -96,6 +93,7 @@ impl MusicPlayer {
     /// Create a fresh player, kill any orphaned `afplay` from a
     /// previous ked session, and spawn the background audio thread.
     pub fn new() -> Self {
+        #[cfg(not(test))]
         kill_orphans();
 
         let (cmd_tx, cmd_rx) = mpsc::channel();
@@ -162,6 +160,7 @@ impl MusicPlayer {
             current_song: None,
             current_index: 0,
             playlist: Vec::new(),
+            looping: false,
             scan_dir: None,
             cmd_tx,
             event_rx,
@@ -196,6 +195,9 @@ impl MusicPlayer {
         if index >= self.files.len() {
             return;
         }
+        // Drain stale events from the previous track so they don't
+        // trigger an extra next() call and skip the new track.
+        while self.event_rx.try_recv().is_ok() {}
         self.playlist = self.files.clone();
         self.current_index = index;
         self.playing = true;
@@ -208,17 +210,19 @@ impl MusicPlayer {
         self.playing = false;
         self.current_song = None;
         self.current_index = 0;
+        while self.event_rx.try_recv().is_ok() {}
         let _ = self.cmd_tx.send(PlayerCmd::Stop);
     }
 
-    /// Move to the next track in the playlist.  Does nothing if
-    /// already at the end.
+    /// Move to the next track in the playlist.  Loops back to the
+    /// first track if looping is enabled.
     pub fn next(&mut self) {
         let next = self.current_index + 1;
         if next < self.playlist.len() {
             self.play(next);
+        } else if self.looping {
+            self.play(0);
         } else {
-            // Playlist exhausted.
             self.playing = false;
             self.current_song = None;
         }
