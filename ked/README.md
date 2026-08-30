@@ -11,7 +11,7 @@
 
 ked is a personal vim‑like text editor that runs entirely in your
 terminal. It's a single Rust binary: modal editing, hand‑rolled syntax
-highlighting, 23 themes, animated colour effects, a fuzzy finder, a
+highlighting, 19 themes, animated colour effects, a fuzzy finder, a
 file tree, a real PTY shell, a music player, and a system dashboard —
 all in the alternate screen.
 
@@ -65,10 +65,12 @@ all in the alternate screen.
 
 ### Looks
 
-- **23 themes** — default, monokai, solarized, nord, gruvbox, bi,
+- **19 themes** — default, monokai, solarized, nord, gruvbox, bi,
   catppuccin, tokyonight, amber, dracula, onedark, everforest,
-  rosepine, oxocarbon, system, opencode, ayu, kanagawa, templeos,
-  palenight, darkplus, moonlight, poimandres
+  rosepine, oxocarbon, ayu, kanagawa, palenight, darkplus, moonlight.
+  Palettes follow the canonical Neovim theme colours, with distinct
+  roles for keywords, functions, types, strings, constants, and
+  properties
 - **Theme selector** — `Ctrl+T` list with live preview, Enter applies
 - **Colour FX** — `:3` cycles animated theme modes: gentle hue
   drift, breathing lightness, or a warm amber‑purple wander
@@ -76,9 +78,13 @@ all in the alternate screen.
   scrolling overlay titles, an animated splash logo, a music spinner
 - **Transparency & opacity** — `transparent = true` lets your
   terminal background show through; `opacity` fades the UI chrome
-- **Syntax highlighting** — hand‑rolled tokenizers for Rust, Python,
-  C/C++, JavaScript/TypeScript, HTML, CSS, Markdown, and config
-  files (`.conf`, `.ini`, `.cfg`, `.toml`)
+- **Syntax highlighting** — real tree-sitter parsing for Rust, Python,
+  C/C++, JavaScript/TypeScript (incl. JSX/TSX), HTML, CSS, TOML, JSON,
+  Bash, Go, and Markdown. Multi-line comments, docstrings, and
+  fenced code blocks stay correctly highlighted across lines.
+  Language is detected from the shebang line, well-known file names,
+  then the extension; `.conf`/`.ini`/`.cfg` keep a hand-rolled
+  tokenizer
 
 ## Install
 
@@ -231,9 +237,11 @@ ked is one binary with no runtime dependencies beyond the OS.
   everything on screen is measured in terminal *cells*: wide
   characters (CJK/emoji) are 2 cells, tabs advance to multiples of 8,
   and control characters are dropped so the frame never desyncs.
-- **Highlighting** (`src/highlight.rs`) — a hand‑rolled character
-  scanner per language; no parser crates. Each line is tokenized on
-  the fly at render time.
+- **Highlighting** (`src/highlight.rs`) — the buffer is parsed with
+  tree-sitter once per edit (cached by content hash); a tree walk
+  classifies nodes into ked's token kinds (keywords, functions, types,
+  strings, comments, …) and the render loop maps those to theme
+  colours every frame, so themes and colour FX stay cheap.
 - **Themes & FX** (`src/theme.rs`) — plain RGB palettes; the animated
   FX modes convert every colour through HSL and rotate hue or pulse
   lightness per frame.
@@ -253,8 +261,8 @@ ked is one binary with no runtime dependencies beyond the OS.
 src/
   main.rs       entry point: terminal setup, event loop, kitty protocol
   editor.rs     editor core: modes, key handling, render, undo, scrolling
-  highlight.rs  syntax tokenizers (Rust, Python, C, JS/TS, HTML, MD, conf)
-  theme.rs      23 themes + HSL hue rotation for colour FX
+  highlight.rs  tree-sitter highlighting + language detection
+  theme.rs      19 themes + HSL hue rotation for colour FX
   config.rs     ~/.config/ked/config.toml loading
   finder.rs     fuzzy file finder (Ctrl+P)
   filetree.rs   file-tree panel with Nerd Font icons (Ctrl+F)
@@ -266,10 +274,17 @@ src/
 
 - [ratatui](https://crates.io/crates/ratatui) — TUI widgets
 - [crossterm](https://crates.io/crates/crossterm) — terminal & events
+- [tree-sitter](https://crates.io/crates/tree-sitter) — parsing, with
+  bundled grammars for the supported languages
 - [anyhow](https://crates.io/crates/anyhow) — error handling
 - [serde](https://crates.io/crates/serde) + [toml](https://crates.io/crates/toml) — config parsing
 - [chrono](https://crates.io/crates/chrono) — clock
 - [libc](https://crates.io/crates/libc) — PTY support
+
+Single binary, no runtime dependencies beyond the OS (plus `mpv` for
+music and whatever compilers `Ctrl+E` needs).  The first build is slow
+(each grammar compiles a generated C parser); subsequent builds are
+incremental.
 
 ## License
 

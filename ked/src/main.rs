@@ -2,9 +2,10 @@
 //!
 //! Uses ratatui (crossterm backend) for terminal rendering.
 //! Provides vim-style normal/insert editing modes with:
-//!   - Syntax highlighting (Rust, Python, C, JS/TS, HTML, CSS,
-//!     Markdown, config files)
-//!   - 23 colour themes
+//!   - tree-sitter syntax highlighting (Rust, Python, C/C++, JS/TS,
+//!     HTML, CSS, TOML, JSON, Bash, Go, Markdown) with shebang /
+//!     filename / extension language detection
+//!   - 19 colour themes
 //!   - Fuzzy file finder (Ctrl+P)
 //!   - Run code in buffer (Ctrl+E: .py, .rs, .c, .h, .go)
 //!   - Command mode (:w, :q, :q!, :wq, :theme ...)
@@ -81,6 +82,12 @@ fn main() -> Result<()> {
         editor.tick();
 
         // render the current editor state
+        // Hide the terminal cursor while the frame is painted — the
+        // diff repaints cells by moving the physical cursor around,
+        // which makes it strobe across the screen (and sends kitty's
+        // cursor trail into a frenzy).  ratatui re-shows the cursor
+        // at the final editor position at the end of draw().
+        terminal.hide_cursor()?;
         terminal.draw(|f| editor.render(f))?;
         // Apply cursor style set by render
         let _ = execute!(io::stdout(), editor.cursor_style);

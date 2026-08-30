@@ -44,7 +44,7 @@ use ratatui::{
 use crate::highlight;
 use crate::shell::ShellProcess;
 use crate::config::Config;
-use crate::theme::{hsl_to_rgb, Theme, ThemeKind};
+use crate::theme::{Theme, ThemeKind};
 use crate::finder::Finder;
 use crate::music::MusicPlayer;
 use crate::filetree::{FileTree, file_icon as ft_icon};
@@ -154,6 +154,9 @@ pub struct Editor {
     // ── search ──
     pub search_query: String,
     pub last_search: Option<String>,
+
+    // ── syntax highlighter (tree-sitter, re-parsed on edits) ──
+    pub highlight: Option<highlight::Highlighter>,
 
     // ── fuzzy finder ──
     pub finder: Finder,
@@ -284,6 +287,7 @@ impl Editor {
             cmd_buf: String::new(),
             search_query: String::new(),
             last_search: None,
+            highlight: None,
             finder: Finder::new(),
             finder_query: String::new(),
             finder_selection: 0,
@@ -1666,6 +1670,25 @@ impl Editor {
         self.last_mtime = Some(current_mtime);
     }
 
+    /// Re-parse the buffer with tree-sitter if its content or language
+    /// changed since the last highlight pass.  Called once per render;
+    /// cheap because it only does a hash check when nothing changed.
+    fn ensure_highlight(&mut self) {
+        let lang = highlight::detect_lang(
+            self.filename.as_deref(),
+            self.lines.first().map(|s| s.as_str()),
+        );
+        let stale = match &self.highlight {
+            Some(h) => h.lang() != lang || h.hash() != hash_lines(&self.lines),
+            None => true,
+        };
+        if stale {
+            let hash = hash_lines(&self.lines);
+            let source = self.lines.join("\n");
+            self.highlight = Some(highlight::Highlighter::parse(lang, &source, hash));
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════
     //  Command execution
     // ═══════════════════════════════════════════════════════════════
@@ -2275,7 +2298,10 @@ impl Editor {
         // ── 1. main content / splash ────────────────────────────
         let mut theme = self.theme.theme();
         if self.fx_mode > 0 {
-            let elapsed = self.fx_start.elapsed().as_secs_f64();
+            // Quantise time to ~30 steps/sec: a full 60fps shift
+            // recolours every token every frame, forcing a full
+            // repaint (and cursor strobe) every frame.
+            let elapsed = (self.fx_start.elapsed().as_secs_f64() * 30.0).floor() / 30.0;
             match self.fx_mode {
                 1 => { // gentle: very slow ±15° hue oscillation
                     let hue = (elapsed * 3.0).sin() * 15.0;
@@ -2313,6 +2339,8 @@ impl Editor {
         if is_splash {
             self.render_splash(f, editor_area, &theme);
         } else {
+        // Re-parse the buffer for highlighting if it changed.
+        self.ensure_highlight();
         let gutter = self.gutter_width() + 1;
         let mut lines_vec: Vec<Line> = Vec::new();
         let visible_lines = editor_area.height as usize;
@@ -2339,28 +2367,11 @@ impl Editor {
             let line_num = format!("{:>width$}│", buf_row + 1, width = gutter - 1);
             let num_span = Span::styled(line_num, theme.line_number);
 
-            // (b) highlighted content
+            // (b) highlighted content (tree-sitter, cached per edit)
             let raw = &self.lines[buf_row];
-            let lang = self.filename.as_deref()
-                .and_then(|f| {
-                    let ext = f.rsplit('.').next()?;
-                    match ext {
-                        "rs" => Some(highlight::Lang::Rust),
-                        "py" => Some(highlight::Lang::Python),
-                        "c" | "h" => Some(highlight::Lang::C),
-                        "cpp" | "hpp" => Some(highlight::Lang::C),
-                        "js" | "ts" | "jsx" | "tsx" | "css" => Some(highlight::Lang::JavaScript),
-                        "html" | "htm" => Some(highlight::Lang::Html),
-                        "md" | "markdown" => Some(highlight::Lang::Md),
-                        "conf" | "ini" | "cfg" | "toml" => Some(highlight::Lang::Conf),
-                        _ => None,
-                    }
-                })
-                .unwrap_or(highlight::Lang::Plain);
-            let highlighted = if buf_row < self.lines.len() {
-                highlight::highlight_line(raw, &theme, lang)
-            } else {
-                vec![Span::styled(raw.clone(), style)]
+            let highlighted = match &self.highlight {
+                Some(h) => h.spans(buf_row, &theme),
+                None => vec![Span::styled(raw.to_string(), style)],
             };
 
             // Build the line: gutter + content, with search-match
@@ -3596,7 +3607,9 @@ fn soft_shift_theme(t: &Theme, hue_offset: f64, lightness: f64) -> Theme {
         fstring_prefix: shift_style(&t.fstring_prefix),
         comment: shift_style(&t.comment),
         number: shift_style(&t.number),
+        constant: shift_style(&t.constant),
         decorator: shift_style(&t.decorator),
+        property: shift_style(&t.property),
         operator: shift_style(&t.operator),
         punctuation: shift_style(&t.punctuation),
     }
@@ -3769,6 +3782,15 @@ fn push_text(
         }
         None => *current = Some((style, text)),
     }
+}
+
+/// Cheap content fingerprint used to decide whether the highlighter
+/// cache is stale.
+fn hash_lines(lines: &[String]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    lines.hash(&mut h);
+    h.finish()
 }
 
 fn key_to_bytes(key: KeyEvent) -> Vec<u8> {
