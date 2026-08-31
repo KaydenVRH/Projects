@@ -209,7 +209,7 @@ pub struct Editor {
     pub shell: Option<ShellProcess>,
     pub shell_reader: Option<std::thread::JoinHandle<()>>,
 
-    // ── colour fx mode (animated theme from `:3`) ──
+    // ── colour fx mode (animated theme) ──
     pub fx_mode: u8,  // 0=off, 1=gentle, 2=breathing, 3=warm
     pub fx_start: Instant,
 
@@ -1795,7 +1795,7 @@ impl Editor {
                     self.flash = Some("Only one buffer open".to_string());
                 }
             }
-            // :3 — cycle colour fx mode
+            // :3 — hidden easter egg: cycle colour fx mode
             "3" => {
                 self.fx_mode = (self.fx_mode + 1) % 4;
                 self.fx_start = Instant::now();
@@ -3241,7 +3241,7 @@ impl Editor {
             Line::from(Span::styled("Tools", theme.keyword)),
             Line::from("  Ctrl+E      run file              Ctrl+M   music player"),
             Line::from("  Ctrl+T      theme selector        Ctrl+K   this manual"),
-            Line::from("  :sys        system dashboard      :3       colour fx cycle"),
+            Line::from("  :sys        system dashboard      :wq      save & quit"),
             Line::from(""),
             Line::from(Span::styled("Commands", theme.keyword)),
             Line::from("  /           search                n/N      next/prev match"),
@@ -3388,11 +3388,18 @@ impl Editor {
             ("Ctrl+K", "keybinds"),
             ("Tab",    "switch buf"),
             (":wq",    "save & quit"),
-            (":3",     "colour fx"),
         ];
 
-        // Compute column widths for alignment.
+        // Compute column widths for alignment: keys in one column,
+        // descriptions in the next, and a fixed-width first column so
+        // the second column lines up on every row.
         let key_w = keybinds.iter().map(|(k, _)| k.len()).max().unwrap_or(6);
+        let first_w = keybinds
+            .chunks(2)
+            .filter_map(|c| c.first())
+            .map(|(k, d)| key_w + 2 + d.len())
+            .max()
+            .unwrap_or(key_w + 2);
 
         let mut lines: Vec<Line> = Vec::new();
 
@@ -3428,9 +3435,12 @@ impl Editor {
                     spans.push(Span::raw(" ".repeat(3)));
                 }
                 spans.push(Span::styled(*key, theme.builtin));
-                let pad = key_w + 2 - key.len();
-                spans.push(Span::raw(" ".repeat(pad)));
+                spans.push(Span::raw(" ".repeat(key_w + 2 - key.len())));
                 spans.push(Span::styled(*desc, Style::new().fg(theme.fg)));
+                if i == 0 && chunk.len() > 1 {
+                    // Pad the first column so the second lines up.
+                    spans.push(Span::raw(" ".repeat(first_w - (key_w + 2 + desc.len()))));
+                }
             }
             lines.push(Line::from(spans));
         }

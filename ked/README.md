@@ -72,8 +72,8 @@ all in the alternate screen.
   roles for keywords, functions, types, strings, constants, and
   properties
 - **Theme selector** — `Ctrl+T` list with live preview, Enter applies
-- **Colour FX** — `:3` cycles animated theme modes: gentle hue
-  drift, breathing lightness, or a warm amber‑purple wander
+- **Colour FX** — animated theme modes from the config: gentle hue
+  drift, breathing lightness, or a warm amber-purple wander
 - **Animations** — shimmering tab pills, rainbow status‑bar dashes,
   scrolling overlay titles, an animated splash logo, a music spinner
 - **Transparency & opacity** — `transparent = true` lets your
@@ -199,7 +199,6 @@ The finder and file tree scan the directory you launched ked from, so
 | `:<line>` | jump to line |
 | `:theme <name>` | switch theme by name |
 | `:sys` | system dashboard |
-| `:3` | cycle colour FX (off → gentle → breathing → warm) |
 
 ## Config
 
@@ -207,7 +206,7 @@ The finder and file tree scan the directory you launched ked from, so
 files fall back to defaults.
 
 ```toml
-theme         = "oxocarbon"   # any of the 23 theme names
+theme         = "oxocarbon"   # any of the 19 theme names
 music_dir     = "~/Music"     # where Ctrl+M scans
 filetree_width = 30           # file-tree panel width in columns
 status_bar_top = false        # put the status bar above the buffer bar
