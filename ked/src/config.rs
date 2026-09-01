@@ -33,7 +33,8 @@ pub struct Config {
     #[serde(default = "default_animations")]
     pub animations: bool,
 
-    /// Show system stats (CPU/MEM/BATT/time) in the buffer bar.
+    /// Show the info bar on the right of the buffer bar: language,
+    /// buffer position, line count, now-playing music, and clock.
     /// Defaults to true.
     #[serde(default = "default_true")]
     pub bar_stats: bool,

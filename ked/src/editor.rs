@@ -1598,7 +1598,8 @@ impl Editor {
     pub fn tick(&mut self) {
         self.music_player.poll();
         self.auto_reload();
-        // Non-blocking system stats: poll completed task or spawn new one
+        // Non-blocking system stats: poll completed task or spawn a
+        // new one (only while the dashboard is open).
         if let Some(ref task) = self.sys_task {
             if task.is_finished() {
                 if let Ok(task) = self.sys_task.take().unwrap().join() {
@@ -1610,7 +1611,7 @@ impl Editor {
                     self.sys_updated = Instant::now();
                 }
             }
-        } else if self.sys_updated.elapsed().as_secs() >= 3 {
+        } else if self.state == State::SysInfo && self.sys_updated.elapsed().as_secs() >= 3 {
             self.sys_task = Some(std::thread::spawn(collect_sys_stats));
         }
         // Pump shell output and detect shell death.
@@ -1811,6 +1812,11 @@ impl Editor {
             // :sys — system dashboard
             "sys" => {
                 self.state = State::SysInfo;
+                // Kick off a fresh stat collection so the dashboard
+                // doesn't show zeros on first open.
+                if self.sys_task.is_none() {
+                    self.sys_task = Some(std::thread::spawn(collect_sys_stats));
+                }
             }
             // :e <file> — open file
             "e" if parts.len() > 1 => {
@@ -2553,15 +2559,56 @@ impl Editor {
 
     /// Render a one‑line buffer (tab) bar at the top of the screen.
     fn render_buffer_bar(&self, f: &mut Frame, area: Rect, theme: &Theme) {
-        // Split: tabs on the left, system stats on the right (if enabled)
-        let stat_w = if self.bar_stats {
-            56u16.min(area.width.saturating_sub(20))
+        // Split: tabs on the left, editor context + music + clock on
+        // the right (when bar_stats is on).  The right side sizes
+        // itself to its content, so it collapses when nothing is
+        // playing and grows (up to a cap) to fit the song name.
+        let lang = highlight::detect_lang(
+            self.filename.as_deref(),
+            self.lines.first().map(|s| s.as_str()),
+        )
+        .name();
+        let buf_str = if self.buffers.len() > 1 {
+            format!(" {}/{} ", self.current + 1, self.buffers.len())
+        } else {
+            String::new()
+        };
+        let context = format!(" {lang} {buf_str}{}L", self.lines.len());
+        let music = now_playing_text(
+            self.music_player.playing,
+            self.music_player.current_song.as_deref(),
+            self._frame,
+            MUSIC_MAX,
+        );
+        let clock = chrono::Local::now().format(" %H:%M:%S").to_string();
+
+        // Segments joined by dim `│` separators so the scrolling song
+        // name reads as its own thing.
+        let plain = Style::new().fg(theme.status_fg).bg(theme.status_bg);
+        let dim = Style::new()
+            .fg(theme.comment.fg.unwrap_or(theme.status_fg))
+            .bg(theme.status_bg);
+        let mut bar_spans: Vec<Span> = vec![Span::styled(context.clone(), plain)];
+        let mut text_w = context.chars().count();
+        if !music.is_empty() {
+            bar_spans.push(Span::styled(" │ ", dim));
+            bar_spans.push(Span::styled(music.clone(), plain));
+            text_w += 3 + music.chars().count();
+        }
+        bar_spans.push(Span::styled(" │ ", dim));
+        bar_spans.push(Span::styled(clock.clone(), plain));
+        text_w += 3 + clock.chars().count();
+        bar_spans.push(Span::styled(" ", plain));
+        text_w += 1;
+
+        let info_w = if self.bar_stats {
+            (text_w as u16 + 1).min(area.width.saturating_sub(24))
         } else {
             0
         };
-        let [tabs_area, stats_area] = Layout::horizontal([
+        let [tabs_area, info_area] = Layout::horizontal([
             Constraint::Min(1),
-            Constraint::Length(stat_w),
+            Constraint::Length(info_w),
         ])
         .areas(area);
 
@@ -2613,51 +2660,16 @@ impl Editor {
             tabs_area,
         );
 
-        // ── right-side system stats (only when bar_stats = true) ──
+        // ── right side: context + music + clock ──
         if !self.bar_stats {
             return;
         }
-        let now = chrono::Local::now();
-        let time_str = now.format("%H:%M:%S").to_string();
-        let date_str = now.format("%Y-%m-%d").to_string();
 
-        // Build stats line: CPU | MEM | BATT | time | holy pulse
-        let cpu_str = format!("CPU:{:3.0}%", self.sys_cpu.min(99.9));
-        let mem_str = if self.sys_mem_total > 0 {
-            let used_gb = self.sys_mem_used as f64 / (1 << 30) as f64;
-            let total_gb = self.sys_mem_total as f64 / (1 << 30) as f64;
-            format!("MEM:{:.1}/{:.1}G", used_gb, total_gb)
-        } else {
-            String::from("MEM:?")
-        };
-        let batt_str = if let Some(pct) = self.sys_batt_pct {
-            let icon = match self.sys_batt_status.as_deref() {
-                Some("charging") => "+",
-                Some("full") | Some("on AC") => "=",
-                _ => "",
-            };
-            format!("BAT:{}{}%", icon, pct)
-        } else {
-            String::from("BAT:?")
-        };
-
-        // TempleOS "holy pulse" indicator if animations are on
-        let holy = if self.animations {
-            let chars = ['▁','▂','▃','▄','▅','▆','▇','█'];
-            let idx = (self._frame as usize / 6) % chars.len();
-            format!("{}", chars[idx])
-        } else {
-            String::from("█")
-        };
-
-        let stats_text = format!(
-            " {cpu_str}  {mem_str}  {batt_str}  {date_str} {time_str} {holy} "
-        );
-        // Split stats area: separator char on left, stats text on right
         let [sep_area, text_area] = Layout::horizontal([
             Constraint::Length(1),
             Constraint::Min(1),
-        ]).areas(stats_area);
+        ])
+        .areas(info_area);
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 if theme.status_bg == Color::Reset { " " } else { "" },
@@ -2666,8 +2678,7 @@ impl Editor {
             sep_area,
         );
         f.render_widget(
-            Paragraph::new(Line::from(Span::styled(stats_text,
-                Style::new().fg(theme.status_fg).bg(theme.status_bg))))
+            Paragraph::new(Line::from(bar_spans))
                 .alignment(Alignment::Right)
                 .style(Style::new().bg(theme.status_bg)),
             text_area,
@@ -2685,14 +2696,6 @@ impl Editor {
         } else if self.state == State::Search {
             format!("/{}", self.search_query)
         } else {
-            // Spinner (braille rotation) when music is playing
-            let spinner_chars: &[char] = &['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
-            let spinner = if self.animations && self.music_player.playing {
-                format!("{} ", spinner_chars[self._frame as usize % spinner_chars.len()])
-            } else {
-                String::new()
-            };
-
             // Mode text in solid colour while active
             let (mode_text, mode_color) = if self.state == State::Visual {
                 ("VISUAL", Color::Rgb(100, 160, 255))
@@ -2708,30 +2711,6 @@ impl Editor {
             let mod_str = if self.modified { " [+]" } else { "" };
             let location = format!("{}:{}", self.cy + 1, self.cx + 1);
             let tname = self.theme.name();
-            // Clock
-            let now = chrono::Local::now().format("%H:%M").to_string();
-
-            let now_playing = self.music_player.current_song.as_ref()
-                .filter(|_| self.music_player.playing)
-                .map(|s| {
-                    let name = s.rsplit('/').next().unwrap_or(s);
-                    let max_len = (_width.saturating_sub(60)).max(10);
-                    if name.len() > max_len {
-                        // Scroll at ~3 chars/sec (frame / 20 at 60fps)
-                        let pos_raw = (self._frame as usize / 20) % (name.len() + 7);
-                        let scrolled = format!("{name}  ♫  {name}");
-                        let end_raw = (pos_raw + max_len).min(scrolled.len());
-                        // Snap to char boundaries so we never slice mid-char
-                        let pos = if scrolled.is_char_boundary(pos_raw) { pos_raw }
-                            else { scrolled.floor_char_boundary(pos_raw) };
-                        let end = scrolled.ceil_char_boundary(end_raw).min(scrolled.len());
-                        let slice = &scrolled[pos..end];
-                        format!("  ♫ {slice}")
-                    } else {
-                        format!("  ♫ {name}")
-                    }
-                })
-                .unwrap_or_default();
 
             // Build spans with animated dash colours
             let dash_color = if self.animations {
@@ -2745,15 +2724,12 @@ impl Editor {
             let plain_style = Style::new().fg(theme.status_fg).bg(theme.status_bg);
 
             let spans = vec![
-                Span::styled(format!(" {spinner}"), plain_style),
-                Span::styled(mode_text.to_string(), mode_style),
+                Span::styled(format!(" {mode_text}"), mode_style),
                 Span::styled(format!("  {fname}{mod_str}  "), plain_style),
                 Span::styled("─", dash_style),
                 Span::styled(format!(" {location}  "), plain_style),
                 Span::styled("─", dash_style),
                 Span::styled(format!(" {tname}  "), plain_style),
-                Span::styled("─", dash_style),
-                Span::styled(format!(" {now}{now_playing} "), plain_style),
             ];
 
             let bar = Paragraph::new(Line::from(spans))
@@ -3454,6 +3430,10 @@ impl Editor {
 const MODAL_W: f32 = 0.75;
 const MODAL_H: f32 = 0.75;
 
+/// Maximum width of the now-playing song in the buffer bar; longer
+/// names scroll.
+const MUSIC_MAX: usize = 28;
+
 /// Centered rectangle taking `w_pct` × `h_pct` of `area` (clamped).
 fn modal_rect(area: Rect, w_pct: f32, h_pct: f32) -> Rect {
     let w = ((area.width as f32 * w_pct) as u16).min(area.width);
@@ -3752,6 +3732,28 @@ fn push_text(
         }
         None => *current = Some((style, text)),
     }
+}
+
+/// The now-playing song as a string that fits `width` cells
+/// (horizontally scrolling when it doesn't).  Empty when nothing is
+/// playing.
+fn now_playing_text(playing: bool, current_song: Option<&str>, frame: u64, width: usize) -> String {
+    let song = match current_song {
+        Some(s) if playing => s,
+        _ => return String::new(),
+    };
+    let name = song.rsplit('/').next().unwrap_or(song);
+    let label = format!("♫ {name}");
+    if width < 6 {
+        return String::new();
+    }
+    if label.chars().count() <= width {
+        return label;
+    }
+    // Scroll at ~3 chars/sec.
+    let scrolled: Vec<char> = format!("{label}  {label}").chars().collect();
+    let offset = (frame as usize / 20) % (label.chars().count() + 2);
+    scrolled[offset..].iter().take(width).collect()
 }
 
 /// Cheap content fingerprint used to decide whether the highlighter

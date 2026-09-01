@@ -60,8 +60,9 @@ all in the alternate screen.
   playing)
 - **System dashboard** — `:sys` shows CPU, memory, disk, battery,
   uptime, and a tail of recent system errors
-- **System stats bar** — optional CPU / MEM / BATT / clock in the top
-  bar (see `bar_stats`)
+- **Context bar** — the top bar shows the detected language, buffer
+  position, line count, the now-playing song (scrolling), and the
+  clock (see `bar_stats`)
 
 ### Looks
 
@@ -215,7 +216,8 @@ filetree_width = 30           # file-tree panel width in columns
 status_bar_top = false        # put the status bar above the buffer bar
 transparent   = false         # let the terminal background show through
 animations    = true          # tab shimmer, rainbow dashes, splash, …
-bar_stats     = true          # CPU / MEM / BATT / clock in the top bar
+bar_stats     = true          # context bar: language, buffers, lines,
+                              # now-playing music, clock
 fx_mode       = 0             # colour FX at startup: 0 off, 1 gentle,
                               # 2 breathing, 3 warm
 opacity       = 1.0           # UI chrome opacity (0.0 – 1.0)
@@ -255,7 +257,7 @@ ked is one binary with no runtime dependencies beyond the OS.
   reports track ends over a channel, so playback advances without
   blocking the editor.
 - **System stats** — CPU/mem/battery are collected on a background
-  thread every few seconds and cached for the bars and `:sys`.
+  thread only while `:sys` is open, and cached for the dashboard.
 
 ## Project layout
 

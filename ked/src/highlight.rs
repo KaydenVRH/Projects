@@ -46,6 +46,30 @@ pub enum Lang {
     Plain,
 }
 
+impl Lang {
+    /// Human-readable name (shown in the buffer bar).
+    pub fn name(&self) -> &'static str {
+        match self {
+            Lang::Rust => "Rust",
+            Lang::Python => "Python",
+            Lang::C => "C",
+            Lang::Cpp => "C++",
+            Lang::JavaScript => "JavaScript",
+            Lang::TypeScript => "TypeScript",
+            Lang::Tsx => "TSX",
+            Lang::Html => "HTML",
+            Lang::Css => "CSS",
+            Lang::Toml => "TOML",
+            Lang::Json => "JSON",
+            Lang::Bash => "Bash",
+            Lang::Go => "Go",
+            Lang::Markdown => "Markdown",
+            Lang::Conf => "conf",
+            Lang::Plain => "text",
+        }
+    }
+}
+
 // ── tokens ───────────────────────────────────────────────────────
 
 /// A single token from a line of source.
