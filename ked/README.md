@@ -83,8 +83,11 @@ all in the alternate screen.
   Bash, Go, and Markdown. Multi-line comments, docstrings, and
   fenced code blocks stay correctly highlighted across lines.
   Language is detected from the shebang line, well-known file names,
-  then the extension; `.conf`/`.ini`/`.cfg` keep a hand-rolled
-  tokenizer
+  then the extension. Config files (`.conf`/`.ini`/`.cfg`, kitty.conf,
+  `.gitconfig`, Xresources, `.desktop`/`.service`) use a hand-rolled
+  tokenizer that understands `[sections]`, `key = value` and
+  kitty-style `key value` pairs, hex colours, booleans, `$VARS`, and
+  `ctrl+shift+…` keybindings
 
 ## Install
 
@@ -180,7 +183,7 @@ The finder and file tree scan the directory you launched ked from, so
 
 | Overlay | Keys |
 |---------|------|
-| Finder | type to filter, `j`/`k` or arrows, Enter open, `Esc`/`Ctrl+P` close |
+| Finder | type to filter, arrows or `Ctrl+N`/`Ctrl+P` navigate, Enter open, Esc close |
 | File tree | `j`/`k`, `h`/`l` or Enter expand/collapse, Enter open, `Esc`/`Ctrl+F` close |
 | Theme | `j`/`k`, Enter apply, Esc cancel |
 | Music | `j`/`k`, Enter play, `s` stop, `l` loop, Esc close (keeps playing) |

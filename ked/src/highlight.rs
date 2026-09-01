@@ -10,9 +10,11 @@
 //! lists.  The editor turns those tokens into styled spans on every
 //! frame with the current theme, so themes and colour FX stay cheap.
 //!
-//! `.conf` / `.ini` / `.cfg` keep ked's old hand-rolled tokenizer
-//! (there's no good grammar for them); everything else falls back to
-//! plain text if the parse fails.
+//! `.conf` / `.ini` / `.cfg` (plus kitty.conf, .gitconfig, Xresources,
+//! .desktop / .service and friends) keep a hand-rolled tokenizer that
+//! understands `[sections]`, `key = value` and kitty-style `key value`
+//! pairs, hex colours, strings, booleans, `$VARS` and modifier keys;
+//! everything else falls back to plain text if the parse fails.
 
 use ratatui::style::Style;
 use ratatui::text::Span;
@@ -123,7 +125,8 @@ pub fn detect_lang(filename: Option<&str>, first_line: Option<&str>) -> Lang {
     // 2. well-known file names (no extension)
     if let Some(name) = filename.and_then(|f| f.rsplit('/').next()) {
         match name.to_lowercase().as_str() {
-            ".gitignore" | ".gitattributes" | ".editorconfig" => return Lang::Conf,
+            ".gitignore" | ".gitattributes" | ".editorconfig" | ".gitconfig"
+            | "xresources" | "xdefaults" => return Lang::Conf,
             _ => {}
         }
     }
@@ -148,7 +151,7 @@ pub fn detect_lang(filename: Option<&str>, first_line: Option<&str>) -> Lang {
         Some("sh") | Some("bash") | Some("zsh") => Lang::Bash,
         Some("go") => Lang::Go,
         Some("md") | Some("markdown") => Lang::Markdown,
-        Some("conf") | Some("ini") | Some("cfg") => Lang::Conf,
+        Some("conf") | Some("ini") | Some("cfg") | Some("desktop") | Some("service") => Lang::Conf,
         _ => Lang::Plain,
     }
 }
@@ -888,15 +891,25 @@ fn lang_config(lang: Lang) -> &'static LangConfig {
 }
 
 // ── hand-rolled conf tokenizer (fallback) ────────────────────────
+//
+// Covers INI-style configs, kitty.conf, git config, Xresources,
+// .desktop / .service files and similar: `[section]` headers,
+// `key = value` / `key: value` / kitty-style `key value` pairs,
+// hex colours, strings, numbers, booleans, `$VARS`, and modifier
+// keys (`ctrl+shift+…`).
 
-/// The old per-line token kinds used by the conf tokenizer.
+/// The per-line token kinds used by the conf tokenizer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConfKind {
     Plain,
     Keyword,
+    Builtin,
+    Function,
     String,
     Comment,
     Number,
+    Constant,
+    Punct,
     Operator,
 }
 
@@ -904,9 +917,13 @@ fn token_conf_kind(k: ConfKind) -> TokenKind {
     match k {
         ConfKind::Plain => TokenKind::Plain,
         ConfKind::Keyword => TokenKind::Keyword,
+        ConfKind::Builtin => TokenKind::Builtin,
+        ConfKind::Function => TokenKind::Function,
         ConfKind::String => TokenKind::String,
         ConfKind::Comment => TokenKind::Comment,
         ConfKind::Number => TokenKind::Number,
+        ConfKind::Constant => TokenKind::Constant,
+        ConfKind::Punct => TokenKind::Punctuation,
         ConfKind::Operator => TokenKind::Operator,
     }
 }
@@ -917,19 +934,124 @@ struct ConfToken {
     text: String,
 }
 
-/// Common boolean / null keywords in config files.
-const CONF_KW: &[&str] = &["true", "false", "null", "on", "off", "yes", "no"];
+/// Boolean / null keywords in config files.
+const CONF_KW: &[&str] = &[
+    "true", "false", "null", "on", "off", "yes", "no", "none",
+];
 
-/// Tokenise a line from a `.conf` file (kept from ked's original
-/// hand-rolled highlighter).
+/// Modifier keys in keybinding lines (`map ctrl+shift+t …`).
+const CONF_MODIFIERS: &[&str] = &[
+    "ctrl", "alt", "shift", "super", "cmd", "hyper", "meta", "kitty_mod",
+];
+
+fn conf_token(kind: ConfKind, text: String) -> ConfToken {
+    ConfToken { kind, text }
+}
+
+/// Tokenise one line of a `.conf`-style file.
 fn tokenize_conf(line: &str) -> Vec<ConfToken> {
-    let chars: Vec<char> = line.chars().collect();
-    let mut tokens: Vec<ConfToken> = Vec::new();
-    let mut i = 0;
+    let mut out: Vec<ConfToken> = Vec::new();
+    let t = line.trim_start();
+    let indent = line.len() - t.len();
+    if indent > 0 {
+        out.push(conf_token(ConfKind::Plain, line[..indent].to_string()));
+    }
+    if t.is_empty() {
+        return out;
+    }
+
+    // Whole-line comment: `# …` or `; …`.
+    if t.starts_with('#') || t.starts_with(';') {
+        out.push(conf_token(ConfKind::Comment, t.to_string()));
+        return out;
+    }
+
+    // Section header: `[name]`.
+    if t.starts_with('[') {
+        if let Some(close) = t.find(']') {
+            out.push(conf_token(ConfKind::Punct, "[".to_string()));
+            out.push(conf_token(ConfKind::Function, t[1..close].to_string()));
+            out.push(conf_token(ConfKind::Punct, "]".to_string()));
+            scan_conf_rest(&t[close + 1..], &mut out);
+            return out;
+        }
+    }
+
+    // The first word is a key when something follows it
+    // (`key = value`, `key: value`, or kitty-style `key value`).
+    let first_end = t
+        .find(|c: char| c.is_whitespace() || c == '=' || c == ':')
+        .unwrap_or(t.len());
+    let first = &t[..first_end];
+    let is_key = !first.is_empty()
+        && first
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-');
+    if is_key && first_end < t.len() {
+        out.push(conf_token(ConfKind::Builtin, first.to_string()));
+        scan_conf_rest(&t[first_end..], &mut out);
+    } else {
+        scan_conf_rest(t, &mut out);
+    }
+    out
+}
+
+/// Scan the remainder of a line: values, operators, colours, strings,
+/// booleans, `$VARS`, modifier keys, and inline comments.
+fn scan_conf_rest(s: &str, out: &mut Vec<ConfToken>) {
+    let chars: Vec<char> = s.chars().collect();
     let n = chars.len();
+    let mut i = 0;
 
     while i < n {
         let ch = chars[i];
+
+        // ── whitespace ──
+        if ch.is_whitespace() {
+            let start = i;
+            while i < n && chars[i].is_whitespace() {
+                i += 1;
+            }
+            out.push(conf_token(ConfKind::Plain, chars[start..i].iter().collect()));
+            continue;
+        }
+
+        // ── `#`: hex colour or comment ──
+        if ch == '#' {
+            let preceded_by_space = i == 0 || chars[i - 1].is_whitespace();
+            let could_be_color =
+                preceded_by_space && i + 1 < n && chars[i + 1].is_ascii_hexdigit();
+            if could_be_color {
+                let start = i;
+                i += 1; // skip #
+                let hex_start = i;
+                while i < n && chars[i].is_ascii_hexdigit() {
+                    i += 1;
+                }
+                let hex_len = i - hex_start;
+                let ends = i == n
+                    || chars[i].is_whitespace()
+                    || matches!(chars[i], '"' | '\'' | ',' | ';' | ')' | ']');
+                if matches!(hex_len, 3 | 4 | 6 | 8) && ends {
+                    out.push(conf_token(ConfKind::Number, chars[start..i].iter().collect()));
+                    continue;
+                }
+                i = hex_start; // not a colour — treat `#` below
+            }
+            if preceded_by_space {
+                out.push(conf_token(ConfKind::Comment, chars[i..].iter().collect()));
+                return;
+            }
+            out.push(conf_token(ConfKind::Plain, "#".to_string()));
+            i += 1;
+            continue;
+        }
+
+        // ── `;` at the start of a value = comment ──
+        if ch == ';' && i > 0 && chars[i - 1].is_whitespace() {
+            out.push(conf_token(ConfKind::Comment, chars[i..].iter().collect()));
+            return;
+        }
 
         // ── strings: "..." or '...' ──
         if ch == '"' || ch == '\'' {
@@ -947,101 +1069,77 @@ fn tokenize_conf(line: &str) -> Vec<ConfToken> {
                 }
                 i += 1;
             }
-            tokens.push(ConfToken {
-                kind: ConfKind::String,
-                text: chars[start..i].iter().collect(),
-            });
+            out.push(conf_token(ConfKind::String, chars[start..i].iter().collect()));
             continue;
         }
 
-        // ── `#`: comment or hex color? ──────────────────────
-        if ch == '#' {
-            let preceded_by_space =
-                i == 0 || chars[i.saturating_sub(1)].is_whitespace();
-            let could_be_color =
-                preceded_by_space && i + 1 < n && chars[i + 1].is_ascii_hexdigit();
-            if could_be_color {
-                let start = i;
-                i += 1; // skip #
-                let hex_start = i;
-                while i < n && chars[i].is_ascii_hexdigit() {
-                    i += 1;
-                }
-                let hex_len = i - hex_start;
-                if (hex_len == 3 || hex_len == 4 || hex_len == 6 || hex_len == 8)
-                    && (i == n
-                        || chars[i].is_whitespace()
-                        || chars[i] == '"'
-                        || chars[i] == '\'')
-                {
-                    tokens.push(ConfToken {
-                        kind: ConfKind::Number,
-                        text: chars[start..i].iter().collect(),
-                    });
-                    continue;
-                }
-                i = hex_start; // backtrack to after #
-            }
-            tokens.push(ConfToken {
-                kind: ConfKind::Comment,
-                text: chars[i.saturating_sub(1)..].iter().collect(),
-            });
-            break;
-        }
-
-        // ── numbers ──
-        if ch.is_ascii_digit()
-            || (ch == '.' && i + 1 < n && chars[i + 1].is_ascii_digit())
-        {
+        // ── `$VAR` ──
+        if ch == '$' && i + 1 < n && (chars[i + 1].is_alphanumeric() || chars[i + 1] == '_') {
             let start = i;
-            while i < n
-                && (chars[i].is_ascii_digit() || chars[i] == '.' || chars[i] == '_')
-            {
+            i += 1;
+            while i < n && (chars[i].is_alphanumeric() || chars[i] == '_') {
                 i += 1;
             }
-            tokens.push(ConfToken {
-                kind: ConfKind::Number,
-                text: chars[start..i].iter().collect(),
-            });
+            out.push(conf_token(ConfKind::Builtin, chars[start..i].iter().collect()));
             continue;
         }
 
-        // ── punctuation / operators used in conf bindings ──
-        if matches!(ch, '+' | '-' | '=' | ':' | ',' | '~' | '>' | '<') {
-            tokens.push(ConfToken {
-                kind: ConfKind::Operator,
-                text: ch.to_string(),
-            });
+        // ── numbers (optional sign, decimals, trailing %) ──
+        if ch.is_ascii_digit()
+            || (ch == '-' && i + 1 < n && chars[i + 1].is_ascii_digit())
+        {
+            let start = i;
+            if chars[i] == '-' {
+                i += 1;
+            }
+            while i < n && chars[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i + 1 < n && chars[i] == '.' && chars[i + 1].is_ascii_digit() {
+                i += 1;
+                while i < n && chars[i].is_ascii_digit() {
+                    i += 1;
+                }
+            }
+            if i < n && chars[i] == '%' {
+                i += 1;
+            }
+            out.push(conf_token(ConfKind::Number, chars[start..i].iter().collect()));
+            continue;
+        }
+
+        // ── operators / punctuation ──
+        if matches!(ch, '=' | ':' | '+' | ',' | '~') {
+            out.push(conf_token(ConfKind::Operator, ch.to_string()));
             i += 1;
             continue;
         }
 
-        // ── identifiers / words ──
-        if ch.is_alphanumeric() || ch == '_' {
+        // ── words: booleans, modifier keys, or plain ──
+        if ch.is_alphanumeric() || ch == '_' || ch == '-' || ch == '.' {
             let start = i;
-            while i < n && (chars[i].is_alphanumeric() || chars[i] == '_') {
+            while i < n && (chars[i].is_alphanumeric() || chars[i] == '_' || chars[i] == '-' || chars[i] == '.') {
                 i += 1;
             }
             let word: String = chars[start..i].iter().collect();
-            let kind = if CONF_KW.contains(&word.as_str()) {
+            let lower = word.to_lowercase();
+            let kind = if CONF_KW.contains(&lower.as_str()) {
+                ConfKind::Constant
+            } else if CONF_MODIFIERS.contains(&lower.as_str())
+                && ((i < n && chars[i] == '+') || (start > 0 && chars[start - 1] == '+'))
+            {
                 ConfKind::Keyword
             } else {
                 ConfKind::Plain
             };
-            tokens.push(ConfToken { kind, text: word });
+            out.push(conf_token(kind, word));
             continue;
         }
 
-        // ── anything else: whitespace, etc. ──
-        let start = i;
+        // ── anything else: brackets, slashes, globs, … ──
+        out.push(conf_token(ConfKind::Plain, ch.to_string()));
         i += 1;
-        tokens.push(ConfToken {
-            kind: ConfKind::Plain,
-            text: chars[start..i].iter().collect(),
-        });
     }
-
-    tokens
 }
 
 #[cfg(test)]
@@ -1180,11 +1278,50 @@ mod tests {
     }
 
     #[test]
-    fn conf_fallback_still_works() {
+    fn conf_basics() {
         let t = tokens(Lang::Conf, "# comment\nkey = \"value\"\nnum = 42\n");
         assert!(t.iter().any(|(k, s)| *k == TokenKind::Comment && s == "# comment"));
+        assert!(t.iter().any(|(k, s)| *k == TokenKind::Builtin && s == "key"));
         assert!(t.iter().any(|(k, s)| *k == TokenKind::String && s == "\"value\""));
         assert!(t.iter().any(|(k, s)| *k == TokenKind::Number && s == "42"));
+    }
+
+    #[test]
+    fn conf_sections() {
+        let t = tokens(Lang::Conf, "[main]\nfoo = 1\n");
+        assert!(t.iter().any(|(k, s)| *k == TokenKind::Function && s == "main"));
+        assert!(t.iter().any(|(k, s)| *k == TokenKind::Punctuation && s == "["));
+        assert!(t.iter().any(|(k, s)| *k == TokenKind::Punctuation && s == "]"));
+    }
+
+    #[test]
+    fn conf_kitty_style() {
+        // kitty.conf uses `key value` pairs, hex colours, booleans
+        // and modifier keybindings.
+        let src = "font_family JetBrains Mono\nbackground_opacity 0.9\ncolor0 #1e1e2e\nenable_audio_bell no\ncursor #aabbccdd\nmap ctrl+shift+t new_tab\nenv FOO=$BAR\n";
+        let t = tokens(Lang::Conf, src);
+        assert!(t.iter().any(|(k, s)| *k == TokenKind::Builtin && s == "font_family"));
+        assert!(t.iter().any(|(k, s)| *k == TokenKind::Number && s == "0.9"));
+        assert!(t.iter().any(|(k, s)| *k == TokenKind::Number && s == "#1e1e2e"));
+        assert!(t.iter().any(|(k, s)| *k == TokenKind::Number && s == "#aabbccdd"));
+        assert!(t.iter().any(|(k, s)| *k == TokenKind::Constant && s == "no"));
+        assert!(t.iter().any(|(k, s)| *k == TokenKind::Keyword && s == "ctrl"));
+        assert!(t.iter().any(|(k, s)| *k == TokenKind::Keyword && s == "shift"));
+        assert!(t.iter().any(|(k, s)| *k == TokenKind::Operator && s == "+"));
+        assert!(t.iter().any(|(k, s)| *k == TokenKind::Builtin && s == "$BAR"));
+    }
+
+    #[test]
+    fn conf_inline_comment_after_value() {
+        let t = tokens(Lang::Conf, "background #111111  # a comment\n");
+        assert!(t.iter().any(|(k, s)| *k == TokenKind::Number && s == "#111111"));
+        assert!(t.iter().any(|(k, s)| *k == TokenKind::Comment && s == "# a comment"));
+    }
+
+    #[test]
+    fn conf_gitignore_globs_stay_plain() {
+        let t = tokens(Lang::Conf, "*.pyc\nnode_modules/\n/target/\n");
+        assert!(t.iter().all(|(k, s)| *k == TokenKind::Plain || s.trim().is_empty()));
     }
 
     #[test]

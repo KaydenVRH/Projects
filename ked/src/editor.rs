@@ -1319,11 +1319,8 @@ impl Editor {
 
     fn handle_finder_state(&mut self, key: KeyEvent) -> bool {
         match key.code {
-            // Esc or Ctrl+P: close finder.
+            // Esc: close finder.
             KeyCode::Esc => {
-                self.state = State::Normal;
-            }
-            KeyCode::Char('p') if key.modifiers == KeyModifiers::CONTROL => {
                 self.state = State::Normal;
             }
 
@@ -1348,11 +1345,20 @@ impl Editor {
                 self.state = State::Normal;
             }
 
-            // Navigation: up/down in the result list.
-            KeyCode::Up | KeyCode::Char('k') => {
+            // Navigation: arrows / Ctrl+N / Ctrl+P in the result list.
+            // NOTE: every plain character (including h/j/k/l) goes to
+            // the query — nothing here shadows typed text.
+            KeyCode::Up => {
                 self.finder_selection = self.finder_selection.saturating_sub(1);
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            KeyCode::Char('p') if key.modifiers == KeyModifiers::CONTROL => {
+                self.finder_selection = self.finder_selection.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                let max = self.finder.results.len().saturating_sub(1);
+                self.finder_selection = min(self.finder_selection + 1, max);
+            }
+            KeyCode::Char('n') if key.modifiers == KeyModifiers::CONTROL => {
                 let max = self.finder.results.len().saturating_sub(1);
                 self.finder_selection = min(self.finder_selection + 1, max);
             }
@@ -2768,31 +2774,14 @@ impl Editor {
 
     // ── finder overlay ───────────────────────────────────────────
 
-    fn render_finder(&mut self, f: &mut Frame, area: Rect, theme: &Theme) {
+     fn render_finder(&mut self, f: &mut Frame, area: Rect, theme: &Theme) {
 
-        // Centered popup: ~60% width, ~50% height.
-        let popup_w = (area.width as f32 * 0.6) as u16;
-        let popup_h = (area.height as f32 * 0.5) as u16;
-        let popup_x = (area.width - popup_w) / 2;
-        let popup_y = (area.height - popup_h) / 3;
-        let popup = Rect::new(
-            popup_x,
-            popup_y,
-            popup_w.min(area.width),
-            popup_h.min(area.height),
-        );
-
-        // Clear the area so the popup stands out.
+        // The standard centered modal.
+        let popup = modal_rect(area, MODAL_W, MODAL_H);
         f.render_widget(Clear, popup);
 
-        // Outer block with scrolling title (border shows through on sides)
-        let title_text = scrolled_title("Find File", self._frame, self.animations);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(title_text)
-            .title_alignment(Alignment::Center)
-            .title_style(Style::new().fg(theme.fg).bg(theme.status_bg))
-            .border_style(Style::new().fg(theme.fg));
+        // Uniform overlay frame with scrolling title.
+        let block = overlay_block("Find File", self._frame, self.animations, theme);
         let inner = block.inner(popup);
         f.render_widget(block, popup);
 
@@ -2806,12 +2795,18 @@ impl Editor {
         ])
         .areas(inner);
 
-        // Query bar (status-bar style line).
+        // Query bar (status-bar style line) + navigation hint.
         let query_text = if self.finder_query.is_empty() {
             " type to search…".to_string()
         } else {
             format!(" {}", self.finder_query)
         };
+        let hint = " ↑↓/Ctrl+N/P move · Enter open · Esc close ";
+        let [q_area, hint_area] = Layout::horizontal([
+            Constraint::Min(1),
+            Constraint::Length(hint.chars().count() as u16),
+        ])
+        .areas(query_area);
         let query_span = Span::styled(
             query_text,
             Style::new().fg(theme.status_fg).bg(theme.status_bg),
@@ -2819,7 +2814,17 @@ impl Editor {
         f.render_widget(
             Paragraph::new(Line::from(query_span))
                 .style(Style::new().bg(theme.status_bg)),
-            query_area,
+            q_area,
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::new()
+                    .fg(theme.comment.fg.unwrap_or(theme.fg))
+                    .bg(theme.status_bg),
+            )))
+            .style(Style::new().bg(theme.status_bg)),
+            hint_area,
         );
 
         let total = self.finder.results.len();
@@ -2874,26 +2879,11 @@ impl Editor {
 
     fn render_music(&mut self, f: &mut Frame, area: Rect, theme: &Theme) {
 
-        let popup_w = (area.width as f32 * 0.6) as u16;
-        let popup_h = (area.height as f32 * 0.5) as u16;
-        let popup_x = (area.width - popup_w) / 2;
-        let popup_y = (area.height - popup_h) / 3;
-        let popup = Rect::new(
-            popup_x,
-            popup_y,
-            popup_w.min(area.width),
-            popup_h.min(area.height),
-        );
+        let popup = modal_rect(area, MODAL_W, MODAL_H);
 
         f.render_widget(Clear, popup);
 
-        let title_text = scrolled_title("Music Player", self._frame, self.animations);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(title_text)
-            .title_alignment(Alignment::Center)
-            .title_style(Style::new().fg(theme.fg).bg(theme.status_bg))
-            .border_style(Style::new().fg(theme.fg));
+        let block = overlay_block("Music Player", self._frame, self.animations, theme);
         let inner = block.inner(popup);
         f.render_widget(block, popup);
 
@@ -2990,26 +2980,11 @@ impl Editor {
 
     fn render_theme(&mut self, f: &mut Frame, area: Rect, theme: &Theme) {
 
-        let popup_w = (area.width as f32 * 0.45) as u16;
-        let popup_h = (area.height as f32 * 0.4) as u16;
-        let popup_x = (area.width - popup_w) / 2;
-        let popup_y = (area.height - popup_h) / 3;
-        let popup = Rect::new(
-            popup_x,
-            popup_y,
-            popup_w.min(area.width),
-            popup_h.min(area.height),
-        );
+        let popup = modal_rect(area, MODAL_W, MODAL_H);
 
         f.render_widget(Clear, popup);
 
-        let title_text = scrolled_title("Theme Selector", self._frame, self.animations);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(title_text)
-            .title_alignment(Alignment::Center)
-            .title_style(Style::new().fg(theme.fg).bg(theme.status_bg))
-            .border_style(Style::new().fg(theme.fg));
+        let block = overlay_block("Theme Selector", self._frame, self.animations, theme);
         let inner = block.inner(popup);
         f.render_widget(block, popup);
 
@@ -3079,10 +3054,6 @@ impl Editor {
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_else(|_| "?".into());
 
-        let uptime = std::process::Command::new("uptime").output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .unwrap_or_else(|_| "?".into());
-
         let disk_line = std::process::Command::new("df").args(["-h", "/"]).output()
             .map(|o| {
                 let s = String::from_utf8_lossy(&o.stdout);
@@ -3130,10 +3101,15 @@ impl Editor {
         };
 
         // ── Layout ────────────────────────────────────────────────
-        // header (1) + info (1) + battery? (1) + gap (1) + log-header (1) + logs (rest)
+        // Full-screen page with the same frame as every other overlay.
+        let block = overlay_block("System Dashboard", self._frame, self.animations, theme);
+        let inner = block.inner(area);
+        f.render_widget(Clear, area);
+        f.render_widget(block, area);
+
+        // info (1) + battery? (1) + gap (1) + log-header (1) + logs (rest)
         let has_batt = batt_line.is_some();
         let mut constraints = vec![
-            Constraint::Length(1),          // header
             Constraint::Length(1),          // info
         ];
         if has_batt {
@@ -3142,33 +3118,24 @@ impl Editor {
         constraints.push(Constraint::Length(1));     // gap
         constraints.push(Constraint::Length(1));     // log header
         constraints.push(Constraint::Min(4));       // logs
-        let areas = Layout::vertical(constraints).split(area);
+        let areas = Layout::vertical(constraints).split(inner);
         let mut idx = 0;
-        let head_area      = areas[idx]; idx += 1;
         let info_area      = areas[idx]; idx += 1;
         let batt_area      = if has_batt { let r = areas[idx]; idx += 1; Some(r) } else { None };
         let log_head_area  = areas[idx + 1]; // skip gap
         let log_area       = areas[idx + 2];
 
-        // ── Header bar ────────────────────────────────────────────
-        let header = format!(" System Dashboard ─ {host} ─ {user} ─ kernel {kernel} ");
-        f.render_widget(Clear, head_area);
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(header,
-                Style::new().fg(theme.status_fg).bg(theme.status_bg))))
-            .style(Style::new().bg(theme.status_bg)),
-            head_area,
-        );
-
         // ── Info row ──────────────────────────────────────────────
         let info_text = format!(
-            "  CPU: {:.1}%     Memory: {:.1}/{:.1} GB ({:.0}%)     {}     {}  ",
+            "  CPU: {:.1}%     Memory: {:.1}/{:.1} GB ({:.0}%)     {}     {} ─ {} ─ kernel {}  ",
             cpu_pct,
             mem_used as f64 / (1<<30) as f64,
             mem_total as f64 / (1<<30) as f64,
             mem_pct,
             disk_line,
-            uptime,
+            host,
+            user,
+            kernel,
         );
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(info_text,
@@ -3215,38 +3182,30 @@ impl Editor {
     // ── keybind manual (Ctrl+K) ──────────────────────────────────
 
     fn render_help(&self, f: &mut Frame, area: Rect, theme: &Theme) {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" Keybinds ")
-            .title_style(Style::new().fg(theme.fg))
-            .border_style(Style::new().fg(theme.fg));
-        let inner = block.inner(area);
-        f.render_widget(Clear, area);
-        f.render_widget(block, area);
+        let popup = modal_rect(area, MODAL_W, MODAL_H);
+        f.render_widget(Clear, popup);
+
+        let block = overlay_block("Keybinds", self._frame, self.animations, theme);
+        let inner = block.inner(popup);
+        f.render_widget(block, popup);
 
         let help_text = vec![
             Line::from(Span::styled("Movement & Editing", theme.keyword)),
-            Line::from("  h/j/k/l    move cursor          w/b      next/prev word"),
-            Line::from("  0/$/gg/G    line start/end, first/last"),
-            Line::from("  i/a/I/A     insert mode           o/O      open line below/above"),
-            Line::from("  x/dd        delete char/line      yy/p/P   yank/paste"),
-            Line::from("  u           undo                  Ctrl+R   redo"),
-            Line::from("  v           visual mode           Ctrl+C   exit to normal"),
+            Line::from("  h/j/k/l move   w/b word   0/$ ends   g/G first/last"),
+            Line::from("  i/a/I/A insert   o/O open line   x/dd delete"),
+            Line::from("  yy yank   p/P paste   u undo   Ctrl+R redo"),
+            Line::from("  v visual   Ctrl+D/U half page   Ctrl+C exit to normal"),
             Line::from(""),
             Line::from(Span::styled("Buffers & Files", theme.keyword)),
-            Line::from("  Tab/S-Tab   next/prev buffer      :bn/:bp  next/prev buffer"),
-            Line::from("  Ctrl+P      find file             Ctrl+F   file tree"),
-            Line::from("  Ctrl+S      save                  :e <f>   open file"),
+            Line::from("  Tab/S-Tab switch buffer   :bn/:bp switch buffer"),
+            Line::from("  Ctrl+P find   Ctrl+F tree   Ctrl+S save   :e <f> open"),
             Line::from(""),
             Line::from(Span::styled("Tools", theme.keyword)),
-            Line::from("  Ctrl+E      run file              Ctrl+M   music player"),
-            Line::from("  Ctrl+T      theme selector        Ctrl+K   this manual"),
-            Line::from("  :sys        system dashboard      :wq      save & quit"),
+            Line::from("  Ctrl+E run   Ctrl+M music   Ctrl+T theme   Ctrl+J shell"),
+            Line::from("  :sys dashboard   :theme <n> switch theme"),
             Line::from(""),
             Line::from(Span::styled("Commands", theme.keyword)),
-            Line::from("  /           search                n/N      next/prev match"),
-            Line::from("  :w/:wq      save / save & quit    :q/:q!   quit / force quit"),
-            Line::from("  :theme <n>  switch theme          Ctrl+J   shell popup"),
+            Line::from("  / search   n/N repeat   :w/:wq save   :q/:q! quit"),
         ];
 
         f.render_widget(
@@ -3259,27 +3218,11 @@ impl Editor {
     // ── run output overlay ───────────────────────────────────────
 
     fn render_run(&self, f: &mut Frame, area: Rect, theme: &Theme) {
-        // Centered popup: ~70% width, ~60% height.
-        let popup_w = (area.width as f32 * 0.7) as u16;
-        let popup_h = (area.height as f32 * 0.6) as u16;
-        let popup_x = (area.width - popup_w) / 2;
-        let popup_y = (area.height - popup_h) / 3;
-        let popup = Rect::new(
-            popup_x,
-            popup_y,
-            popup_w.min(area.width),
-            popup_h.min(area.height),
-        );
+        let popup = modal_rect(area, MODAL_W, MODAL_H);
 
         f.render_widget(Clear, popup);
 
-        let title_text = scrolled_title("Run Output", self._frame, self.animations);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(title_text)
-            .title_alignment(Alignment::Center)
-            .title_style(Style::new().fg(theme.fg).bg(theme.status_bg))
-            .border_style(Style::new().fg(theme.fg));
+        let block = overlay_block("Run Output", self._frame, self.animations, theme);
         let inner = block.inner(popup);
         f.render_widget(block, popup);
         // Output text — show last inner_h lines.
@@ -3296,23 +3239,16 @@ impl Editor {
 
     fn render_shell(&mut self, f: &mut Frame, area: Rect) {
         let theme = self.theme.theme();
-        let popup_w = (area.width as f32 * 0.92) as u16;
-        let popup_h = (area.height as f32 * 0.85) as u16;
-        let popup_x = (area.width - popup_w) / 2;
-        let popup_y = (area.height - popup_h) / 2;
-        let popup = Rect::new(
-            popup_x,
-            popup_y,
-            popup_w.min(area.width),
-            popup_h.min(area.height),
-        );
+        // The shell is the one oversized overlay: it's a real
+        // terminal, so it keeps most of the screen — same frame style.
+        let popup = modal_rect(area, 0.92, 0.85);
 
         f.render_widget(Clear, popup);
 
         let block = Block::default()
             .borders(Borders::ALL)
             .title(" Shell — type exit to close ")
-            .title_style(Style::new().fg(theme.fg))
+            .title_style(Style::new().fg(theme.fg).bg(theme.status_bg))
             .border_style(Style::new().fg(theme.fg));
         let inner = block.inner(popup);
         f.render_widget(block, popup);
@@ -3397,7 +3333,7 @@ impl Editor {
         let first_w = keybinds
             .chunks(2)
             .filter_map(|c| c.first())
-            .map(|(k, d)| key_w + 2 + d.len())
+            .map(|(_, d)| key_w + 2 + d.len())
             .max()
             .unwrap_or(key_w + 2);
 
@@ -3511,9 +3447,33 @@ impl Editor {
     }
 }
 
-/// TempleOS-style scrolling title bar text.
-/// Pads with `═` and scrolls left based on frame counter.
-/// When `animated` is false, returns a static centered title.
+// ── shared overlay chrome ────────────────────────────────────────
+
+/// Standard modal size shared by every popup overlay (finder, music,
+/// theme, run output, help) — one uniform look.
+const MODAL_W: f32 = 0.75;
+const MODAL_H: f32 = 0.75;
+
+/// Centered rectangle taking `w_pct` × `h_pct` of `area` (clamped).
+fn modal_rect(area: Rect, w_pct: f32, h_pct: f32) -> Rect {
+    let w = ((area.width as f32 * w_pct) as u16).min(area.width);
+    let h = ((area.height as f32 * h_pct) as u16).min(area.height);
+    Rect::new((area.width - w) / 2, (area.height - h) / 2, w, h)
+}
+
+/// The one uniform overlay frame: bordered, with a scrolling title.
+fn overlay_block<'a>(title: &str, frame: u64, animated: bool, theme: &Theme) -> Block<'a> {
+    Block::default()
+        .borders(Borders::ALL)
+        .title(scrolled_title(title, frame, animated))
+        .title_alignment(Alignment::Center)
+        .title_style(Style::new().fg(theme.fg).bg(theme.status_bg))
+        .border_style(Style::new().fg(theme.fg))
+}
+
+/// Scrolling title bar text: pads with `═` and scrolls left based on
+/// the frame counter.  When `animated` is false, returns a static
+/// centered title.
 fn scrolled_title(label: &str, frame: u64, animated: bool) -> String {
     let label = &label.to_uppercase();
     if !animated {
