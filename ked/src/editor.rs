@@ -768,7 +768,7 @@ impl Editor {
                 self.save_undo();
                 if !self.lines.is_empty() {
                     let removed = self.lines.remove(self.cy);
-                    self.clipboard_text = removed;
+                    self.set_clipboard(removed);
                     self.modified = true;
                     if self.lines.is_empty() {
                         self.lines.push(String::new());
@@ -781,47 +781,18 @@ impl Editor {
             // ── yank line (yy) ──
             KeyCode::Char('y') => {
                 if !self.lines.is_empty() {
-                    self.clipboard_text = self.lines[self.cy].clone();
+                    self.set_clipboard(self.lines[self.cy].clone());
                 }
             }
 
             // ── paste (p / P) ──
             KeyCode::Char('p') => {
-                if !self.clipboard_text.is_empty() {
-                    self.save_undo();
-                    // If clipboard contains newlines, paste as lines below.
-                    if self.clipboard_text.contains('\n') {
-                        let pasted_lines: Vec<&str> = self.clipboard_text.split('\n').collect();
-                        for (i, line) in pasted_lines.iter().enumerate() {
-                            self.lines.insert(self.cy + 1 + i, line.to_string());
-                        }
-                        self.cy += pasted_lines.len();
-                        self.cx = 0;
-                    } else {
-                        // Single-line: insert at cursor.
-                        let line = &mut self.lines[self.cy];
-                        line.insert_str(self.cx, &self.clipboard_text);
-                        self.cx += self.clipboard_text.len();
-                    }
-                    self.modified = true;
-                }
+                let text = self.clipboard_text.clone();
+                self.paste_after(&text);
             }
             KeyCode::Char('P') => {
-                if !self.clipboard_text.is_empty() {
-                    self.save_undo();
-                    if self.clipboard_text.contains('\n') {
-                        let pasted_lines: Vec<&str> = self.clipboard_text.split('\n').collect();
-                        for (i, line) in pasted_lines.iter().enumerate() {
-                            self.lines.insert(self.cy + i, line.to_string());
-                        }
-                        self.cx = 0;
-                    } else {
-                        let line = &mut self.lines[self.cy];
-                        line.insert_str(self.cx, &self.clipboard_text);
-                        self.cx += self.clipboard_text.len();
-                    }
-                    self.modified = true;
-                }
+                let text = self.clipboard_text.clone();
+                self.paste_before(&text);
             }
 
             // ── undo / redo ──
@@ -1079,7 +1050,8 @@ impl Editor {
 
             // Yank selection (y or c both copy).
             KeyCode::Char('y') | KeyCode::Char('c') => {
-                self.clipboard_text = self.selection_text();
+                let text = self.selection_text();
+                self.set_clipboard(text);
                 self.state = State::Normal;
                 self.selection_anchor = None;
             }
@@ -1088,7 +1060,8 @@ impl Editor {
             KeyCode::Char('d') => {
                 if self.selection_anchor.is_some() {
                     self.save_undo();
-                    self.clipboard_text = self.selection_text();
+                    let text = self.selection_text();
+                self.set_clipboard(text);
                     let (start_y, end_y, start_x, end_x) = self.selection_bounds();
                     if start_y == end_y {
                         let line = &mut self.lines[start_y];
@@ -2199,6 +2172,101 @@ impl Editor {
         if let Some(next) = self.redo_stack.pop() {
             self.undo_stack.push(Snapshot::of(self.lines.clone(), self.cy, self.cx));
             self.restore(next);
+        }
+    }
+
+    // ── clipboard ──────────────────────────────────────────────
+
+    /// Store text in the internal clipboard and push it to the system
+    /// clipboard via OSC 52 (kitty, wezterm, foot, iTerm2, …).
+    fn set_clipboard(&mut self, text: String) {
+        self.clipboard_text = text;
+        osc52_copy(&self.clipboard_text);
+    }
+
+    /// Paste `text` after the cursor (`p`): multi-line text becomes
+    /// whole lines below the current one; single-line text inserts at
+    /// the cursor.
+    fn paste_after(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.save_undo();
+        if text.contains('\n') {
+            let pasted_lines: Vec<&str> = text.split('\n').collect();
+            for (i, line) in pasted_lines.iter().enumerate() {
+                self.lines.insert(self.cy + 1 + i, line.to_string());
+            }
+            self.cy += pasted_lines.len();
+            self.cx = 0;
+        } else {
+            let line = &mut self.lines[self.cy];
+            line.insert_str(self.cx, text);
+            self.cx += text.len();
+        }
+        self.modified = true;
+        self.clamp_scroll();
+    }
+
+    /// Paste `text` before the cursor (`P`).
+    fn paste_before(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.save_undo();
+        if text.contains('\n') {
+            let pasted_lines: Vec<&str> = text.split('\n').collect();
+            for (i, line) in pasted_lines.iter().enumerate() {
+                self.lines.insert(self.cy + i, line.to_string());
+            }
+            self.cx = 0;
+        } else {
+            let line = &mut self.lines[self.cy];
+            line.insert_str(self.cx, text);
+            self.cx += text.len();
+        }
+        self.modified = true;
+        self.clamp_scroll();
+    }
+
+    /// Handle a bracketed paste from the terminal: the text is
+    /// inserted literally — never interpreted as keypresses.  In
+    /// insert mode it is typed at the cursor; in normal / visual mode
+    /// it pastes after the cursor like `p`.  Ignored while an overlay
+    /// is open.
+    pub fn paste_from_terminal(&mut self, raw: &str) {
+        if self.state != State::Normal && self.state != State::Visual {
+            return;
+        }
+        // Normalise Windows line endings.
+        let text = raw.replace("\r\n", "\n").replace('\r', "\n");
+        if text.is_empty() {
+            return;
+        }
+        if self.mode == Mode::Insert {
+            self.save_undo_if_needed();
+            let mut parts = text.split('\n');
+            let first = parts.next().unwrap_or("");
+            {
+                let line = &mut self.lines[self.cy];
+                let pos = line.floor_char_boundary(self.cx);
+                line.insert_str(pos, first);
+                self.cx = pos + first.len();
+            }
+            for part in parts {
+                let rest = self.lines[self.cy].split_off(self.cx);
+                self.lines.insert(self.cy + 1, part.to_string() + &rest);
+                self.cy += 1;
+                self.cx = part.len();
+            }
+            self.modified = true;
+            self.clamp_scroll();
+        } else {
+            if self.state == State::Visual {
+                self.state = State::Normal;
+                self.selection_anchor = None;
+            }
+            self.paste_after(&text);
         }
     }
 
@@ -3495,6 +3563,10 @@ fn blend_colors(a: Color, b: Color, min_factor: f32, max_factor: f32) -> Color {
 /// Softly shift a theme's colours.  `hue_offset` rotates hues in degrees
 /// (small values = subtle).  `lightness` blends toward white (positive) or
 /// black (negative) — used for breathing effects.
+///
+/// Only the *important* tokens are animated — keywords, functions,
+/// types, strings, numbers, constants, config keys — so the plain
+/// text, comments, operators, and all UI chrome stay calm.
 fn soft_shift_theme(t: &Theme, hue_offset: f64, lightness: f64) -> Theme {
     use crate::theme::hsl_to_rgb;
 
@@ -3541,13 +3613,20 @@ fn soft_shift_theme(t: &Theme, hue_offset: f64, lightness: f64) -> Theme {
     };
 
     Theme {
-        fg: shift(t.fg),
-        bg: t.bg,  // keep background static
-        selection_bg: shift(t.selection_bg),
-        line_number: shift_style(&t.line_number),
-        tilde: shift_style(&t.tilde),
-        status_bg: shift(t.status_bg),
-        status_fg: shift(t.status_fg),
+        // Static: plain text, comments, operators/punctuation, and
+        // every piece of UI chrome.
+        fg: t.fg,
+        bg: t.bg,
+        selection_bg: t.selection_bg,
+        line_number: t.line_number,
+        tilde: t.tilde,
+        status_bg: t.status_bg,
+        status_fg: t.status_fg,
+        comment: t.comment,
+        operator: t.operator,
+        punctuation: t.punctuation,
+
+        // Animated: the tokens worth drawing attention to.
         keyword: shift_style(&t.keyword),
         builtin: shift_style(&t.builtin),
         rstype: shift_style(&t.rstype),
@@ -3555,13 +3634,10 @@ fn soft_shift_theme(t: &Theme, hue_offset: f64, lightness: f64) -> Theme {
         lifetime: shift_style(&t.lifetime),
         string: shift_style(&t.string),
         fstring_prefix: shift_style(&t.fstring_prefix),
-        comment: shift_style(&t.comment),
         number: shift_style(&t.number),
         constant: shift_style(&t.constant),
         decorator: shift_style(&t.decorator),
         property: shift_style(&t.property),
-        operator: shift_style(&t.operator),
-        punctuation: shift_style(&t.punctuation),
     }
 }
 fn color_to_rgb(c: Color) -> Option<(u8, u8, u8)> {
@@ -3754,6 +3830,46 @@ fn now_playing_text(playing: bool, current_song: Option<&str>, frame: u64, width
     let scrolled: Vec<char> = format!("{label}  {label}").chars().collect();
     let offset = (frame as usize / 20) % (label.chars().count() + 2);
     scrolled[offset..].iter().take(width).collect()
+}
+
+/// Tell the terminal to copy `text` to the system clipboard via
+/// OSC 52 (works in kitty, wezterm, foot, iTerm2, …; other terminals
+/// ignore it).  We only ever write — never query — so there is no
+/// way for a terminal to feed us data through it.
+fn osc52_copy(text: &str) {
+    use std::io::Write;
+    let b64 = base64_encode(text.as_bytes());
+    let mut out = std::io::stdout();
+    let _ = write!(out, "\x1b]52;c;{}\x1b\\", b64);
+    let _ = out.flush();
+}
+
+/// Minimal base64 encoder (for OSC 52 payloads).
+fn base64_encode(data: &[u8]) -> String {
+    const TABLE: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    for chunk in data.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        out.push(TABLE[(n >> 18) as usize & 63] as char);
+        out.push(TABLE[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            TABLE[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
 }
 
 /// Cheap content fingerprint used to decide whether the highlighter
@@ -4101,5 +4217,57 @@ mod tests {
         let keep = ed.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
         assert!(keep);
         assert_eq!(ed.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn bracketed_paste_inserts_literally() {
+        let cfg = crate::config::Config::default();
+        let mut ed = Editor::new(None, &cfg).unwrap();
+
+        // Insert mode: multi-line paste types at the cursor.
+        ed.mode = Mode::Insert;
+        ed.insert_saved = false;
+        ed.paste_from_terminal("foo\nbar");
+        assert_eq!(ed.lines, vec!["foo".to_string(), "bar".to_string()]);
+        assert_eq!(ed.cx, 3);
+        assert_eq!(ed.cy, 1);
+
+        // Normal mode: paste after the cursor like `p` — never as
+        // commands.
+        ed.mode = Mode::Normal;
+        ed.paste_from_terminal("i not a command\ndd neither");
+        assert!(ed.lines.contains(&"i not a command".to_string()));
+        assert!(ed.lines.contains(&"dd neither".to_string()));
+
+        // Windows line endings are normalised.
+        ed.mode = Mode::Insert;
+        ed.insert_saved = false;
+        ed.cy = 0;
+        ed.cx = 0;
+        ed.paste_from_terminal("a\r\nb");
+        // Inserting at col 0 splits the line: "a" stays, the rest is
+        // carried onto the next line after the pasted "b".
+        assert_eq!(ed.lines[0], "a");
+        assert_eq!(ed.lines[1], "bfoo");
+    }
+
+    #[test]
+    fn paste_after_multiline_goes_below_cursor() {
+        let cfg = crate::config::Config::default();
+        let mut ed = Editor::new(None, &cfg).unwrap();
+        ed.lines = vec!["one".to_string(), "two".to_string()];
+        ed.cy = 0;
+        ed.cx = 0;
+        ed.paste_after("x\ny");
+        assert_eq!(ed.lines, vec!["one", "x", "y", "two"]);
+        assert_eq!(ed.cy, 2);
+    }
+
+    #[test]
+    fn base64_roundtrip() {
+        assert_eq!(base64_encode(b"ked"), "a2Vk");
+        assert_eq!(base64_encode(b"ab"), "YWI=");
+        assert_eq!(base64_encode(b"abc"), "YWJj");
+        assert_eq!(base64_encode(b"hello world"), "aGVsbG8gd29ybGQ=");
     }
 }

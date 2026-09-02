@@ -27,6 +27,10 @@ all in the alternate screen.
   insert session (a typed run) is one undo step, like vim.
 - **Yank / paste** — `yy`, `dd`, `p`/`P`, plus visual‑mode
   yank/delete over a selection
+- **System clipboard** — yanks copy to the system clipboard via
+  OSC 52 (kitty, wezterm, foot, iTerm2); pasting from the terminal
+  uses bracketed paste and is always inserted literally — in insert
+  mode at the cursor, in normal mode like `p`, never as commands
 - **Search** — `/` query, `n`/`N` repeat, every match highlighted
 - **Smart insert** — Enter preserves indentation, Tab indents,
   `Ctrl+A` pastes the internal clipboard, `Ctrl+C` steps back to
@@ -74,7 +78,9 @@ all in the alternate screen.
   properties
 - **Theme selector** — `Ctrl+T` list with live preview, Enter applies
 - **Colour FX** — animated theme modes from the config: gentle hue
-  drift, breathing lightness, or a warm amber-purple wander
+  drift, breathing lightness, or a warm amber-purple wander. Only the
+  meaningful tokens move (keywords, functions, types, strings,
+  numbers, config keys); plain text, comments, and the UI stay still
 - **Animations** — shimmering tab pills, rainbow status‑bar dashes,
   scrolling overlay titles, an animated splash logo, a music spinner
 - **Transparency & opacity** — `transparent = true` lets your

@@ -32,8 +32,9 @@ use std::time::Duration;
 use anyhow::Result;
 use crossterm::{
     event::{
-        poll, read, Event, KeyEventKind, KeyboardEnhancementFlags,
-        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        poll, read, DisableBracketedPaste, EnableBracketedPaste, Event, KeyEventKind,
+        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -56,6 +57,9 @@ fn main() -> Result<()> {
         stdout,
         PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
     );
+    // Bracketed paste: terminal pastes arrive as a single Paste event
+    // instead of a burst of keystrokes.
+    execute!(stdout, EnableBracketedPaste)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
@@ -65,6 +69,7 @@ fn main() -> Result<()> {
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
+        let _ = execute!(io::stdout(), DisableBracketedPaste);
         let _ = execute!(io::stdout(), LeaveAlternateScreen);
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         let _ = std::process::Command::new("pkill").arg("-x").arg("mpv").output();
@@ -96,15 +101,24 @@ fn main() -> Result<()> {
         // while the music player thread can still auto-advance.
         let timeout = Duration::from_millis(16);
         if poll(timeout)? {
-            if let Event::Key(key) = read()? {
-                if key.kind == KeyEventKind::Press {
-                    if !editor.handle_key(key) {
-                        break;
+            match read()? {
+                Event::Key(key) => {
+                    if key.kind == KeyEventKind::Press {
+                        if !editor.handle_key(key) {
+                            break;
+                        }
+                        // Immediately pump shell output so typed
+                        // characters appear without a frame of delay.
+                        editor.tick();
                     }
-                    // Immediately pump shell output so typed
-                    // characters appear without a frame of delay.
+                }
+                Event::Paste(text) => {
+                    // Terminal pasted something — insert it literally
+                    // (never as vim commands).
+                    editor.paste_from_terminal(&text);
                     editor.tick();
                 }
+                _ => {}
             }
         }
     }
@@ -115,6 +129,7 @@ fn main() -> Result<()> {
 
     // ---- cleanup ----
     disable_raw_mode()?;
+    execute!(terminal.backend_mut(), DisableBracketedPaste)?;
     execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
