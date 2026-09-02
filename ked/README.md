@@ -81,7 +81,8 @@ all in the alternate screen.
   drift, breathing lightness, or a warm amber-purple wander. Only the
   meaningful tokens move (keywords, functions, types, strings,
   numbers, config keys); plain text, comments, and the UI stay still.
-  Active search matches pulse with an amplified version of the effect
+  Search matches pulse with an amplified version of the effect — or,
+  with fx off, a gentle shimmer like the active tab
 - **Animations** — shimmering tab pills, rainbow status‑bar dashes,
   scrolling overlay titles, an animated splash logo, a music spinner
 - **Transparency & opacity** — `transparent = true` lets your

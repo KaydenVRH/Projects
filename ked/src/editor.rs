@@ -2403,6 +2403,16 @@ impl Editor {
                 }
                 _ => {}
             }
+        } else if self.animations && self.last_search.is_some() {
+            // No fx mode: search matches still pulse gently, like the
+            // active-tab shimmer.
+            let pulse = 0.5 + 0.5 * (self._frame as f64 * 0.12).sin();
+            search_glow = Some(blend_colors(
+                theme.selection_bg,
+                theme.fg,
+                0.0,
+                (pulse * 0.12) as f32,
+            ));
         }
         // Transparent content background
         if self.transparent {
@@ -2762,67 +2772,87 @@ impl Editor {
         );
     }
 
-    /// Render the status bar at the bottom of the screen.
+    /// Render the status bar at the bottom of the screen — lualine
+    /// style: a coloured mode block on the left, and everything else
+    /// floating on a transparent background.
     fn render_status(&self, f: &mut Frame, area: Rect, _width: usize, theme: &Theme) {
+        f.render_widget(ratatui::widgets::Clear, area);
 
-        // Build the status text depending on state.
-        let text: String = if let Some(ref msg) = self.flash {
-            format!(" {msg} ")
-        } else if self.state == State::Command {
-            format!(":{}", self.cmd_buf)
-        } else if self.state == State::Search {
-            format!("/{}", self.search_query)
-        } else {
-            // Mode text in solid colour while active
-            let (mode_text, mode_color) = if self.state == State::Visual {
-                ("VISUAL", Color::Rgb(100, 160, 255))
-            } else {
-                match self.mode {
-                    Mode::Insert => ("INSERT", Color::Rgb(100, 220, 100)),
-                    Mode::Normal => ("NORMAL", theme.status_fg),
-                }
-            };
-            let mode_style = Style::new().fg(mode_color).bg(theme.status_bg);
-
-            let fname = self.filename.as_deref().unwrap_or("[No Name]");
-            let mod_str = if self.modified { " [+]" } else { "" };
-            let location = format!("{}:{}", self.cy + 1, self.cx + 1);
-            let tname = self.theme.name();
-
-            // Build spans with animated dash colours
-            let dash_color = if self.animations {
-                let dash_colors = [theme.keyword.fg, theme.builtin.fg, theme.rstype.fg, theme.string.fg, theme.number.fg];
-                let dash_idx = (self._frame / 3) as usize % dash_colors.len();
-                dash_colors[dash_idx].unwrap_or(theme.status_fg)
-            } else {
-                theme.status_fg
-            };
-            let dash_style = Style::new().fg(dash_color).bg(theme.status_bg);
-            let plain_style = Style::new().fg(theme.status_fg).bg(theme.status_bg);
-
-            let spans = vec![
-                Span::styled(format!(" {mode_text}"), mode_style),
-                Span::styled(format!("  {fname}{mod_str}  "), plain_style),
-                Span::styled("─", dash_style),
-                Span::styled(format!(" {location}  "), plain_style),
-                Span::styled("─", dash_style),
-                Span::styled(format!(" {tname}  "), plain_style),
-            ];
-
-            let bar = Paragraph::new(Line::from(spans))
-                .style(Style::new().bg(theme.status_bg));
-            f.render_widget(ratatui::widgets::Clear, area);
+        // Flash / command / search take over the whole line (plain
+        // floating text, no background fill).
+        if let Some(ref msg) = self.flash {
+            let bar = Paragraph::new(Line::from(Span::styled(
+                format!(" {msg} "),
+                Style::new().fg(theme.fg),
+            )));
             f.render_widget(bar, area);
             return;
-        };
+        }
+        if self.state == State::Command {
+            let bar = Paragraph::new(Line::from(Span::styled(
+                format!(":{0}", self.cmd_buf),
+                Style::new().fg(theme.fg),
+            )));
+            f.render_widget(bar, area);
+            return;
+        }
+        if self.state == State::Search {
+            let bar = Paragraph::new(Line::from(Span::styled(
+                format!("/{0}", self.search_query),
+                Style::new().fg(theme.fg),
+            )));
+            f.render_widget(bar, area);
+            return;
+        }
 
-        let bar = Paragraph::new(Line::from(Span::styled(
-            text.clone(),
-            Style::new().fg(theme.status_fg).bg(theme.status_bg),
-        )))
-        .style(Style::new().bg(theme.status_bg));
-        f.render_widget(ratatui::widgets::Clear, area);
-        f.render_widget(bar, area);
+        // ── mode block (lualine section "a") ──
+        // Bold, near-black text on a per-mode accent colour from the
+        // active theme (like the lualine config in ~/.config/nvim).
+        let (mode_text, accent) = if self.state == State::Visual {
+            (" VISUAL ", theme.rstype.fg.unwrap_or(theme.status_fg))
+        } else {
+            match self.mode {
+                Mode::Insert => (" INSERT ", theme.builtin.fg.unwrap_or(theme.status_fg)),
+                Mode::Normal => (" NORMAL ", theme.keyword.fg.unwrap_or(theme.status_fg)),
+            }
+        };
+        let block = Span::styled(
+            mode_text,
+            Style::new()
+                .fg(Color::Rgb(0x1a, 0x1a, 0x1a))
+                .bg(accent)
+                .add_modifier(Modifier::BOLD),
+        );
+
+        // ── left: filename (bright, lualine section "b") ──
+        let bright = Style::new().fg(theme.fg);
+        let fname = self.filename.as_deref().unwrap_or("[No Name]");
+        let mod_str = if self.modified { " +" } else { "" };
+        let left = Line::from(vec![
+            block,
+            Span::styled(format!("  {fname}{mod_str}"), bright),
+        ]);
+
+        // ── right: theme + location (dim, lualine section "c") ──
+        let dim = Style::new().fg(theme.comment.fg.unwrap_or(theme.fg));
+        let location = format!("{}:{}", self.cy + 1, self.cx + 1);
+        let right = Line::from(vec![
+            Span::styled(self.theme.name().to_string(), dim),
+            Span::styled("  ─  ", dim),
+            Span::styled(location, dim),
+            Span::styled(" ", dim),
+        ]);
+
+        let [left_area, right_area] = Layout::horizontal([
+            Constraint::Min(1),
+            Constraint::Min(1),
+        ])
+        .areas(area);
+        f.render_widget(Paragraph::new(left), left_area);
+        f.render_widget(
+            Paragraph::new(right).alignment(Alignment::Right),
+            right_area,
+        );
     }
 
     // ── finder overlay ───────────────────────────────────────────
