@@ -2377,6 +2377,9 @@ impl Editor {
 
         // ── 1. main content / splash ────────────────────────────
         let mut theme = self.theme.theme();
+        // Search matches get an extra "glow" while an fx mode is on:
+        // the same shift as the theme, but amplified.
+        let mut search_glow: Option<Color> = None;
         if self.fx_mode > 0 {
             // Quantise time to ~30 steps/sec: a full 60fps shift
             // recolours every token every frame, forcing a full
@@ -2386,14 +2389,17 @@ impl Editor {
                 1 => { // gentle: very slow ±15° hue oscillation
                     let hue = (elapsed * 3.0).sin() * 15.0;
                     theme = soft_shift_theme(&theme, hue, 0.0);
+                    search_glow = Some(shift_color(theme.selection_bg, hue * 3.0, 0.12));
                 }
                 2 => { // breathing: very slow lightness pulse
                     let lightness = ((elapsed * 0.3).sin() * 0.5 + 0.5) * 0.08;
                     theme = soft_shift_theme(&theme, 0.0, lightness);
+                    search_glow = Some(shift_color(theme.selection_bg, 0.0, lightness * 2.5));
                 }
                 3 => { // warm: very slow drift between amber and purple
                     let hue = (elapsed * 2.0).sin() * 25.0 + 270.0;
                     theme = soft_shift_theme(&theme, hue, 0.0);
+                    search_glow = Some(shift_color(theme.selection_bg, hue * 2.5, 0.12));
                 }
                 _ => {}
             }
@@ -2470,8 +2476,11 @@ impl Editor {
                                     span.style,
                                 ));
                             }
+                            // Search matches glow with the fx mode
+                            // (brighter than the rest of the theme).
+                            let match_bg = search_glow.unwrap_or(theme.selection_bg);
                             let match_style = Style::default()
-                                .bg(theme.selection_bg)
+                                .bg(match_bg)
                                 .patch(span.style);
                             content_spans.push(Span::styled(m.to_string(), match_style));
                             last = start + m.len();
@@ -3560,6 +3569,42 @@ fn blend_colors(a: Color, b: Color, min_factor: f32, max_factor: f32) -> Color {
     }
 }
 
+/// Shift a colour: rotate its hue by `hue_offset` degrees and blend
+/// its lightness toward white (positive) or black (negative).
+fn shift_color(c: Color, hue_offset: f64, lightness: f64) -> Color {
+    use crate::theme::hsl_to_rgb;
+
+    let rgb = color_to_rgb(c);
+    let (r, g, b) = match rgb {
+        Some(x) => x,
+        None => return c,
+    };
+    let rn = r as f64 / 255.0;
+    let gn = g as f64 / 255.0;
+    let bn = b as f64 / 255.0;
+    let mx = rn.max(gn).max(bn);
+    let mn = rn.min(gn).min(bn);
+    let l = (mx + mn) / 2.0;
+    let d = mx - mn;
+
+    let s = if d == 0.0 { 0.0 }
+        else if l > 0.5 { d / (2.0 - mx - mn) }
+        else { d / (mx + mn) };
+
+    let h = if d == 0.0 { 0.0 } else if mx == rn {
+        ((gn - bn) / d * 60.0 + 360.0) % 360.0
+    } else if mx == gn {
+        ((bn - rn) / d * 60.0 + 120.0) % 360.0
+    } else {
+        ((rn - gn) / d * 60.0 + 240.0) % 360.0
+    };
+
+    let h = (h + hue_offset + 360.0) % 360.0;
+    let l = (l + lightness).clamp(0.05, 0.95);
+    let (r2, g2, b2) = hsl_to_rgb(h, s as f64, l);
+    Color::Rgb(r2, g2, b2)
+}
+
 /// Softly shift a theme's colours.  `hue_offset` rotates hues in degrees
 /// (small values = subtle).  `lightness` blends toward white (positive) or
 /// black (negative) — used for breathing effects.
@@ -3568,45 +3613,11 @@ fn blend_colors(a: Color, b: Color, min_factor: f32, max_factor: f32) -> Color {
 /// types, strings, numbers, constants, config keys — so the plain
 /// text, comments, operators, and all UI chrome stay calm.
 fn soft_shift_theme(t: &Theme, hue_offset: f64, lightness: f64) -> Theme {
-    use crate::theme::hsl_to_rgb;
-
-    let shift = |c: Color| -> Color {
-        let rgb = color_to_rgb(c);
-        let (r, g, b) = match rgb {
-            Some(x) => x,
-            None => return c,
-        };
-        let rn = r as f64 / 255.0;
-        let gn = g as f64 / 255.0;
-        let bn = b as f64 / 255.0;
-        let mx = rn.max(gn).max(bn);
-        let mn = rn.min(gn).min(bn);
-        let l = (mx + mn) / 2.0;
-        let d = mx - mn;
-
-        let s = if d == 0.0 { 0.0 }
-            else if l > 0.5 { d / (2.0 - mx - mn) }
-            else { d / (mx + mn) };
-
-        let h = if d == 0.0 { 0.0 } else if mx == rn {
-            ((gn - bn) / d * 60.0 + 360.0) % 360.0
-        } else if mx == gn {
-            ((bn - rn) / d * 60.0 + 120.0) % 360.0
-        } else {
-            ((rn - gn) / d * 60.0 + 240.0) % 360.0
-        };
-
-        let h = (h + hue_offset + 360.0) % 360.0;
-        let l = (l + lightness).clamp(0.05, 0.95);
-        let (r2, g2, b2) = hsl_to_rgb(h, s as f64, l);
-        Color::Rgb(r2, g2, b2)
-    };
-
     let shift_style = |s: &Style| -> Style {
         Style {
-            fg: s.fg.map(shift),
-            bg: s.bg.map(shift),
-            underline_color: s.underline_color.map(shift),
+            fg: s.fg.map(|c| shift_color(c, hue_offset, lightness)),
+            bg: s.bg.map(|c| shift_color(c, hue_offset, lightness)),
+            underline_color: s.underline_color.map(|c| shift_color(c, hue_offset, lightness)),
             add_modifier: s.add_modifier,
             sub_modifier: s.sub_modifier,
         }

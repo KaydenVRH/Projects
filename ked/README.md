@@ -80,7 +80,8 @@ all in the alternate screen.
 - **Colour FX** — animated theme modes from the config: gentle hue
   drift, breathing lightness, or a warm amber-purple wander. Only the
   meaningful tokens move (keywords, functions, types, strings,
-  numbers, config keys); plain text, comments, and the UI stay still
+  numbers, config keys); plain text, comments, and the UI stay still.
+  Active search matches pulse with an amplified version of the effect
 - **Animations** — shimmering tab pills, rainbow status‑bar dashes,
   scrolling overlay titles, an animated splash logo, a music spinner
 - **Transparency & opacity** — `transparent = true` lets your
