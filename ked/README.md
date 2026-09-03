@@ -48,7 +48,9 @@ all in the alternate screen.
 - **File tree** — `Ctrl+F` panel with Nerd Font icons; `j`/`k`
   navigate, `h`/`l` or Enter expand/collapse folders, Enter opens files
 - **Auto‑reload** — if the open file changes on disk (and you have no
-  unsaved edits), ked reloads it and keeps your cursor
+  unsaved edits), ked reloads it and keeps your cursor. Changed lines
+  get a right-gutter indicator — green `▎` for added lines, amber for
+  edited ones — that fades out after a few seconds
 - **Save** — `Ctrl+S` or `:w`; new buffers get a name with `:w <name>`
 
 ### Tools & toys

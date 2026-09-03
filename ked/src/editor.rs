@@ -92,6 +92,14 @@ impl Snapshot {
     }
 }
 
+/// How a line changed in the last external reload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineChange {
+    None,
+    Added,
+    Changed,
+}
+
 /// Per‑buffer state that gets swapped when the user switches tabs.
 #[derive(Debug, Clone)]
 pub struct Buffer {
@@ -154,6 +162,11 @@ pub struct Editor {
     // ── search ──
     pub search_query: String,
     pub last_search: Option<String>,
+
+    // ── external-change markers (from auto-reload) ──
+    pub line_changes: Option<Vec<LineChange>>,
+    /// When the last external reload happened (markers fade out).
+    pub change_age: Instant,
 
     // ── syntax highlighter (tree-sitter, re-parsed on edits) ──
     pub highlight: Option<highlight::Highlighter>,
@@ -287,6 +300,8 @@ impl Editor {
             cmd_buf: String::new(),
             search_query: String::new(),
             last_search: None,
+            line_changes: None,
+            change_age: Instant::now(),
             highlight: None,
             finder: Finder::new(),
             finder_query: String::new(),
@@ -399,6 +414,8 @@ impl Editor {
         self.sync_to_buffer();
         self.current = idx;
         self.sync_from_buffer(idx);
+        // Change markers belong to the buffer we just left.
+        self.line_changes = None;
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1643,11 +1660,19 @@ impl Editor {
         // Preserve cursor line if possible.
         let saved_cy = self.cy.min(new_lines.len().saturating_sub(1));
         let saved_cx = self.cx.min(new_lines[saved_cy].len());
+        // Mark which lines changed so the right gutter can show it.
+        let old_lines = std::mem::take(&mut self.lines);
+        let changes = diff_lines(&old_lines, &new_lines);
         self.lines = new_lines;
         self.cy = saved_cy;
         self.cx = saved_cx;
         self.top = self.top.min(self.lines.len().saturating_sub(1));
         self.last_mtime = Some(current_mtime);
+        if changes.len() == self.lines.len() {
+            self.line_changes = Some(changes);
+            self.change_age = Instant::now();
+        }
+        self.flash = Some("file changed on disk — reloaded".to_string());
     }
 
     /// Re-parse the buffer with tree-sitter if its content or language
@@ -2138,6 +2163,9 @@ impl Editor {
         }
         // Redo is invalidated on new changes.
         self.redo_stack.clear();
+        // The user is editing: external-change markers no longer
+        // describe the buffer.
+        self.line_changes = None;
     }
 
     /// Save the undo snapshot for this insert session, unless it was
@@ -2569,10 +2597,19 @@ impl Editor {
             // Clip content spans to the visible horizontal window
             // (in terminal cells), expanding tabs to spaces so the
             // frame never desynchronises.
-            lines_vec.push(
-                Line::from(visible_spans(raw, spans, self.left, visible_content_cols))
-                    .style(line_style),
+            let mut line_spans =
+                visible_spans(raw, spans, self.left, visible_content_cols);
+            // Right-gutter marker for externally changed lines.
+            decorate_change_marker(
+                &mut line_spans,
+                buf_row,
+                visible_content_cols,
+                line_style,
+                &theme,
+                &self.line_changes,
+                self.change_age,
             );
+            lines_vec.push(Line::from(line_spans).style(line_style));
         }
 
         // Wrap in Paragraph and render.  We explicitly set the width
@@ -3913,6 +3950,49 @@ fn base64_encode(data: &[u8]) -> String {
     out
 }
 
+/// Right-gutter indicator for lines changed by an external reload:
+/// a green `▎` for added lines, amber for changed ones, fading out
+/// over a few seconds.
+fn decorate_change_marker(
+    spans: &mut Vec<Span<'static>>,
+    row: usize,
+    width: usize,
+    line_style: Style,
+    theme: &Theme,
+    line_changes: &Option<Vec<LineChange>>,
+    change_age: Instant,
+) {
+    const CHANGE_TTL: f32 = 10.0;
+
+    let kind = match line_changes {
+        Some(c) => c.get(row).copied().unwrap_or(LineChange::None),
+        None => LineChange::None,
+    };
+    if kind == LineChange::None || width == 0 {
+        return;
+    }
+    let fade = (1.0 - change_age.elapsed().as_secs_f32() / CHANGE_TTL).clamp(0.0, 1.0);
+    if fade <= 0.0 {
+        return;
+    }
+    let base = match kind {
+        LineChange::Added => Color::Rgb(0x7e, 0xd3, 0x86),   // green
+        LineChange::Changed => Color::Rgb(0xff, 0xc6, 0x6d),  // amber
+        LineChange::None => return,
+    };
+    // Blend toward the background as the marker ages (skip on
+    // transparent backgrounds — no colour to blend into).
+    let color = match theme.bg {
+        Color::Rgb(..) => blend_colors(theme.bg, base, 0.0, fade),
+        _ => base,
+    };
+    let used: usize = spans.iter().map(|s| col_width(&s.content)).sum();
+    let pad = width.saturating_sub(used + 1);
+    let bg = line_style.bg.unwrap_or(Color::Reset);
+    spans.push(Span::styled(" ".repeat(pad), line_style));
+    spans.push(Span::styled("▎", Style::new().fg(color).bg(bg)));
+}
+
 /// Cheap content fingerprint used to decide whether the highlighter
 /// cache is stale.
 fn hash_lines(lines: &[String]) -> u64 {
@@ -3920,6 +4000,83 @@ fn hash_lines(lines: &[String]) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     lines.hash(&mut h);
     h.finish()
+}
+
+/// Mark which lines of `new` were added or changed relative to `old`.
+///
+/// Common prefix/suffix are trimmed first; the middle block is diffed
+/// with an LCS when small enough (so edits-in-place read as Changed
+/// rather than Added), otherwise with a cheaper count heuristic.
+fn diff_lines(old: &[String], new: &[String]) -> Vec<LineChange> {
+    let mut out = vec![LineChange::None; new.len()];
+    let mut p = 0;
+    while p < old.len() && p < new.len() && old[p] == new[p] {
+        p += 1;
+    }
+    let mut s = 0;
+    while s + p < old.len() && s + p < new.len() && old[old.len() - 1 - s] == new[new.len() - 1 - s] {
+        s += 1;
+    }
+    let o = &old[p..old.len() - s];
+    let n = &new[p..new.len() - s];
+    if o.is_empty() {
+        for i in p..new.len() - s {
+            out[i] = LineChange::Added;
+        }
+        return out;
+    }
+    if n.is_empty() {
+        return out; // pure deletion — nothing left to mark
+    }
+    if o.len() * n.len() <= 100_000 {
+        // LCS: identical lines stay unmarked, unmatched new lines are
+        // Changed while unmatched old lines remain, then Added.
+        let m = o.len();
+        let k = n.len();
+        let mut dp = vec![vec![0u16; k + 1]; m + 1];
+        for i in 1..=m {
+            for j in 1..=k {
+                dp[i][j] = if o[i - 1] == n[j - 1] {
+                    dp[i - 1][j - 1] + 1
+                } else {
+                    dp[i - 1][j].max(dp[i][j - 1])
+                };
+            }
+        }
+        let mut new_match = vec![None; k];
+        let (mut i, mut j) = (m, k);
+        while i > 0 && j > 0 {
+            if o[i - 1] == n[j - 1] {
+                new_match[j - 1] = Some(i - 1);
+                i -= 1;
+                j -= 1;
+            } else if dp[i - 1][j] >= dp[i][j - 1] {
+                i -= 1;
+            } else {
+                j -= 1;
+            }
+        }
+        let mut remaining = m - dp[m][k] as usize;
+        for j in 0..k {
+            if new_match[j].is_some() {
+                continue;
+            }
+            out[p + j] = if remaining > 0 {
+                remaining -= 1;
+                LineChange::Changed
+            } else {
+                LineChange::Added
+            };
+        }
+    } else {
+        // Too big for LCS: equal block lengths read as Changed,
+        // otherwise as Added.
+        let kind = if o.len() == n.len() { LineChange::Changed } else { LineChange::Added };
+        for i in p..new.len() - s {
+            out[i] = kind;
+        }
+    }
+    out
 }
 
 fn key_to_bytes(key: KeyEvent) -> Vec<u8> {
@@ -4310,5 +4467,45 @@ mod tests {
         assert_eq!(base64_encode(b"ab"), "YWI=");
         assert_eq!(base64_encode(b"abc"), "YWJj");
         assert_eq!(base64_encode(b"hello world"), "aGVsbG8gd29ybGQ=");
+    }
+
+    #[test]
+    fn diff_lines_marks_added_and_changed() {
+        use LineChange::*;
+        let o = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+        // Appended line.
+        let d = diff_lines(&o(&["a", "b"]), &o(&["a", "b", "c"]));
+        assert_eq!(d, vec![None, None, Added]);
+
+        // Middle line changed in place.
+        let d = diff_lines(&o(&["a", "b", "c"]), &o(&["a", "B", "c"]));
+        assert_eq!(d, vec![None, Changed, None]);
+
+        // Line inserted in the middle.
+        let d = diff_lines(&o(&["a", "c"]), &o(&["a", "b", "c"]));
+        assert_eq!(d, vec![None, Added, None]);
+
+        // Deletion leaves nothing to mark.
+        let d = diff_lines(&o(&["a", "b", "c"]), &o(&["a", "c"]));
+        assert_eq!(d, vec![None, None]);
+
+        // Two replaced by three: paired in order as two Changed
+        // lines plus one Added.
+        let d = diff_lines(&o(&["a", "x", "y", "d"]), &o(&["a", "p", "q", "r", "d"]));
+        assert_eq!(d, vec![None, Changed, Changed, Added, None]);
+
+        // Identical files.
+        let d = diff_lines(&o(&["a", "b"]), &o(&["a", "b"]));
+        assert_eq!(d, vec![None, None]);
+    }
+
+    #[test]
+    fn editing_clears_change_markers() {
+        let cfg = crate::config::Config::default();
+        let mut ed = Editor::new(None, &cfg).unwrap();
+        ed.line_changes = Some(vec![LineChange::Added]);
+        ed.save_undo();
+        assert!(ed.line_changes.is_none());
     }
 }
