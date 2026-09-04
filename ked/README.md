@@ -11,7 +11,7 @@
 
 ked is a personal vim‑like text editor that runs entirely in your
 terminal. It's a single Rust binary: modal editing, hand‑rolled syntax
-highlighting, 19 themes, animated colour effects, a fuzzy finder, a
+highlighting, 20 themes, animated colour effects, a fuzzy finder, a
 file tree, a real PTY shell, a music player, and a system dashboard —
 all in the alternate screen.
 
@@ -72,12 +72,12 @@ all in the alternate screen.
 
 ### Looks
 
-- **19 themes** — default, monokai, solarized, nord, gruvbox, bi,
-  catppuccin, tokyonight, amber, dracula, onedark, everforest,
-  rosepine, oxocarbon, ayu, kanagawa, palenight, darkplus, moonlight.
-  Palettes follow the canonical Neovim theme colours, with distinct
-  roles for keywords, functions, types, strings, constants, and
-  properties
+- **20 themes** — default, monokai, solarized, nord, gruvbox, bi,
+  blue-lagoon, catppuccin, tokyonight, amber, dracula, onedark,
+  everforest, rosepine, oxocarbon, ayu, kanagawa, palenight, darkplus,
+  moonlight. Palettes follow the canonical Neovim theme colours, with
+  distinct roles for keywords, functions, types, strings, constants,
+  and properties
 - **Theme selector** — `Ctrl+T` list with live preview, Enter applies
 - **Colour FX** — animated theme modes from the config: gentle hue
   drift, breathing lightness, or a warm amber-purple wander. Only the
@@ -108,6 +108,10 @@ Needs a recent stable Rust toolchain. macOS and Linux are first‑class.
 cargo build --release
 cp target/release/ked ~/.local/bin/        # or: cargo install --path .
 ```
+
+Or grab a prebuilt binary from
+[`ked-binaries/`](../ked-binaries) — static builds for Apple Silicon
+macOS, x86_64 Linux, and ARM Linux, with install instructions.
 
 Optional helpers:
 
@@ -220,7 +224,7 @@ The finder and file tree scan the directory you launched ked from, so
 files fall back to defaults.
 
 ```toml
-theme         = "oxocarbon"   # any of the 19 theme names
+theme         = "oxocarbon"   # any of the 20 theme names
 music_dir     = "~/Music"     # where Ctrl+M scans
 filetree_width = 30           # file-tree panel width in columns
 status_bar_top = false        # put the status bar above the buffer bar
@@ -276,7 +280,7 @@ src/
   main.rs       entry point: terminal setup, event loop, kitty protocol
   editor.rs     editor core: modes, key handling, render, undo, scrolling
   highlight.rs  tree-sitter highlighting + language detection
-  theme.rs      19 themes + HSL hue rotation for colour FX
+  theme.rs      20 themes + HSL hue rotation for colour FX
   config.rs     ~/.config/ked/config.toml loading
   finder.rs     fuzzy file finder (Ctrl+P)
   filetree.rs   file-tree panel with Nerd Font icons (Ctrl+F)

@@ -49,6 +49,7 @@ pub enum ThemeKind {
     Nord,
     Gruvbox,
     Bi,
+    BlueLagoon,
     Catppuccin,
     TokyoNight,
     Amber,
@@ -74,6 +75,7 @@ impl ThemeKind {
             ThemeKind::Nord       => nord(),
             ThemeKind::Gruvbox    => gruvbox(),
             ThemeKind::Bi         => bi(),
+            ThemeKind::BlueLagoon => blue_lagoon(),
             ThemeKind::Catppuccin => catppuccin(),
             ThemeKind::TokyoNight => tokyo_night(),
             ThemeKind::Amber      => amber(),
@@ -99,6 +101,7 @@ impl ThemeKind {
             ThemeKind::Nord       => "nord",
             ThemeKind::Gruvbox    => "gruvbox",
             ThemeKind::Bi         => "bi",
+            ThemeKind::BlueLagoon => "blue-lagoon",
             ThemeKind::Catppuccin => "catppuccin",
             ThemeKind::TokyoNight => "tokyonight",
             ThemeKind::Amber      => "amber",
@@ -124,6 +127,7 @@ impl ThemeKind {
             ThemeKind::Nord,
             ThemeKind::Gruvbox,
             ThemeKind::Bi,
+            ThemeKind::BlueLagoon,
             ThemeKind::Catppuccin,
             ThemeKind::TokyoNight,
             ThemeKind::Amber,
@@ -149,6 +153,7 @@ impl ThemeKind {
             "nord"       => Some(ThemeKind::Nord),
             "gruvbox"    => Some(ThemeKind::Gruvbox),
             "bi"         => Some(ThemeKind::Bi),
+            "bluelagoon" | "blue-lagoon" | "blue_lagoon" => Some(ThemeKind::BlueLagoon),
             "catppuccin" => Some(ThemeKind::Catppuccin),
             "tokyonight" => Some(ThemeKind::TokyoNight),
             "amber"      => Some(ThemeKind::Amber),
@@ -336,6 +341,34 @@ fn bi() -> Theme {
         property:      fg(Color::Rgb(0x68, 0xa8, 0xf8)),  // blue
         operator:      fg(Color::Rgb(0xc0, 0xa0, 0xf0)),
         punctuation:   fg(Color::Rgb(0xd4, 0xd8, 0xee)),
+    }
+}
+
+fn blue_lagoon() -> Theme {
+    // Blue Lagoon (kayden's kitty theme): baby-blue accents, mint
+    // strings, peach numbers on a deep blue-black base.
+    Theme {
+        fg:            Color::Rgb(0xe8, 0xf0, 0xf8),
+        bg:            Color::Rgb(0x0e, 0x14, 0x19),
+        selection_bg:  Color::Rgb(0x1a, 0x2a, 0x38),
+        line_number:   Style::new().fg(Color::Rgb(0x55, 0x70, 0x8c)),
+        tilde:         Style::new().fg(Color::Rgb(0x26, 0x38, 0x4a)),
+        status_bg:     Color::Rgb(0x14, 0x1e, 0x28),
+        status_fg:     Color::Rgb(0xe8, 0xf0, 0xf8),
+        keyword:       fg(Color::Rgb(0x6b, 0xa3, 0xff)),  // blue
+        builtin:       fg(Color::Rgb(0x7e, 0xcf, 0xd4)),  // teal
+        rstype:        fg(Color::Rgb(0x89, 0xcf, 0xf0)),  // baby blue
+        function:      fg(Color::Rgb(0x8b, 0xba, 0xff)),  // light blue
+        lifetime:      fg(Color::Rgb(0x7e, 0xcf, 0xd4)),
+        string:        fg(Color::Rgb(0xa8, 0xe6, 0xcf)),  // mint
+        fstring_prefix:fg_bold(Color::Rgb(0xa8, 0xe6, 0xcf)),
+        comment:       fg(Color::Rgb(0x56, 0x71, 0x8c)),  // muted slate
+        number:        fg(Color::Rgb(0xff, 0xd3, 0xb6)),  // peach
+        constant:      fg(Color::Rgb(0xff, 0xd3, 0xb6)),  // peach
+        decorator:     fg(Color::Rgb(0xc3, 0xae, 0xdb)),  // lavender
+        property:      fg(Color::Rgb(0x89, 0xcf, 0xf0)),  // baby blue
+        operator:      fg(Color::Rgb(0xb9, 0xca, 0xdb)),
+        punctuation:   fg(Color::Rgb(0x8b, 0xa0, 0xb0)),
     }
 }
 

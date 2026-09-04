@@ -6,9 +6,9 @@ use serde::Deserialize;
 #[derive(Deserialize, Default)]
 pub struct Config {
     /// Theme name (default, monokai, solarized, nord, gruvbox, bi,
-    /// catppuccin, tokyonight, amber, dracula, onedark, everforest,
-    /// rosepine, oxocarbon, ayu, kanagawa, palenight, darkplus,
-    /// moonlight).
+    /// blue-lagoon, catppuccin, tokyonight, amber, dracula, onedark,
+    /// everforest, rosepine, oxocarbon, ayu, kanagawa, palenight,
+    /// darkplus, moonlight).
     #[serde(default)]
     pub theme: String,
 

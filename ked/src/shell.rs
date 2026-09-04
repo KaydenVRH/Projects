@@ -59,7 +59,11 @@ impl ShellProcess {
                 libc::close(master);
                 libc::setsid();
 
+                // TIOCSCTTY is c_ulong on macOS but c_int on Linux.
+                #[cfg(target_os = "macos")]
                 libc::ioctl(slave, libc::TIOCSCTTY as libc::c_ulong, std::ptr::null_mut::<libc::c_int>());
+                #[cfg(not(target_os = "macos"))]
+                libc::ioctl(slave, libc::TIOCSCTTY as libc::c_int, std::ptr::null_mut::<libc::c_int>());
 
                 let mut t: libc::termios = std::mem::zeroed();
                 libc::tcgetattr(slave, &mut t);
