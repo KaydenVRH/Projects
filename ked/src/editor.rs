@@ -3369,7 +3369,7 @@ impl Editor {
             .borders(Borders::ALL)
             .title(" Shell — type exit to close ")
             .title_style(Style::new().fg(theme.fg).bg(theme.status_bg))
-            .border_style(Style::new().fg(theme.fg));
+            .border_style(Style::new().fg(theme.border));
         let inner = block.inner(popup);
         f.render_widget(block, popup);
 
@@ -3514,7 +3514,7 @@ impl Editor {
             .borders(Borders::RIGHT)
             .title(" Files ")
             .title_style(Style::new().fg(theme.comment.fg.unwrap_or(theme.fg)))
-            .border_style(Style::new().fg(theme.comment.fg.unwrap_or(theme.fg)));
+            .border_style(Style::new().fg(theme.border));
         let inner = block.inner(area);
         f.render_widget(block, area);
 
@@ -3592,7 +3592,7 @@ fn overlay_block<'a>(title: &str, frame: u64, animated: bool, theme: &Theme) -> 
         .title(scrolled_title(title, frame, animated))
         .title_alignment(Alignment::Center)
         .title_style(Style::new().fg(theme.fg).bg(theme.status_bg))
-        .border_style(Style::new().fg(theme.fg))
+        .border_style(Style::new().fg(theme.border))
 }
 
 /// Scrolling title bar text: pads with `═` and scrolls left based on
@@ -3700,6 +3700,7 @@ fn soft_shift_theme(t: &Theme, hue_offset: f64, lightness: f64) -> Theme {
         tilde: t.tilde,
         status_bg: t.status_bg,
         status_fg: t.status_fg,
+        border: t.border,
         comment: t.comment,
         operator: t.operator,
         punctuation: t.punctuation,

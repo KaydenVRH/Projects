@@ -22,6 +22,7 @@ pub struct Theme {
     pub tilde:         Style,   // "~" for empty rows past EOF
     pub status_bg:     Color,   // status bar background
     pub status_fg:     Color,   // status bar text
+    pub border:        Color,   // overlay / panel borders
 
     // ── syntax tokens ──
     pub keyword:       Style,   // `fn`, `let`, `match`, `return`, …
@@ -192,6 +193,7 @@ fn default() -> Theme {
         tilde:         Style::new().fg(Color::Rgb(0x6e, 0x6e, 0x6e)),
         status_bg:     Color::Rgb(0x1e, 0x1e, 0x1e),
         status_fg:     Color::Rgb(0xd4, 0xd4, 0xd4),
+        border:        Color::Rgb(0x6b, 0x8a, 0xa8),
         keyword:       fg(Color::Rgb(0x56, 0x9c, 0xd6)),  // blue
         builtin:       fg(Color::Rgb(0x4e, 0xc9, 0xb0)),  // teal
         rstype:        fg(Color::Rgb(0x4e, 0xc9, 0xb0)),  // teal
@@ -219,6 +221,7 @@ fn monokai() -> Theme {
         tilde:         Style::new().fg(Color::Rgb(0x3e, 0x3d, 0x32)),
         status_bg:     Color::Rgb(0x3e, 0x3d, 0x32),
         status_fg:     Color::Rgb(0xf8, 0xf8, 0xf2),
+        border:        Color::Rgb(0x8a, 0x85, 0x70),
         keyword:       fg(Color::Rgb(0xf9, 0x26, 0x72)),  // hot pink
         builtin:       fg(Color::Rgb(0xae, 0x81, 0xff)),  // purple
         rstype:        fg(Color::Rgb(0x66, 0xd9, 0xef)),  // cyan
@@ -246,6 +249,7 @@ fn solarized() -> Theme {
         tilde:         Style::new().fg(Color::Rgb(0x93, 0xa1, 0xa1)),
         status_bg:     Color::Rgb(0x07, 0x36, 0x42),
         status_fg:     Color::Rgb(0xfd, 0xf6, 0xe3),
+        border:        Color::Rgb(0x97, 0xa8, 0xaa),
         keyword:       fg(Color::Rgb(0x85, 0x99, 0x00)),  // green
         builtin:       fg(Color::Rgb(0x26, 0x8b, 0xd2)),  // blue
         rstype:        fg(Color::Rgb(0xb5, 0x89, 0x00)),  // yellow
@@ -273,6 +277,7 @@ fn nord() -> Theme {
         tilde:         Style::new().fg(Color::Rgb(0x4c, 0x56, 0x6a)),
         status_bg:     Color::Rgb(0x3b, 0x42, 0x52),
         status_fg:     Color::Rgb(0xd8, 0xde, 0xe9),
+        border:        Color::Rgb(0x6a, 0x78, 0x91),
         keyword:       fg(Color::Rgb(0x81, 0xa1, 0xc1)),  // blue
         builtin:       fg(Color::Rgb(0x88, 0xc0, 0xd0)),  // light blue
         rstype:        fg(Color::Rgb(0xeb, 0xcb, 0x8b)),  // yellow
@@ -300,6 +305,7 @@ fn gruvbox() -> Theme {
         tilde:         Style::new().fg(Color::Rgb(0x50, 0x49, 0x45)),
         status_bg:     Color::Rgb(0x50, 0x49, 0x45),
         status_fg:     Color::Rgb(0xeb, 0xdb, 0xb2),
+        border:        Color::Rgb(0x92, 0x83, 0x74),
         keyword:       fg(Color::Rgb(0xfb, 0x49, 0x34)),  // red
         builtin:       fg(Color::Rgb(0x8e, 0xc0, 0x7c)),  // green
         rstype:        fg(Color::Rgb(0xfa, 0xbd, 0x2f)),  // yellow
@@ -327,6 +333,7 @@ fn bi() -> Theme {
         tilde:         Style::new().fg(Color::Rgb(0x5a, 0x52, 0x82)),
         status_bg:     Color::Rgb(0x0e, 0x0c, 0x1a),
         status_fg:     Color::Rgb(0xc0, 0xa0, 0xf0),
+        border:        Color::Rgb(0x7a, 0x6c, 0xc4),
         keyword:       fg(Color::Rgb(0xb0, 0x80, 0xf0)),  // bright purple
         builtin:       fg(Color::Rgb(0x68, 0xa8, 0xf8)),  // vivid blue
         rstype:        fg(Color::Rgb(0xf0, 0x80, 0xc0)),  // magenta
@@ -355,6 +362,7 @@ fn blue_lagoon() -> Theme {
         tilde:         Style::new().fg(Color::Rgb(0x26, 0x38, 0x4a)),
         status_bg:     Color::Rgb(0x14, 0x1e, 0x28),
         status_fg:     Color::Rgb(0xe8, 0xf0, 0xf8),
+        border:        Color::Rgb(0x5a, 0x86, 0xb4),
         keyword:       fg(Color::Rgb(0x6b, 0xa3, 0xff)),  // blue
         builtin:       fg(Color::Rgb(0x7e, 0xcf, 0xd4)),  // teal
         rstype:        fg(Color::Rgb(0x89, 0xcf, 0xf0)),  // baby blue
@@ -382,6 +390,7 @@ fn catppuccin() -> Theme {
         tilde:         Style::new().fg(Color::Rgb(0x6c, 0x70, 0x86)),
         status_bg:     Color::Rgb(0x31, 0x32, 0x44),  // surface0
         status_fg:     Color::Rgb(0xcd, 0xd6, 0xf4),
+        border:        Color::Rgb(0x6c, 0x70, 0x86),
         keyword:       fg(Color::Rgb(0xcb, 0xa6, 0xf7)),  // mauve
         builtin:       fg(Color::Rgb(0x89, 0xb4, 0xfa)),  // blue
         rstype:        fg(Color::Rgb(0xf9, 0xe2, 0xaf)),  // yellow
@@ -409,6 +418,7 @@ fn tokyo_night() -> Theme {
         tilde:         Style::new().fg(Color::Rgb(0x56, 0x5f, 0x89)),
         status_bg:     Color::Rgb(0x2a, 0x2e, 0x3d),  // surface0
         status_fg:     Color::Rgb(0xc0, 0xca, 0xf5),
+        border:        Color::Rgb(0x56, 0x5f, 0x89),
         keyword:       fg(Color::Rgb(0xbb, 0x9a, 0xf7)),  // purple
         builtin:       fg(Color::Rgb(0x7d, 0xcf, 0xff)),  // cyan
         rstype:        fg(Color::Rgb(0x7a, 0xa2, 0xf7)),  // blue
@@ -436,6 +446,7 @@ fn amber() -> Theme {
         tilde:         Style::new().fg(Color::Rgb(0x88, 0x80, 0xa0)),
         status_bg:     Color::Rgb(0x2a, 0x24, 0x40),  // darker purple
         status_fg:     Color::Rgb(0xfb, 0xbf, 0x24),  // amber
+        border:        Color::Rgb(0x6d, 0x5b, 0x99),
         keyword:       fg(Color::Rgb(0xa8, 0x55, 0xf7)),  // purple
         builtin:       fg(Color::Rgb(0x81, 0x8c, 0xf8)),  // blue
         rstype:        fg(Color::Rgb(0x22, 0xd3, 0xee)),  // cyan
@@ -462,6 +473,7 @@ fn dracula() -> Theme {
         tilde:         Style::new().fg(Color::Rgb(0x62, 0x72, 0xa4)),
         status_bg:     Color::Rgb(0x62, 0x72, 0xa4),
         status_fg:     Color::Rgb(0xf8, 0xf8, 0xf2),
+        border:        Color::Rgb(0x62, 0x72, 0xa4),
         keyword:       fg(Color::Rgb(0xff, 0x79, 0xc6)),  // pink
         builtin:       fg(Color::Rgb(0x8b, 0xe9, 0xfd)),  // cyan
         rstype:        fg(Color::Rgb(0x8b, 0xe9, 0xfd)),  // cyan
@@ -488,6 +500,7 @@ fn one_dark() -> Theme {
         tilde:         Style::new().fg(Color::Rgb(0x5c, 0x63, 0x70)),
         status_bg:     Color::Rgb(0x28, 0x2c, 0x34),
         status_fg:     Color::Rgb(0xab, 0xb2, 0xbf),
+        border:        Color::Rgb(0x5c, 0x63, 0x70),
         keyword:       fg(Color::Rgb(0xc6, 0x78, 0xdd)),  // purple
         builtin:       fg(Color::Rgb(0x61, 0xaf, 0xef)),  // blue
         rstype:        fg(Color::Rgb(0xe5, 0xc0, 0x7b)),  // yellow
@@ -514,6 +527,7 @@ fn everforest() -> Theme {
         tilde:         Style::new().fg(Color::Rgb(0x7d, 0x83, 0x79)),
         status_bg:     Color::Rgb(0x38, 0x41, 0x48),
         status_fg:     Color::Rgb(0xd3, 0xc6, 0xaa),
+        border:        Color::Rgb(0x7d, 0x83, 0x79),
         keyword:       fg(Color::Rgb(0xe6, 0x7e, 0x80)),  // red
         builtin:       fg(Color::Rgb(0x7f, 0xbb, 0xb3)),  // teal
         rstype:        fg(Color::Rgb(0xd6, 0x99, 0x9c)),  // pink-red
@@ -540,6 +554,7 @@ fn rose_pine() -> Theme {
         tilde:         Style::new().fg(Color::Rgb(0x6f, 0x6a, 0x85)),
         status_bg:     Color::Rgb(0x26, 0x23, 0x33),
         status_fg:     Color::Rgb(0xe0, 0xde, 0xf4),
+        border:        Color::Rgb(0x6f, 0x6a, 0x85),
         keyword:       fg(Color::Rgb(0xc4, 0xa7, 0xe7)),  // iris
         builtin:       fg(Color::Rgb(0x9c, 0xcf, 0xd8)),  // foam
         rstype:        fg(Color::Rgb(0xeb, 0xbc, 0xba)),  // rose
@@ -566,6 +581,7 @@ fn oxocarbon() -> Theme {
         tilde:         Style::new().fg(Color::Rgb(0x52, 0x52, 0x52)),
         status_bg:     Color::Rgb(0x26, 0x26, 0x26),
         status_fg:     Color::Rgb(0xd2, 0xd1, 0xd2),
+        border:        Color::Rgb(0x52, 0x52, 0x52),
         keyword:       fg(Color::Rgb(0xbe, 0x95, 0xff)),  // purple
         builtin:       fg(Color::Rgb(0x33, 0xb0, 0xff)),  // blue
         rstype:        fg(Color::Rgb(0x08, 0xbd, 0xae)),  // teal
@@ -592,6 +608,7 @@ fn ayu() -> Theme {
         tilde:         Style::new().fg(Color::Rgb(0x6a, 0x67, 0x5f)),
         status_bg:     Color::Rgb(0x19, 0x19, 0x1c),
         status_fg:     Color::Rgb(0xbf, 0xba, 0xae),
+        border:        Color::Rgb(0x6a, 0x67, 0x5f),
         keyword:       fg(Color::Rgb(0xff, 0x8d, 0x52)),  // orange
         builtin:       fg(Color::Rgb(0x73, 0xb6, 0xd1)),  // blue
         rstype:        fg(Color::Rgb(0xff, 0xc6, 0x6d)),  // yellow
@@ -618,6 +635,7 @@ fn kanagawa() -> Theme {
         tilde:         Style::new().fg(Color::Rgb(0x53, 0x56, 0x5a)),
         status_bg:     Color::Rgb(0x25, 0x28, 0x2f),
         status_fg:     Color::Rgb(0xcd, 0xd0, 0xbe),
+        border:        Color::Rgb(0x53, 0x56, 0x5a),
         keyword:       fg(Color::Rgb(0xcb, 0x94, 0x8f)),  // red
         builtin:       fg(Color::Rgb(0x8e, 0xa6, 0xb0)),  // blue
         rstype:        fg(Color::Rgb(0xe6, 0xb4, 0x80)),  // yellow
@@ -645,6 +663,7 @@ fn palenight() -> Theme {
         tilde:         Style::new().fg(Color::Rgb(0x67, 0x6e, 0x95)),
         status_bg:     Color::Rgb(0x1e, 0x21, 0x30),
         status_fg:     Color::Rgb(0xbf, 0xc7, 0xd5),
+        border:        Color::Rgb(0x67, 0x6e, 0x95),
         keyword:       fg(Color::Rgb(0xc7, 0x92, 0xea)),  // purple
         builtin:       fg(Color::Rgb(0x82, 0xaa, 0xff)),  // blue
         rstype:        fg(Color::Rgb(0xff, 0xcb, 0x6b)),  // yellow
@@ -672,6 +691,7 @@ fn dark_plus() -> Theme {
         tilde:         Style::new().fg(Color::Rgb(0x6a, 0x6a, 0x6a)),
         status_bg:     Color::Rgb(0x00, 0x73, 0x3e),
         status_fg:     Color::Rgb(0xff, 0xff, 0xff),
+        border:        Color::Rgb(0x60, 0x60, 0x60),
         keyword:       fg(Color::Rgb(0x56, 0x9c, 0xd6)),  // blue
         builtin:       fg(Color::Rgb(0xdc, 0xdc, 0xaa)),  // yellow
         rstype:        fg(Color::Rgb(0x4e, 0xc9, 0xb0)),  // teal
@@ -698,6 +718,7 @@ fn moonlight() -> Theme {
         tilde:         Style::new().fg(Color::Rgb(0x63, 0x65, 0x7e)),
         status_bg:     Color::Rgb(0x19, 0x1a, 0x2a),
         status_fg:     Color::Rgb(0xc8, 0xd3, 0xf5),
+        border:        Color::Rgb(0x63, 0x65, 0x7e),
         keyword:       fg(Color::Rgb(0xc7, 0x90, 0xe8)),  // purple
         builtin:       fg(Color::Rgb(0x82, 0xaa, 0xff)),  // blue
         rstype:        fg(Color::Rgb(0xff, 0xcc, 0x66)),  // yellow
