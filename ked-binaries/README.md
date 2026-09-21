@@ -53,6 +53,10 @@ Then just run `ked` (optionally `ked some-file.rs`).
 - **Nerd Font** — prettier file-tree icons
 - A terminal with the **kitty keyboard protocol** (kitty, foot,
   wezterm, iTerm2, ghostty, …) for the `Ctrl+M` binding
+- A terminal with the **kitty graphics protocol** (kitty, ghostty,
+  wezterm, foot, …) for inline markdown images.  Pasting screenshots
+  with `:img` needs no extra tools on macOS (`osascript` is built-in)
+  and `wl-paste` (Wayland) or `xclip` (X11) on Linux
 
 ## Notes
 
