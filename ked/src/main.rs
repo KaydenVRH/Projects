@@ -5,7 +5,7 @@
 //!   - tree-sitter syntax highlighting (Rust, Python, C/C++, JS/TS,
 //!     HTML, CSS, TOML, JSON, Bash, Go, Markdown) with shebang /
 //!     filename / extension language detection
-//!   - 20 colour themes
+//!   - 21 colour themes
 //!   - Fuzzy file finder (Ctrl+P)
 //!   - Run code in buffer (Ctrl+E: .py, .rs, .c, .h, .go)
 //!   - Command mode (:w, :q, :q!, :wq, :theme ...)
@@ -21,6 +21,7 @@ mod config;
 mod editor;
 mod filetree;
 mod finder;
+mod graphics;
 mod highlight;
 mod music;
 mod shell;
@@ -62,7 +63,6 @@ fn main() -> Result<()> {
     execute!(stdout, EnableBracketedPaste)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    terminal.clear()?;
 
     // ---- panic hook: restore terminal even on crashes ----
     let prev_hook = std::panic::take_hook();
@@ -79,6 +79,11 @@ fn main() -> Result<()> {
     // ---- load config + editor initialisation ----
     let config = config::Config::load();
     let mut editor = editor::Editor::new(filename, &config)?;
+    // Probe the terminal for kitty-graphics support (inline images).
+    // Do this before the first clear: non-supporting terminals may
+    // echo the probe bytes, and `terminal.clear()` wipes that.
+    editor.set_graphics(graphics::detect());
+    terminal.clear()?;
 
     // ---- main event loop ----
     loop {
@@ -94,6 +99,9 @@ fn main() -> Result<()> {
         // at the final editor position at the end of draw().
         terminal.hide_cursor()?;
         terminal.draw(|f| editor.render(f))?;
+        // Flush kitty-graphics placements queued during render, then
+        // restore the cursor (the placement commands move it around).
+        editor.flush_graphics()?;
         // Apply cursor style set by render
         let _ = execute!(io::stdout(), editor.cursor_style);
 
@@ -126,6 +134,8 @@ fn main() -> Result<()> {
     // ---- stop music and shell before cleanup ----
     editor.music_player.stop();
     editor.kill_shell();
+    // Remove any inline images from the terminal.
+    editor.clear_graphics();
 
     // ---- cleanup ----
     disable_raw_mode()?;

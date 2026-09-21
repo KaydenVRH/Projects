@@ -25,7 +25,10 @@
 
 use std::{
     cmp::min,
+    collections::{HashMap, HashSet},
     fs,
+    io::{self, Write},
+    path::{Path, PathBuf},
     process::Command as ProcCmd,
     time::{Instant, SystemTime},
 };
@@ -38,7 +41,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Position, Rect},
     style::{Color, Style, Modifier},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 
 use crate::highlight;
@@ -98,6 +101,20 @@ pub enum LineChange {
     None,
     Added,
     Changed,
+}
+
+/// One rendered block of the markdown preview, with the source-line
+/// range it came from (for scroll-following the cursor).
+pub struct MdChunk {
+    src_start: usize,
+    lines: Vec<Line<'static>>,
+}
+
+/// The cached preview: either our own chunked render (with source
+/// mapping) or glow's ANSI output (flattened lines).
+pub enum PreviewRendered {
+    Chunks(Vec<MdChunk>),
+    Lines(Vec<Line<'static>>),
 }
 
 /// Per‑buffer state that gets swapped when the user switches tabs.
@@ -168,6 +185,14 @@ pub struct Editor {
     /// When the last external reload happened (markers fade out).
     pub change_age: Instant,
 
+    // ── markdown preview pane (Ctrl+V) ──
+    pub preview: bool,
+    /// Cached preview render, keyed by content hash (and pane width
+    /// for glow output).
+    pub preview_cache: Option<(u64, PreviewRendered)>,
+    /// Is the `glow` CLI available?  Checked once, lazily.
+    pub glow_available: Option<bool>,
+
     // ── syntax highlighter (tree-sitter, re-parsed on edits) ──
     pub highlight: Option<highlight::Highlighter>,
 
@@ -179,6 +204,20 @@ pub struct Editor {
 
     // ── file tree (Ctrl+F) ──
     pub filetree: FileTree,
+
+    // ── markdown inline images (kitty graphics protocol) ──
+    pub graphics: crate::graphics::KittyGraphics,
+    /// Render `![alt](path)` references as real images in the buffer.
+    pub inline_images: bool,
+    /// Currently placed (key → rect on screen) images.
+    placed_images: HashMap<u32, (u16, u16, u16, u16)>,
+    /// Images whose bytes were already transmitted this session.
+    transmitted_images: HashSet<u32>,
+    /// Kitty-graphics escape bytes queued by render(), flushed after
+    /// the frame is drawn.
+    graphics_out: Vec<u8>,
+    /// Screen position of the editor cursor from the last frame.
+    cursor_screen: Option<(u16, u16)>,
 
     // ── run output ──
     pub run_output: String,
@@ -302,12 +341,21 @@ impl Editor {
             last_search: None,
             line_changes: None,
             change_age: Instant::now(),
+            preview: false,
+            preview_cache: None,
+            glow_available: None,
             highlight: None,
             finder: Finder::new(),
             finder_query: String::new(),
             finder_selection: 0,
             finder_scroll: 0,
             filetree: FileTree::new(),
+            graphics: crate::graphics::KittyGraphics::unsupported(),
+            inline_images: cfg.inline_images,
+            placed_images: HashMap::new(),
+            transmitted_images: HashSet::new(),
+            graphics_out: Vec::new(),
+            cursor_screen: None,
             run_output: String::new(),
             music_player: MusicPlayer::new(),
             filename,
@@ -517,13 +565,24 @@ impl Editor {
         // Global keybindings that work in both normal and insert modes
         // (and also visual mode, via the fall-through above):
         // Ctrl+P = finder, Ctrl+E = run, Ctrl+S = save, Ctrl+C = quit.
+        // Ctrl+Shift+V = paste the clipboard image as markdown.
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && key.modifiers.contains(KeyModifiers::SHIFT)
+            && matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V'))
+        {
+            let _ = self.paste_clipboard_image();
+            return true;
+        }
         if key.modifiers == KeyModifiers::CONTROL {
             match key.code {
                 KeyCode::Char('p') => {
                     self.state = State::Finder;
                     self.finder_query.clear();
                     self.finder_selection = 0;
-                    self.finder.collect_files();
+                    self.finder_scroll = 0;
+                    // Walk the tree in the background so the UI stays
+                    // responsive in big directories.
+                    self.finder.start_scan();
                     self.finder.search("");
                     return true;
                 }
@@ -571,6 +630,20 @@ impl Editor {
                         return true;
                     }
                     return false;
+                }
+                KeyCode::Char('v') => {
+                    // Toggle the markdown preview pane.
+                    if highlight::detect_lang(
+                        self.filename.as_deref(),
+                        self.lines.first().map(|s| s.as_str()),
+                    ) == highlight::Lang::Markdown
+                    {
+                        self.preview = !self.preview;
+                        self.preview_cache = None;
+                    } else {
+                        self.flash = Some("preview: not a markdown file".to_string());
+                    }
+                    return true;
                 }
                 KeyCode::Char('k') => {
                     self.state = State::Help;
@@ -1587,6 +1660,15 @@ impl Editor {
     /// file if it changed on disk (only when there are no unsaved edits).
     pub fn tick(&mut self) {
         self.music_player.poll();
+        // When the background file scan finishes, re-run the current
+        // query so results appear without another keypress.
+        if self.finder.poll() {
+            let query = self.finder_query.clone();
+            self.finder.search(&query);
+            // Results may have shrunk: keep the selection in range.
+            let max = self.finder.results.len().saturating_sub(1);
+            self.finder_selection = min(self.finder_selection, max);
+        }
         self.auto_reload();
         // Non-blocking system stats: poll completed task or spawn a
         // new one (only while the dashboard is open).
@@ -1846,6 +1928,12 @@ impl Editor {
                     self.flash = Some(format!("Unknown theme: {name}"));
                 }
             }
+            // :img — paste the clipboard image into the buffer
+            "img" | "image" => {
+                if let Err(e) = self.paste_clipboard_image() {
+                    self.flash = Some(format!("img: {e}"));
+                }
+            }
             // :wq! — save and force close
             "wq!" => {
                 let fname = self.filename.clone().unwrap_or_default();
@@ -2030,6 +2118,34 @@ impl Editor {
     //  Scroll helpers
     // ═══════════════════════════════════════════════════════════════
 
+    /// Absolute byte offset of a line's start within the joined
+    /// highlighter source (`lines.join("\n")`).
+    fn md_line_start(&self, line: usize) -> usize {
+        self.lines[..line.min(self.lines.len())]
+            .iter()
+            .map(|l| l.len() + 1)
+            .sum()
+    }
+
+    /// Visual column (terminal cells) of a line-relative byte offset
+    /// on the current line, accounting for concealed markdown
+    /// characters (which are revealed under the cursor).
+    fn display_col(&self, byte: usize) -> usize {
+        if let Some(h) = &self.highlight {
+            if let Some(segs) = h.md_line(self.cy) {
+                if !segs.is_empty() {
+                    let abs = self.md_line_start(self.cy) + byte;
+                    let effective = md_cursor_segs(segs, abs);
+                    return md_segs_col(&effective, abs);
+                }
+                // Blank line: no segments — fall through to raw width.
+            }
+        }
+        let line = &self.lines[self.cy];
+        let b = line.floor_char_boundary(byte.min(line.len()));
+        col_width(&line[..b])
+    }
+
     /// Clamp `top` and `left` so the cursor stays visible.
     ///
     /// Horizontal math is done in terminal *cells* (not bytes): `cx`
@@ -2061,12 +2177,25 @@ impl Editor {
         let line = &self.lines[self.cy];
         let left = line.floor_char_boundary(self.left.min(line.len()));
         let cx = line.floor_char_boundary(self.cx.min(line.len()));
-        let left_col = col_width(&line[..left]);
-        let cx_col = col_width(&line[..cx]);
+        let left_col = self.display_col(left);
+        let cx_col = self.display_col(cx);
         if cx_col < left_col {
             self.left = cx;
         } else if cx_col >= left_col + visible_cols {
-            self.left = byte_at_col(line, cx_col.saturating_sub(visible_cols) + 1);
+            let target = cx_col.saturating_sub(visible_cols) + 1;
+            self.left = if let Some(segs) =
+                self.highlight.as_ref().and_then(|h| h.md_line(self.cy))
+            {
+                if segs.is_empty() {
+                    byte_at_col(line, target)
+                } else {
+                    let abs = self.md_line_start(self.cy) + self.cx;
+                    let effective = md_cursor_segs(segs, abs);
+                    md_segs_byte_at_col(&effective, target)
+                }
+            } else {
+                byte_at_col(line, target)
+            };
         }
     }
 
@@ -2076,25 +2205,53 @@ impl Editor {
         if total == 0 { 1 } else { total.to_string().len().max(2) }
     }
 
-    /// Advance `cx` one full UTF‑8 character to the right (or to end of line).
+    /// Advance `cx` one full UTF-8 character to the right (or to end of line).
+    /// On markdown lines, concealed marker runs are skipped as a unit
+    /// so the cursor never sticks inside hidden text.
     fn right_cx(&self) -> usize {
         let line = &self.lines[self.cy];
         if self.cx >= line.len() { return self.cx; }
         let pos = if line.is_char_boundary(self.cx) { self.cx } else { line.floor_char_boundary(self.cx) };
         let ch = line[pos..].chars().next().unwrap();
-        (pos + ch.len_utf8()).min(line.len())
+        let next = (pos + ch.len_utf8()).min(line.len());
+        self.skip_concealed_right(next)
     }
 
-    /// Retreat `cx` one full UTF‑8 character to the left (or to column 0).
+    /// Retreat `cx` one full UTF-8 character to the left (or to column 0).
     fn left_cx(&self) -> usize {
         if self.cx == 0 { return 0; }
         let line = &self.lines[self.cy];
         let pos = if line.is_char_boundary(self.cx) { self.cx } else { line.floor_char_boundary(self.cx) };
         if let Some(ch) = line[..pos].chars().next_back() {
-            pos - ch.len_utf8()
+            let next = pos - ch.len_utf8();
+            self.skip_concealed_left(next)
         } else {
             0
         }
+    }
+
+    /// If `next` lands strictly inside a concealed (width-changing)
+    /// markdown segment, jump past it instead.
+    fn skip_concealed_right(&self, next: usize) -> usize {
+        if let Some(segs) = self.highlight.as_ref().and_then(|h| h.md_line(self.cy)) {
+            for s in segs {
+                if s.display != s.raw && s.start < next && next < s.end {
+                    return s.end;
+                }
+            }
+        }
+        next
+    }
+
+    fn skip_concealed_left(&self, next: usize) -> usize {
+        if let Some(segs) = self.highlight.as_ref().and_then(|h| h.md_line(self.cy)) {
+            for s in segs {
+                if s.display != s.raw && s.start < next && next < s.end {
+                    return s.start;
+                }
+            }
+        }
+        next
     }
 
     /// Height of the terminal (from the last rendered frame or default).
@@ -2298,6 +2455,145 @@ impl Editor {
         }
     }
 
+    // ── markdown inline images (kitty graphics protocol) ───────
+
+    /// Install the terminal's graphics capability info (probed in
+    /// `main.rs` at startup).
+    pub fn set_graphics(&mut self, g: crate::graphics::KittyGraphics) {
+        self.graphics = g;
+    }
+
+    /// Diff the desired image placements against what's currently on
+    /// screen and queue transmit/place/delete escapes for `main.rs`
+    /// to flush after the frame is drawn.
+    fn queue_md_images(
+        &mut self,
+        images: &[crate::graphics::PlacedImage],
+        area: Rect,
+        gutter: usize,
+    ) {
+        let mut desired: Vec<(u32, (u16, u16, u16, u16))> = Vec::new();
+        for im in images {
+            let row = im.line.saturating_sub(self.top) as u16;
+            if row >= area.height {
+                continue;
+            }
+            let cols = im.cols.min(area.width.saturating_sub(gutter as u16));
+            let rows = im.rows.min(area.height.saturating_sub(row));
+            if cols < 4 || rows < 1 {
+                continue;
+            }
+            desired.push((im.key, (area.x + gutter as u16, area.y + row, cols, rows)));
+        }
+
+        let mut out: Vec<u8> = Vec::new();
+        for (key, rect) in &desired {
+            let need_place = match self.placed_images.get(key) {
+                Some(old) if old == rect => false,
+                _ => true,
+            };
+            if !need_place {
+                continue;
+            }
+            if let Some(old) = self.placed_images.remove(key) {
+                let _ = old;
+                crate::graphics::delete_cmd(*key, &mut out);
+            }
+            if !self.transmitted_images.contains(key) {
+                if let Some(im) = images.iter().find(|im| im.key == *key) {
+                    if let Ok(bytes) = fs::read(&im.path) {
+                        crate::graphics::transmit_cmd(*key, &bytes, &mut out);
+                        self.transmitted_images.insert(*key);
+                    }
+                }
+            }
+            if self.transmitted_images.contains(key) {
+                crate::graphics::place_cmd(
+                    *key,
+                    rect.0,
+                    rect.1,
+                    rect.2,
+                    rect.3,
+                    &mut out,
+                );
+            }
+        }
+        // Delete images that scrolled out of view.
+        for key in self.placed_images.keys() {
+            if !desired.iter().any(|(k, _)| k == key) {
+                crate::graphics::delete_cmd(*key, &mut out);
+            }
+        }
+        self.placed_images = desired.into_iter().collect();
+
+        // Restore the editor cursor afterwards (placement moves it).
+        if !out.is_empty() {
+            if let Some((cx, cy)) = self.cursor_screen {
+                out.extend_from_slice(format!("\x1b[{};{}H", cy + 1, cx + 1).as_bytes());
+            }
+        }
+        self.graphics_out = out;
+    }
+
+    /// Write the queued kitty-graphics escapes to the terminal and
+    /// restore the editor cursor.  Called after each frame is drawn.
+    pub fn flush_graphics(&mut self) -> io::Result<()> {
+        if self.graphics_out.is_empty() {
+            return Ok(());
+        }
+        let mut out = io::stdout();
+        out.write_all(&self.graphics_out)?;
+        out.flush()?;
+        self.graphics_out.clear();
+        Ok(())
+    }
+
+    /// Remove every inline image from the terminal (called on exit).
+    pub fn clear_graphics(&mut self) {
+        if !self.graphics.supported {
+            return;
+        }
+        let mut out = Vec::new();
+        crate::graphics::delete_all_cmd(&mut out);
+        let _ = io::stdout().write_all(&out);
+        let _ = io::stdout().flush();
+        self.placed_images.clear();
+        self.transmitted_images.clear();
+    }
+
+    /// Paste the clipboard image into the buffer as a markdown
+    /// reference (`![](img-<stamp>.png)`), saving the PNG next to the
+    /// current file.
+    pub fn paste_clipboard_image(&mut self) -> Result<(), String> {
+        let bytes =
+            crate::graphics::clipboard_image_png().ok_or("clipboard holds no image")?;
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+        let name = format!("img-{stamp}.png");
+        let dir = self
+            .filename
+            .as_deref()
+            .and_then(|f| Path::new(f).parent())
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| {
+                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+            });
+        let path = dir.join(&name);
+        fs::write(&path, &bytes).map_err(|e| format!("can't write {}: {e}", path.display()))?;
+
+        let alt = name.trim_end_matches(".png");
+        let md = format!("![{alt}]({name})");
+        self.save_undo();
+        let line = &mut self.lines[self.cy];
+        let pos = line.floor_char_boundary(self.cx);
+        line.insert_str(pos, &md);
+        self.cx = pos + md.len();
+        self.modified = true;
+        self.clamp_scroll();
+        self.flash = Some(format!("Pasted image as {name}"));
+        Ok(())
+    }
+
     // ── visual mode helpers ─────────────────────────────────────
 
     /// Return the text within the current selection.
@@ -2403,6 +2699,23 @@ impl Editor {
             (content_area, None)
         };
 
+        // Markdown preview pane (Ctrl+V): splits the remaining editor
+        // area, leaving the editor fully editable.
+        let is_markdown = highlight::detect_lang(
+            self.filename.as_deref(),
+            self.lines.first().map(|s| s.as_str()),
+        ) == highlight::Lang::Markdown;
+        let (editor_area, preview_area) = if self.preview && is_markdown {
+            let [e, pv] = Layout::horizontal([
+                Constraint::Min(1),
+                Constraint::Percentage(45),
+            ])
+            .areas(editor_area);
+            (e, Some(pv))
+        } else {
+            (editor_area, None)
+        };
+
         // ── 1. main content / splash ────────────────────────────
         let mut theme = self.theme.theme();
         // Search matches get an extra "glow" while an fx mode is on:
@@ -2470,6 +2783,23 @@ impl Editor {
         let visible_lines = editor_area.height as usize;
         let visible_content_cols = editor_area.width.saturating_sub(gutter as u16) as usize;
 
+        // Inline images (kitty graphics protocol): find the markdown
+        // references in view and the cell rectangle each occupies.
+        let md_images = if self.inline_images && self.graphics.supported && is_markdown {
+            crate::graphics::visible_images(
+                &self.lines,
+                self.cy,
+                self.top,
+                visible_lines,
+                self.filename.as_deref().and_then(|f| Path::new(f).parent()),
+                visible_content_cols as u16,
+                &self.graphics,
+                self.mode == Mode::Insert,
+            )
+        } else {
+            Vec::new()
+        };
+
         for row in 0..visible_lines {
             let buf_row = self.top + row;
             let style = Style::new().fg(theme.fg).bg(theme.bg);
@@ -2487,15 +2817,53 @@ impl Editor {
                 continue;
             }
 
+            // A row covered by an inline image: leave the cells blank;
+            // the image itself is placed after the frame is painted.
+            if md_images
+                .iter()
+                .any(|im| buf_row >= im.line && buf_row < im.line + im.rows as usize)
+            {
+                lines_vec.push(
+                    Line::from(vec![
+                        Span::styled(
+                            format!("{:>width$}│", buf_row + 1, width = gutter - 1),
+                            theme.line_number,
+                        ),
+                        Span::raw(" ".repeat(visible_content_cols)),
+                    ])
+                    .style(line_style),
+                );
+                continue;
+            }
+
             // (a) line number gutter
             let line_num = format!("{:>width$}│", buf_row + 1, width = gutter - 1);
             let num_span = Span::styled(line_num, theme.line_number);
 
-            // (b) highlighted content (tree-sitter, cached per edit)
+            // (b) highlighted content (tree-sitter, cached per edit).
+            // Markdown lines render from concealed display segments;
+            // on the cursor line, markers under the cursor are
+            // revealed.
             let raw = &self.lines[buf_row];
-            let highlighted = match &self.highlight {
-                Some(h) => h.spans(buf_row, &theme),
-                None => vec![Span::styled(raw.to_string(), style)],
+            let md_segs: Option<Vec<highlight::MdSeg>> = self
+                .highlight
+                .as_ref()
+                .and_then(|h| h.md_line(buf_row))
+                .map(|s| s.to_vec());
+            let md_segs = match &md_segs {
+                Some(segs) if buf_row == self.cy => {
+                    let abs = self.md_line_start(buf_row) + self.cx;
+                    Some(md_cursor_segs(segs, abs))
+                }
+                other => other.clone(),
+            };
+            let highlighted = if let Some(segs) = &md_segs {
+                md_seg_spans(segs, &theme)
+            } else {
+                match &self.highlight {
+                    Some(h) => h.spans(buf_row, &theme),
+                    None => vec![Span::styled(raw.to_string(), style)],
+                }
             };
 
             // Build the line: gutter + content, with search-match
@@ -2542,9 +2910,23 @@ impl Editor {
             if let Some((sy, ey, sx, ex)) = sel_bounds {
                 if buf_row >= sy && buf_row <= ey {
                     let fully = buf_row > sy && buf_row < ey;
-                    let sel_start = if buf_row == sy { sx } else { 0 };
-                    let sel_end = if buf_row == ey { ex } else { raw.len() };
-                    if fully || (sel_start <= 0 && sel_end >= raw.len()) {
+                    // On concealed markdown lines the selection edges
+                    // are display-space offsets.
+                    let (sel_start, sel_end, full_len) = if let Some(segs) = &md_segs {
+                        let total: usize = segs.iter().map(|s| s.display.len()).sum();
+                        (
+                            if buf_row == sy { md_segs_display_byte(segs, sx) } else { 0 },
+                            if buf_row == ey { md_segs_display_byte(segs, ex) } else { total },
+                            total,
+                        )
+                    } else {
+                        (
+                            if buf_row == sy { sx } else { 0 },
+                            if buf_row == ey { ex } else { raw.len() },
+                            raw.len(),
+                        )
+                    };
+                    if fully || (sel_start <= 0 && sel_end >= full_len) {
                         // Entire content row selected — paint every span.
                         for span in spans.iter_mut().skip(1) {
                             span.style = span.style.patch(
@@ -2596,9 +2978,20 @@ impl Editor {
 
             // Clip content spans to the visible horizontal window
             // (in terminal cells), expanding tabs to spaces so the
-            // frame never desynchronises.
-            let mut line_spans =
-                visible_spans(raw, spans, self.left, visible_content_cols);
+            // frame never desynchronises.  Markdown lines clip their
+            // concealed display spans by cell directly.
+            let mut line_spans = if let Some(segs) = &md_segs {
+                let left_col = md_segs_col(segs, self.md_line_start(buf_row) + self.left);
+                let mut v = vec![spans[0].clone()];
+                v.extend(clip_spans_cells(
+                    spans[1..].to_vec(),
+                    left_col,
+                    visible_content_cols,
+                ));
+                v
+            } else {
+                visible_spans(raw, spans, self.left, visible_content_cols)
+            };
             // Right-gutter marker for externally changed lines.
             decorate_change_marker(
                 &mut line_spans,
@@ -2621,6 +3014,8 @@ impl Editor {
         let paragraph = Paragraph::new(content)
             .style(Style::new().bg(theme.bg));
         f.render_widget(paragraph, editor_area);
+        // Queue kitty-graphics placements for the images blanked above.
+        self.queue_md_images(&md_images, editor_area, gutter);
         } // end else (normal content)
 
         // ── 2. buffer bar ──────────────────────────────────────────
@@ -2631,26 +3026,33 @@ impl Editor {
 
         // ── 4. cursor position ───────────────────────────────────
         if is_splash {
+            self.cursor_screen = Some((0, 0));
             f.set_cursor_position(Position::new(0, 0));
         } else if let Some(gutter) = self.gutter_width().checked_add(1) {
             let cy_screen = (self.cy.saturating_sub(self.top)) as u16;
             // Cursor column in cells: convert byte offsets through
-            // visual widths so wide chars / tabs don't push the
-            // cursor off its column.
+            // visual widths (concealed markdown chars contribute
+            // nothing) so the cursor always sits on its character.
             let line = &self.lines[self.cy];
             let cx = line.floor_char_boundary(self.cx.min(line.len()));
             let left = line.floor_char_boundary(self.left.min(line.len()));
-            let cx_screen = col_width(&line[..cx])
-                .saturating_sub(col_width(&line[..left])) as u16
+            let cx_screen = self
+                .display_col(cx)
+                .saturating_sub(self.display_col(left)) as u16
                 + gutter as u16;
             if cy_screen < editor_area.height {
                 let cursor_x = editor_area.x + cx_screen;
                 let cursor_y = editor_area.y + cy_screen;
+                self.cursor_screen = Some((cursor_x, cursor_y));
                 f.set_cursor_position(Position::new(cursor_x, cursor_y));
             }
         }
 
         // ── 4. overlays ──────────────────────────────────────────
+        // The preview pane draws under popups but over the editor.
+        if let Some(pv) = preview_area {
+            self.render_preview(f, pv, &theme);
+        }
         match self.state {
             State::Command if !self.cmd_buf.is_empty() => {
                 // Command is shown in the status bar already;
@@ -2916,12 +3318,21 @@ impl Editor {
         .areas(inner);
 
         // Query bar (status-bar style line) + navigation hint.
-        let query_text = if self.finder_query.is_empty() {
+        let query_text = if self.finder.scanning && self.finder.files.is_empty() {
+            " scanning…".to_string()
+        } else if self.finder_query.is_empty() {
             " type to search…".to_string()
         } else {
             format!(" {}", self.finder_query)
         };
-        let hint = " ↑↓/Ctrl+N/P move · Enter open · Esc close ";
+        let hint = if self.finder.scanning {
+            " scanning files… ".to_string()
+        } else {
+            format!(
+                " {} files · ↑↓/Ctrl+N/P · Enter · Esc ",
+                self.finder.files.len()
+            )
+        };
         let [q_area, hint_area] = Layout::horizontal([
             Constraint::Min(1),
             Constraint::Length(hint.chars().count() as u16),
@@ -2947,7 +3358,6 @@ impl Editor {
             hint_area,
         );
 
-        let total = self.finder.results.len();
         let visible_h = list_area.height as usize;
 
         // Auto-scroll
@@ -2967,20 +3377,33 @@ impl Editor {
             .skip(self.finder_scroll)
             .take(visible_h)
             .map(|(i, (path, _score))| {
-                let style = if i == self.finder_selection {
-                    Style::new()
-                        .fg(theme.status_bg)
-                        .bg(theme.status_fg)
-                } else {
-                    Style::new().fg(theme.fg).bg(theme.bg)
-                };
-                ListItem::new(Line::from(Span::styled(path.clone(), style)))
+                if i == self.finder_selection {
+                    return ListItem::new(Line::from(Span::styled(
+                        path.clone(),
+                        selected_style(theme),
+                    )));
+                }
+                // Directory dim, file name bright.
+                let split = path.rfind('/').map(|p| p + 1).unwrap_or(0);
+                let (dir, name) = path.split_at(split);
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        dir.to_string(),
+                        Style::new().fg(theme.comment.fg.unwrap_or(theme.fg)).bg(theme.bg),
+                    ),
+                    Span::styled(name.to_string(), Style::new().fg(theme.fg).bg(theme.bg)),
+                ]))
             })
             .collect();
 
         if results.is_empty() {
+            let msg = if self.finder.scanning && self.finder.files.is_empty() {
+                " scanning…"
+            } else {
+                " (no files found)"
+            };
             let no_files = vec![ListItem::new(Line::from(Span::styled(
-                if total == 0 { " (no files found)" } else { "" },
+                msg,
                 Style::new().fg(theme.fg).bg(theme.bg),
             )))];
             f.render_widget(
@@ -3060,9 +3483,7 @@ impl Editor {
                 let is_playing = self.music_player.playing
                     && self.music_player.current_index == i;
                 let style = if i == self.music_player.selected {
-                    Style::new()
-                        .fg(theme.status_bg)
-                        .bg(theme.status_fg)
+                    selected_style(theme)
                 } else if is_playing {
                     Style::new()
                         .fg(theme.fg)
@@ -3132,9 +3553,7 @@ impl Editor {
                 let name = t.name();
                 let is_current = *t == self.theme;
                 let style = if i == self.theme_selected {
-                    Style::new()
-                        .fg(theme.status_bg)
-                        .bg(theme.status_fg)
+                    selected_style(theme)
                 } else if is_current {
                     Style::new()
                         .fg(theme.fg)
@@ -3322,7 +3741,7 @@ impl Editor {
             Line::from(""),
             Line::from(Span::styled("Tools", theme.keyword)),
             Line::from("  Ctrl+E run   Ctrl+M music   Ctrl+T theme   Ctrl+J shell"),
-            Line::from("  :sys dashboard   :theme <n> switch theme"),
+            Line::from("  Ctrl+V md preview   :sys dashboard   :theme <n> theme"),
             Line::from(""),
             Line::from(Span::styled("Commands", theme.keyword)),
             Line::from("  / search   n/N repeat   :w/:wq save   :q/:q! quit"),
@@ -3507,6 +3926,123 @@ impl Editor {
         f.render_widget(paragraph, area);
     }
 
+    // ── markdown preview pane (Ctrl+V) ──────────────────────────
+
+    /// Render the live markdown preview pane: our own tree-sitter-md
+    /// renderer, or `glow` when it's installed.  Follows the cursor.
+    fn render_preview(&mut self, f: &mut Frame, area: Rect, theme: &Theme) {
+        let block = Block::default()
+            .borders(Borders::LEFT)
+            .title(" Preview ")
+            .title_style(Style::new().fg(theme.comment.fg.unwrap_or(theme.fg)))
+            .border_style(Style::new().fg(theme.border));
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+        if inner.width < 3 || inner.height < 1 {
+            return;
+        }
+
+        let hash = hash_lines(&self.lines) ^ ((inner.width as u64) << 32);
+        let stale = match &self.preview_cache {
+            Some((h, _)) => *h != hash,
+            None => true,
+        };
+        if stale {
+            let rendered = if self.glow_installed() {
+                PreviewRendered::Lines(self.render_with_glow())
+            } else {
+                PreviewRendered::Chunks(render_markdown(&self.lines, theme))
+            };
+            self.preview_cache = Some((hash, rendered));
+        }
+
+        match self.preview_cache.as_ref().map(|(_, r)| r) {
+            Some(PreviewRendered::Chunks(chunks)) => {
+                // Flatten, attributing each display line to the source
+                // line of its chunk, then follow the cursor.
+                let mut display: Vec<Line> = Vec::new();
+                let mut srcs: Vec<usize> = Vec::new();
+                for ch in chunks {
+                    for l in &ch.lines {
+                        display.push(l.clone());
+                        srcs.push(ch.src_start);
+                    }
+                }
+                let target = srcs.iter().rposition(|s| *s <= self.cy).unwrap_or(0);
+                let scroll = target.saturating_sub(inner.height as usize / 3);
+                f.render_widget(
+                    Paragraph::new(Text::from(display))
+                        .wrap(Wrap { trim: false })
+                        .scroll((scroll as u16, 0))
+                        .style(Style::new().bg(theme.bg)),
+                    inner,
+                );
+            }
+            Some(PreviewRendered::Lines(lines)) => {
+                // glow output has no source mapping — scroll
+                // proportionally through the document.
+                let frac = if self.lines.len() > 1 {
+                    self.cy as f64 / (self.lines.len() - 1) as f64
+                } else {
+                    0.0
+                };
+                let max_scroll = lines.len().saturating_sub(inner.height as usize);
+                let scroll = (frac * max_scroll as f64) as u16;
+                f.render_widget(
+                    Paragraph::new(Text::from(lines.clone()))
+                        .wrap(Wrap { trim: false })
+                        .scroll((scroll, 0))
+                        .style(Style::new().bg(theme.bg)),
+                    inner,
+                );
+            }
+            None => {}
+        }
+    }
+
+    /// Is the `glow` CLI installed?  Checked once per session.
+    fn glow_installed(&mut self) -> bool {
+        if let Some(v) = self.glow_available {
+            return v;
+        }
+        let ok = std::process::Command::new("glow")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        self.glow_available = Some(ok);
+        ok
+    }
+
+    /// Render the buffer through the `glow` CLI.
+    fn render_with_glow(&self) -> Vec<Line<'static>> {
+        use std::io::Write;
+        let default_style = Style::new().fg(self.theme.theme().fg);
+        let result = std::process::Command::new("glow")
+            .args(["-s", "dark", "-w", "80", "-"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .and_then(|mut child| {
+                child
+                    .stdin
+                    .as_mut()
+                    .unwrap()
+                    .write_all(self.lines.join("\n").as_bytes())?;
+                child.wait_with_output()
+            });
+        match result {
+            Ok(out) => {
+                let text = String::from_utf8_lossy(&out.stdout).to_string();
+                crate::shell::ansi_to_lines(&text, default_style)
+            }
+            Err(_) => Vec::new(),
+        }
+    }
+
     // ── file tree panel ─────────────────────────────────────────
 
     fn render_filetree(&mut self, f: &mut Frame, area: Rect, theme: &Theme) {
@@ -3547,16 +4083,32 @@ impl Editor {
                     "  "
                 };
                 let icon = ft_icon(&entry.path, entry.is_dir);
-                let indent = "  ".repeat(entry.depth);
-                let label = format!("{indent}{prefix}{icon} {}", entry.name);
-                let style = if i == selected {
-                    Style::new().fg(theme.status_bg).bg(theme.status_fg)
-                } else if entry.is_dir {
-                    Style::new().fg(theme.function.fg.unwrap_or(theme.fg))
+                if i == selected {
+                    let indent = "  ".repeat(entry.depth);
+                    let label = format!("{indent}{prefix}{icon} {}", entry.name);
+                    return ListItem::new(Line::from(Span::styled(
+                        label,
+                        selected_style(theme),
+                    )));
+                }
+                let dim = Style::new().fg(theme.comment.fg.unwrap_or(theme.fg)).bg(theme.bg);
+                let is_open = self.filename.as_deref() == Some(entry.path.as_str());
+                let name_style = if entry.is_dir {
+                    Style::new()
+                        .fg(theme.keyword.fg.unwrap_or(theme.fg))
+                        .bg(theme.bg)
+                        .add_modifier(Modifier::BOLD)
+                } else if is_open {
+                    Style::new().fg(theme.builtin.fg.unwrap_or(theme.fg)).bg(theme.bg)
                 } else {
-                    Style::new().fg(theme.fg)
+                    Style::new().fg(theme.fg).bg(theme.bg)
                 };
-                ListItem::new(Line::from(Span::styled(label, style)))
+                ListItem::new(Line::from(vec![
+                    Span::styled("  ".repeat(entry.depth), dim),
+                    Span::styled(prefix.to_string(), dim),
+                    Span::styled(format!("{icon} "), dim),
+                    Span::styled(entry.name.clone(), name_style),
+                ]))
             })
             .collect();
 
@@ -3593,6 +4145,16 @@ fn overlay_block<'a>(title: &str, frame: u64, animated: bool, theme: &Theme) -> 
         .title_alignment(Alignment::Center)
         .title_style(Style::new().fg(theme.fg).bg(theme.status_bg))
         .border_style(Style::new().fg(theme.border))
+}
+
+/// The accent "selected row" style used by every list in the editor —
+/// dark text on the theme's accent, matching the status-bar mode
+/// block.
+fn selected_style(theme: &Theme) -> Style {
+    Style::new()
+        .fg(Color::Rgb(0x1a, 0x1a, 0x1a))
+        .bg(theme.keyword.fg.unwrap_or(theme.status_fg))
+        .add_modifier(Modifier::BOLD)
 }
 
 /// Scrolling title bar text: pads with `═` and scrolls left based on
@@ -3992,6 +4554,454 @@ fn decorate_change_marker(
     let bg = line_style.bg.unwrap_or(Color::Reset);
     spans.push(Span::styled(" ".repeat(pad), line_style));
     spans.push(Span::styled("▎", Style::new().fg(color).bg(bg)));
+}
+
+/// Render a markdown document into styled chunks (one per block),
+/// using the tree-sitter-md block grammar plus the inline grammar for
+/// emphasis/strong/code/links.
+fn render_markdown(lines: &[String], theme: &Theme) -> Vec<MdChunk> {
+    let source = lines.join("\n");
+    let mut parser = tree_sitter::Parser::new();
+    if parser
+        .set_language(&tree_sitter_md::LANGUAGE.into())
+        .is_err()
+    {
+        return Vec::new();
+    }
+    let Some(tree) = parser.parse(&source, None) else {
+        return Vec::new();
+    };
+    let mut chunks = Vec::new();
+    md_blocks(tree.root_node(), &source, theme, &mut chunks, 0);
+    chunks
+}
+
+/// Walk the children of a block-level node, collecting chunks.
+fn md_blocks(node: tree_sitter::Node, source: &str, theme: &Theme, chunks: &mut Vec<MdChunk>, list_depth: usize) {
+    for i in 0..node.child_count() {
+        md_block(node.child(i as u32).unwrap(), source, theme, chunks, list_depth);
+    }
+}
+
+/// Render one block-level markdown node into a chunk.
+fn md_block(node: tree_sitter::Node, source: &str, theme: &Theme, chunks: &mut Vec<MdChunk>, list_depth: usize) {
+    let dim = Style::new().fg(theme.comment.fg.unwrap_or(theme.fg));
+    let fg = Style::new().fg(theme.fg);
+
+    match node.kind() {
+        "section" | "document" => {
+            md_blocks(node, source, theme, chunks, list_depth);
+        }
+        "list" => {
+            for i in 0..node.child_count() {
+                let c = node.child(i as u32).unwrap();
+                if c.kind() == "list_item" {
+                    md_list_item(c, source, theme, chunks, list_depth);
+                } else if c.kind() == "list" {
+                    md_block(c, source, theme, chunks, list_depth + 1);
+                }
+            }
+        }
+        "atx_heading" | "setext_heading" => {
+            let level = md_heading_level(node);
+            let base = match level {
+                1 => Style::new().fg(theme.keyword.fg.unwrap_or(theme.fg)).add_modifier(Modifier::BOLD),
+                2 => Style::new().fg(theme.rstype.fg.unwrap_or(theme.fg)).add_modifier(Modifier::BOLD),
+                3 => Style::new().fg(theme.builtin.fg.unwrap_or(theme.fg)).add_modifier(Modifier::BOLD),
+                _ => fg.add_modifier(Modifier::BOLD),
+            };
+            let text = md_heading_text(node, source).unwrap_or("").to_string();
+            let mut lines = vec![Line::from("")];
+            lines.push(Line::from(md_inline_spans(&text, theme, base)));
+            if level == 1 {
+                let w = text.chars().count();
+                lines.push(Line::from(Span::styled("─".repeat(w), Style::new().fg(theme.border))));
+            }
+            lines.push(Line::from(""));
+            chunks.push(md_chunk(node, lines));
+        }
+        "paragraph" => {
+            // paragraph children are `inline` nodes
+            let mut spans = Vec::new();
+            for i in 0..node.child_count() {
+                let c = node.child(i as u32).unwrap();
+                if c.kind() == "inline" {
+                    let t = c.utf8_text(source.as_bytes()).unwrap_or("").to_string();
+                    spans.extend(md_inline_spans(&t, theme, fg));
+                }
+            }
+            if !spans.is_empty() {
+                chunks.push(md_chunk(node, vec![Line::from(spans)]));
+            }
+        }
+        "fenced_code_block" | "indented_code_block" => {
+            let mut info = String::new();
+            let mut content: Vec<&str> = Vec::new();
+            for i in 0..node.child_count() {
+                let c = node.child(i as u32).unwrap();
+                match c.kind() {
+                    "info_string" => {
+                        info = c.utf8_text(source.as_bytes()).unwrap_or("").to_string();
+                    }
+                    "code_fence_content" => {
+                        let t = c.utf8_text(source.as_bytes()).unwrap_or("");
+                        content = t.lines().collect();
+                    }
+                    _ => {}
+                }
+            }
+            let mut lines = vec![Line::from(vec![
+                Span::styled("```".to_string(), dim),
+                Span::styled(info, Style::new().fg(theme.builtin.fg.unwrap_or(theme.fg))),
+            ])];
+            for l in content {
+                lines.push(Line::from(Span::styled(l.to_string(), fg)));
+            }
+            lines.push(Line::from(Span::styled("```".to_string(), dim)));
+            chunks.push(md_chunk(node, lines));
+        }
+        "block_quote" => {
+            let text = node.utf8_text(source.as_bytes()).unwrap_or("");
+            let lines = text
+                .lines()
+                .map(|l| {
+                    let l = l.trim_start_matches('>').trim_start();
+                    Line::from(vec![
+                        Span::styled("│ ".to_string(), dim),
+                        Span::styled(l.to_string(), fg),
+                    ])
+                })
+                .collect();
+            chunks.push(md_chunk(node, lines));
+        }
+        "thematic_break" => {
+            chunks.push(md_chunk(node, vec![Line::from(Span::styled(
+                "─".repeat(40),
+                dim,
+            ))]));
+        }
+        "html_block" => {
+            let text = node.utf8_text(source.as_bytes()).unwrap_or("");
+            let lines = text
+                .lines()
+                .map(|l| Line::from(Span::styled(l.to_string(), dim)))
+                .collect();
+            chunks.push(md_chunk(node, lines));
+        }
+        _ => {
+            // tables etc.: render the raw text
+            let text = node.utf8_text(source.as_bytes()).unwrap_or("");
+            if !text.trim().is_empty() && node.child_count() > 0 {
+                let lines = text
+                    .lines()
+                    .map(|l| Line::from(Span::styled(l.to_string(), fg)))
+                    .collect();
+                chunks.push(md_chunk(node, lines));
+            }
+        }
+    }
+}
+
+/// Render a list item: bullet + inline content, then nested lists.
+fn md_list_item(node: tree_sitter::Node, source: &str, theme: &Theme, chunks: &mut Vec<MdChunk>, list_depth: usize) {
+    let fg = Style::new().fg(theme.fg);
+    let indent = "  ".repeat(list_depth);
+    let mut spans = vec![Span::styled(
+        format!("{indent}• "),
+        Style::new().fg(theme.builtin.fg.unwrap_or(theme.fg)),
+    )];
+    for i in 0..node.child_count() {
+        let c = node.child(i as u32).unwrap();
+        if c.kind() == "paragraph" {
+            for j in 0..c.child_count() {
+                let gc = c.child(j as u32).unwrap();
+                if gc.kind() == "inline" {
+                    let t = gc.utf8_text(source.as_bytes()).unwrap_or("").to_string();
+                    spans.extend(md_inline_spans(&t, theme, fg));
+                }
+            }
+        }
+    }
+    chunks.push(md_chunk(node, vec![Line::from(spans)]));
+    for i in 0..node.child_count() {
+        let c = node.child(i as u32).unwrap();
+        if c.kind() == "list" {
+            md_block(c, source, theme, chunks, list_depth + 1);
+        }
+    }
+}
+
+fn md_chunk(node: tree_sitter::Node, lines: Vec<Line<'static>>) -> MdChunk {
+    MdChunk {
+        src_start: node.start_position().row,
+        lines,
+    }
+}
+
+fn md_heading_level(node: tree_sitter::Node) -> usize {
+    for i in 0..node.child_count() {
+        let k = node.child(i as u32).unwrap().kind();
+        if let Some(rest) = k.strip_prefix("atx_h") {
+            if let Some(n) = rest.chars().next().and_then(|c| c.to_digit(10)) {
+                return n as usize;
+            }
+        }
+        if k == "setext_h1_underline" {
+            return 1;
+        }
+        if k == "setext_h2_underline" {
+            return 2;
+        }
+    }
+    6
+}
+
+/// The heading's inline text (atx: `heading_content` field; setext:
+/// the paragraph child).
+fn md_heading_text<'a>(node: tree_sitter::Node<'a>, source: &'a str) -> Option<&'a str> {
+    if let Some(n) = node.child_by_field_name("heading_content") {
+        return n.utf8_text(source.as_bytes()).ok();
+    }
+    for i in 0..node.child_count() {
+        let c = node.child(i as u32).unwrap();
+        if c.kind() == "inline" || c.kind() == "paragraph" {
+            return c.utf8_text(source.as_bytes()).ok();
+        }
+    }
+    None
+}
+
+/// Style one piece of inline markdown: emphasis (italic), strong
+/// (bold), code spans (string colour), links (underlined accent).
+fn md_inline_spans(text: &str, theme: &Theme, base: Style) -> Vec<Span<'static>> {
+    let mut parser = tree_sitter::Parser::new();
+    if parser
+        .set_language(&tree_sitter_md::INLINE_LANGUAGE.into())
+        .is_err()
+    {
+        return vec![Span::styled(text.to_string(), base)];
+    }
+    let Some(tree) = parser.parse(text, None) else {
+        return vec![Span::styled(text.to_string(), base)];
+    };
+    let root = tree.root_node();
+    let mut out: Vec<Span<'static>> = Vec::new();
+    let mut last = 0;
+    for i in 0..root.child_count() {
+        let c = root.child(i as u32).unwrap();
+        let start = c.start_byte();
+        if start > last {
+            out.push(Span::styled(text[last..start].to_string(), base));
+        }
+        md_inline_child(c, text, theme, base, &mut out);
+        last = c.end_byte();
+    }
+    if last < text.len() {
+        out.push(Span::styled(text[last..].to_string(), base));
+    }
+    if out.is_empty() {
+        out.push(Span::styled(text.to_string(), base));
+    }
+    out
+}
+
+fn md_inline_child(node: tree_sitter::Node, text: &str, theme: &Theme, base: Style, out: &mut Vec<Span<'static>>) {
+    match node.kind() {
+        "emphasis" => {
+            let inner = md_delimited_inner(node, text);
+            out.push(Span::styled(inner, base.add_modifier(Modifier::ITALIC)));
+        }
+        "strong_emphasis" => {
+            let inner = md_delimited_inner(node, text);
+            out.push(Span::styled(inner, base.add_modifier(Modifier::BOLD)));
+        }
+        "code_span" => {
+            let inner = md_delimited_inner(node, text);
+            out.push(Span::styled(inner, theme.string));
+        }
+        "inline_link" | "image" => {
+            // show the link/alt text, not the URL
+            let mut shown = false;
+            for i in 0..node.child_count() {
+                let c = node.child(i as u32).unwrap();
+                if c.kind() == "link_text" {
+                    let lt = c.utf8_text(text.as_bytes()).unwrap_or("").to_string();
+                    out.push(Span::styled(
+                        lt,
+                        Style::new()
+                            .fg(theme.builtin.fg.unwrap_or(theme.fg))
+                            .add_modifier(Modifier::UNDERLINED),
+                    ));
+                    shown = true;
+                }
+            }
+            if !shown {
+                let t = node.utf8_text(text.as_bytes()).unwrap_or("");
+                out.push(Span::styled(t.to_string(), base));
+            }
+        }
+        _ => {
+            let t = node.utf8_text(text.as_bytes()).unwrap_or("");
+            if node.child_count() > 0 {
+                for i in 0..node.child_count() {
+                    md_inline_child(node.child(i as u32).unwrap(), text, theme, base, out);
+                }
+            } else if !t.is_empty() {
+                out.push(Span::styled(t.to_string(), base));
+            }
+        }
+    }
+}
+
+/// The text of a delimiter-wrapped node (emphasis, code spans) with
+/// the delimiter characters stripped from both ends.
+fn md_delimited_inner(node: tree_sitter::Node, text: &str) -> String {
+    let raw = node.utf8_text(text.as_bytes()).unwrap_or("");
+    match raw.chars().next() {
+        Some(d) if !d.is_alphanumeric() && !d.is_whitespace() => {
+            raw.trim_start_matches(d).trim_end_matches(d).to_string()
+        }
+        _ => raw.to_string(),
+    }
+}
+
+/// Map markdown display segments to styled spans for one line.
+fn md_seg_spans(segs: &[highlight::MdSeg], theme: &Theme) -> Vec<Span<'static>> {
+    let fg = Style::new().fg(theme.fg);
+    let dim = Style::new().fg(theme.comment.fg.unwrap_or(theme.fg));
+    segs.iter()
+        .map(|s| {
+            let style = match s.kind {
+                highlight::MdSegKind::Plain => fg,
+                highlight::MdSegKind::Heading(1) => {
+                    fg.fg(theme.keyword.fg.unwrap_or(theme.fg)).add_modifier(Modifier::BOLD)
+                }
+                highlight::MdSegKind::Heading(2) => {
+                    fg.fg(theme.rstype.fg.unwrap_or(theme.fg)).add_modifier(Modifier::BOLD)
+                }
+                highlight::MdSegKind::Heading(3) => {
+                    fg.fg(theme.builtin.fg.unwrap_or(theme.fg)).add_modifier(Modifier::BOLD)
+                }
+                highlight::MdSegKind::Heading(_) => fg.add_modifier(Modifier::BOLD),
+                highlight::MdSegKind::Strong => fg.add_modifier(Modifier::BOLD),
+                highlight::MdSegKind::Emph => fg.add_modifier(Modifier::ITALIC),
+                highlight::MdSegKind::Code => theme.string,
+                highlight::MdSegKind::Link => fg
+                    .fg(theme.builtin.fg.unwrap_or(theme.fg))
+                    .add_modifier(Modifier::UNDERLINED),
+                highlight::MdSegKind::Bullet => fg.fg(theme.builtin.fg.unwrap_or(theme.fg)),
+                highlight::MdSegKind::QuoteMark => dim,
+                highlight::MdSegKind::Fence => dim,
+                highlight::MdSegKind::FenceInfo => fg.fg(theme.builtin.fg.unwrap_or(theme.fg)),
+            };
+            Span::styled(s.display.clone(), style)
+        })
+        .collect()
+}
+
+/// Effective display segments for the cursor's line: width-changing
+/// concealed segments (hidden markers) that contain the cursor are
+/// revealed, so the cursor is always visibly on a character and
+/// moves one cell per keypress.
+fn md_cursor_segs(segs: &[highlight::MdSeg], cx: usize) -> Vec<highlight::MdSeg> {
+    segs.iter()
+        .map(|s| {
+            let mut s = s.clone();
+            if s.display != s.raw && s.start <= cx && cx < s.end {
+                s.display = s.raw.clone();
+            }
+            s
+        })
+        .collect()
+}
+
+/// Display column (in terminal cells) of a raw byte offset on a
+/// concealed markdown line: concealed characters contribute nothing.
+fn md_segs_col(segs: &[highlight::MdSeg], byte: usize) -> usize {    let mut col = 0usize;
+    for s in segs {
+        if s.end <= byte {
+            col += col_width(&s.display);
+        } else if s.start < byte {
+            // Cursor inside the segment: visible segments contribute
+            // their prefix width; concealed/replaced ones don't.
+            if s.display == s.raw {
+                let cut = byte - s.start;
+                col += col_width(&s.display[..cut.min(s.display.len())]);
+            }
+        }
+    }
+    col
+}
+
+/// Inverse of [`md_segs_col`]: the raw byte offset whose display
+/// column is at least `target` (used for horizontal scrolling on
+/// concealed markdown lines).
+fn md_segs_byte_at_col(segs: &[highlight::MdSeg], target: usize) -> usize {
+    let mut w = 0usize;
+    for s in segs {
+        let dw = col_width(&s.display);
+        if w + dw > target {
+            if s.display == s.raw {
+                let mut c = w;
+                for (i, ch) in s.display.char_indices() {
+                    if c >= target {
+                        return s.start + i;
+                    }
+                    c += char_width(ch);
+                }
+                return s.end;
+            }
+            // Concealed/replaced segment — land at its raw start.
+            return s.start;
+        }
+        w += dw;
+    }
+    segs.last().map(|s| s.end).unwrap_or(0)
+}
+
+/// Display byte offset within the concatenated display text of a
+/// line, for a raw byte offset (used to map selection edges onto
+/// concealed markdown display spans).
+fn md_segs_display_byte(segs: &[highlight::MdSeg], byte: usize) -> usize {    let mut n = 0usize;
+    for s in segs {
+        if s.end <= byte {
+            n += s.display.len();
+        } else if s.start < byte {
+            if s.display.len() == s.end - s.start {
+                let cut = byte - s.start;
+                n += s.display[..cut.min(s.display.len())].len();
+            }
+        }
+    }
+    n
+}
+
+/// Clip already-styled display spans to a cell window, keeping whole
+/// characters.
+fn clip_spans_cells(
+    spans: Vec<Span<'static>>,
+    left_col: usize,
+    visible_cols: usize,
+) -> Vec<Span<'static>> {
+    let mut out: Vec<Span<'static>> = Vec::new();
+    let mut current: Option<(Style, String)> = None;
+    let mut col = 0usize;
+    'outer: for span in spans {
+        for c in span.content.chars() {
+            let w = char_width(c);
+            if col >= left_col && col < left_col + visible_cols {
+                push_text(&mut out, &mut current, c.to_string(), span.style);
+            }
+            col += w;
+            if col >= left_col + visible_cols {
+                break 'outer;
+            }
+        }
+    }
+    if let Some((style, text)) = current {
+        out.push(Span::styled(text, style));
+    }
+    out
 }
 
 /// Cheap content fingerprint used to decide whether the highlighter
@@ -4509,4 +5519,108 @@ mod tests {
         ed.save_undo();
         assert!(ed.line_changes.is_none());
     }
+
+    #[test]
+    fn markdown_preview_renders_blocks() {
+        let lines: Vec<String> = vec![
+            "# Title".into(),
+            "".into(),
+            "Some *em* and **bold** text.".into(),
+            "".into(),
+            "- item one".into(),
+            "  - nested".into(),
+            "".into(),
+            "```rust".into(),
+            "let x = 1;".into(),
+            "```".into(),
+            "".into(),
+            "> quoted".into(),
+        ];
+        let theme = crate::theme::ThemeKind::Default.theme();
+        let chunks = render_markdown(&lines, &theme);
+        let all: Vec<String> = chunks
+            .iter()
+            .flat_map(|c| c.lines.iter())
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect();
+        let joined = all.join("\n");
+        assert!(joined.contains("Title"), "heading text missing: {joined}");
+        assert!(joined.contains("Some em and bold text."));
+        assert!(joined.contains("• item one"));
+        assert!(joined.contains("• nested"));
+        assert!(joined.contains("let x = 1;"));
+        assert!(joined.contains("│ quoted"));
+        // scroll mapping: the chunk containing source line 2 exists
+        assert!(chunks.iter().any(|c| c.src_start <= 2));
+    }
+
+    #[test]
+    fn markdown_inline_styles() {
+        let theme = crate::theme::ThemeKind::Default.theme();
+        let spans = md_inline_spans("a *i* **b** `c`", &theme, Style::new().fg(theme.fg));
+        let kinds: Vec<bool> = spans.iter().map(|s| {
+            s.style.add_modifier.contains(Modifier::ITALIC)
+                || s.style.add_modifier.contains(Modifier::BOLD)
+                || s.style == theme.string
+        }).collect();
+        assert!(kinds.iter().any(|b| *b), "no styled spans: {spans:?}");
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "a i b c");
+    }
+
+    #[test]
+    fn markdown_conceal_segments() {
+        use crate::highlight::{build_md_segs, MdSegKind};
+        let src = "# My Title\nplain **bold** and *em* and `code`\n- a list\n> quoted\n";
+        let segs = build_md_segs(src);
+
+        // Line 0: "# My Title" → marker concealed, text styled.
+        let l0 = segs[0].iter().map(|s| s.display.as_str()).collect::<String>();
+        assert_eq!(l0, "My Title");
+        assert!(segs[0].iter().any(|s| s.kind == MdSegKind::Heading(1) && s.display == "My Title"));
+
+        // Line 1: delimiters concealed, content styled.
+        let l1 = segs[1].iter().map(|s| s.display.as_str()).collect::<String>();
+        assert_eq!(l1, "plain bold and em and code");
+        assert!(segs[1].iter().any(|s| s.kind == MdSegKind::Strong && s.display == "bold"));
+        assert!(segs[1].iter().any(|s| s.kind == MdSegKind::Emph && s.display == "em"));
+        assert!(segs[1].iter().any(|s| s.kind == MdSegKind::Code && s.display == "code"));
+
+        // Line 2: list marker replaced with a bullet (same width).
+        let l2 = segs[2].iter().map(|s| s.display.as_str()).collect::<String>();
+        assert_eq!(l2, "\u{2022} a list");
+
+        // Line 3: quote marker replaced.
+        let l3 = segs[3].iter().map(|s| s.display.as_str()).collect::<String>();
+        assert_eq!(l3, "\u{2502} quoted");
+    }
+
+    #[test]
+    fn markdown_display_col_skips_concealed() {
+        use crate::highlight::build_md_segs;
+        let src = "# Title\nplain **bold** tail\n";
+        let segs = build_md_segs(src);
+
+        // Raw byte 2 is after "# " (2 raw chars) — display col 0.
+        assert_eq!(md_segs_col(&segs[0], 2), 0);
+        // End of raw line (7) → display col 5 ("Title").
+        assert_eq!(md_segs_col(&segs[0], 7), 5);
+
+        // Line 1 (starts at raw byte 8): "plain **bold** tail".
+        // The "**" markers are concealed, so the display column does
+        // not advance across them.
+        assert_eq!(md_segs_col(&segs[1], 14), 6); // after "plain "
+        assert_eq!(md_segs_col(&segs[1], 16), 6); // inside leading "**"
+        assert_eq!(md_segs_col(&segs[1], 22), 10); // after "**bold**"
+        assert_eq!(md_segs_col(&segs[1], 23), 11); // the space after
+    }
+
+
+
+
 }

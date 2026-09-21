@@ -182,12 +182,43 @@ pub fn detect_lang(filename: Option<&str>, first_line: Option<&str>) -> Lang {
 
 // ── Highlighter (cached parse) ───────────────────────────────────
 
+/// Semantic style of a markdown display segment (concealed inline
+/// rendering).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MdSegKind {
+    Plain,
+    Heading(u8),
+    Strong,
+    Emph,
+    Code,
+    Link,
+    Bullet,
+    QuoteMark,
+    Fence,
+    FenceInfo,
+}
+
+/// One display segment of a markdown line: the raw byte range it
+/// covers and the text to actually show (shorter than the raw range
+/// when markers are concealed).  `raw` keeps the original text so the
+/// editor can reveal it under the cursor.
+#[derive(Debug, Clone)]
+pub struct MdSeg {
+    pub start: usize,
+    pub end: usize,
+    pub display: String,
+    pub raw: String,
+    pub kind: MdSegKind,
+}
+
 /// A parsed buffer: per-line tokens, cached until the content or the
 /// language changes.
 pub struct Highlighter {
     lang: Lang,
     hash: u64,
     lines: Vec<Vec<Token>>,
+    /// Per-line display segments (markdown only, else empty).
+    md_segs: Vec<Vec<MdSeg>>,
 }
 
 impl Highlighter {
@@ -199,7 +230,12 @@ impl Highlighter {
             Some(l) => parse_with(lang, l, source).unwrap_or_else(|| plain_lines(source)),
             None => fallback_lines(lang, source),
         };
-        Highlighter { lang, hash, lines }
+        let md_segs = if lang == Lang::Markdown {
+            build_md_segs(source)
+        } else {
+            Vec::new()
+        };
+        Highlighter { lang, hash, lines, md_segs }
     }
 
     pub fn lang(&self) -> Lang {
@@ -220,6 +256,11 @@ impl Highlighter {
                 .collect(),
             None => Vec::new(),
         }
+    }
+
+    /// The concealed-display segments for one markdown line.
+    pub fn md_line(&self, row: usize) -> Option<&[MdSeg]> {
+        self.md_segs.get(row).map(|v| v.as_slice())
     }
 }
 
@@ -242,6 +283,322 @@ fn grammar(lang: Lang) -> Option<Language> {
         Lang::Markdown => Some(tree_sitter_md::LANGUAGE.into()),
         Lang::Conf | Lang::Plain => None,
     }
+}
+
+// ── markdown conceal segments ────────────────────────────────────
+
+type MdDeco = (usize, usize, MdSegKind, Option<String>);
+
+/// Build per-line display segments for a markdown document: markers
+/// (`#`, `**`, `` ` ``, `[url]`) are concealed, remaining text is
+/// styled by kind.
+pub fn build_md_segs(source: &str) -> Vec<Vec<MdSeg>> {
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(&tree_sitter_md::LANGUAGE.into()).is_err() {
+        return Vec::new();
+    }
+    let Some(tree) = parser.parse(source, None) else {
+        return Vec::new();
+    };
+
+    let mut deco: Vec<MdDeco> = Vec::new();
+    md_collect(tree.root_node(), source, MdSegKind::Plain, &mut deco);
+    deco.sort_by_key(|d| d.0);
+
+    // byte offset of each line start
+    let mut line_starts = vec![0usize];
+    for (b, c) in source.bytes().enumerate() {
+        if c == b'\n' {
+            line_starts.push(b + 1);
+        }
+    }
+    let line_count = source.lines().count().max(1);
+
+    let mut out = vec![Vec::new(); line_count];
+    for (li, &ls) in line_starts.iter().enumerate().take(line_count) {
+        let mut le = if li + 1 < line_starts.len() {
+            line_starts[li + 1]
+        } else {
+            source.len()
+        };
+        // Exclude the line's terminating newline from display.
+        if le > ls && source.as_bytes()[le - 1] == b'\n' {
+            le -= 1;
+        }
+        let mut segs: Vec<MdSeg> = Vec::new();
+        let mut pos = ls;
+        for (ds, de, kind, display) in &deco {
+            let dstart = (*ds).max(ls);
+            let dend = (*de).min(le);
+            if dstart >= dend {
+                continue;
+            }
+            if dstart > pos {
+                let raw = source[pos..dstart].to_string();
+                segs.push(MdSeg {
+                    start: pos,
+                    end: dstart,
+                    display: raw.clone(),
+                    raw,
+                    kind: MdSegKind::Plain,
+                });
+            }
+            match display {
+                Some(txt) if !txt.is_empty() => segs.push(MdSeg {
+                    start: dstart,
+                    end: dend,
+                    display: txt.clone(),
+                    raw: source[dstart..dend].to_string(),
+                    kind: *kind,
+                }),
+                // Concealed: keep the segment (with its raw text) so
+                // the cursor can reveal it.
+                Some(_) => segs.push(MdSeg {
+                    start: dstart,
+                    end: dend,
+                    display: String::new(),
+                    raw: source[dstart..dend].to_string(),
+                    kind: *kind,
+                }),
+                None => segs.push(MdSeg {
+                    start: dstart,
+                    end: dend,
+                    display: source[dstart..dend].to_string(),
+                    raw: source[dstart..dend].to_string(),
+                    kind: *kind,
+                }),
+            }
+            pos = pos.max(dend);
+        }
+        if pos < le {
+            let raw = source[pos..le].to_string();
+            segs.push(MdSeg {
+                start: pos,
+                end: le,
+                display: raw.clone(),
+                raw,
+                kind: MdSegKind::Plain,
+            });
+        }
+        out[li] = segs;
+    }
+    out
+}
+
+/// Walk the block tree collecting non-overlapping display
+/// decorations.  `ctx` is the style inherited from the enclosing
+/// construct (e.g. Heading for heading text).
+fn md_collect(node: tree_sitter::Node, source: &str, ctx: MdSegKind, deco: &mut Vec<MdDeco>) {
+    match node.kind() {
+        "atx_heading" => {
+            let level = md_node_level(node);
+            if let Some(content) = node.child_by_field_name("heading_content") {
+                deco.push((node.start_byte(), content.start_byte(), MdSegKind::Heading(level), Some(String::new())));
+                md_collect(content, source, MdSegKind::Heading(level), deco);
+            }
+        }
+        "setext_heading" => {
+            let level = md_node_level(node);
+            for i in 0..node.child_count() {
+                let c = node.child(i as u32).unwrap();
+                match c.kind() {
+                    "paragraph" => md_collect(c, source, MdSegKind::Heading(level), deco),
+                    "setext_h1_underline" | "setext_h2_underline" => {
+                        deco.push((c.start_byte(), c.end_byte(), MdSegKind::Fence, Some(String::new())));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        "paragraph" => md_collect_inline(node, source, ctx, deco),
+        "list_item" => {
+            for i in 0..node.child_count() {
+                let c = node.child(i as u32).unwrap();
+                let k = c.kind();
+                if k == "list_marker_minus" || k == "list_marker_star" || k == "list_marker_plus" {
+                    // marker text includes the trailing space
+                    deco.push((c.start_byte(), c.end_byte(), MdSegKind::Bullet, Some("• ".to_string())));
+                } else if k.starts_with("list_marker") {
+                    // ordered lists keep their numbers
+                    deco.push((c.start_byte(), c.end_byte(), MdSegKind::Bullet, None));
+                } else {
+                    md_collect(c, source, ctx, deco);
+                }
+            }
+        }
+        "block_quote" => {
+            for i in 0..node.child_count() {
+                let c = node.child(i as u32).unwrap();
+                if c.kind().starts_with("block_quote_marker") {
+                    deco.push((c.start_byte(), c.end_byte(), MdSegKind::QuoteMark, Some("│ ".to_string())));
+                } else {
+                    md_collect(c, source, ctx, deco);
+                }
+            }
+        }
+        "fenced_code_block" => {
+            for i in 0..node.child_count() {
+                let c = node.child(i as u32).unwrap();
+                match c.kind() {
+                    "fenced_code_block_delimiter" => {
+                        deco.push((c.start_byte(), c.end_byte(), MdSegKind::Fence, None));
+                    }
+                    "info_string" => {
+                        deco.push((c.start_byte(), c.end_byte(), MdSegKind::FenceInfo, None));
+                    }
+                    "code_fence_content" => {
+                        deco.push((c.start_byte(), c.end_byte(), MdSegKind::Code, None));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        "indented_code_block" => {
+            deco.push((node.start_byte(), node.end_byte(), MdSegKind::Code, None));
+        }
+        _ => {
+            if node.child_count() > 0 {
+                for i in 0..node.child_count() {
+                    md_collect(node.child(i as u32).unwrap(), source, ctx, deco);
+                }
+            } else {
+                let (s, e) = (node.start_byte(), node.end_byte());
+                if e > s {
+                    deco.push((s, e, ctx, None));
+                }
+            }
+        }
+    }
+}
+
+/// Walk an `inline` node from the block grammar: its text is
+/// re-parsed with the inline grammar so emphasis, strong, code spans
+/// and links become styled, concealed decorations.  Plain gaps
+/// inherit `ctx`.
+fn md_collect_inline(node: tree_sitter::Node, source: &str, ctx: MdSegKind, deco: &mut Vec<MdDeco>) {
+    for i in 0..node.child_count() {
+        let c = node.child(i as u32).unwrap();
+        if c.kind() == "inline" {
+            let text = c.utf8_text(source.as_bytes()).unwrap_or("");
+            md_inline_parse_deco(text, c.start_byte(), ctx, deco);
+        } else {
+            md_collect(c, source, ctx, deco);
+        }
+    }
+}
+
+/// Parse one run of inline markdown text with the inline grammar and
+/// emit decorations (`base` is the byte offset of `text` in the
+/// document).
+fn md_inline_parse_deco(text: &str, base: usize, ctx: MdSegKind, deco: &mut Vec<MdDeco>) {
+    let mut parser = tree_sitter::Parser::new();
+    if parser
+        .set_language(&tree_sitter_md::INLINE_LANGUAGE.into())
+        .is_err()
+    {
+        return;
+    }
+    let Some(tree) = parser.parse(text, None) else {
+        return;
+    };
+    let root = tree.root_node();
+
+    // Gaps between children carry the inherited style.
+    let mut last = 0usize;
+    for i in 0..root.child_count() {
+        let c = root.child(i as u32).unwrap();
+        if c.start_byte() > last {
+            deco.push((base + last, base + c.start_byte(), ctx, None));
+        }
+        md_inline_node_deco(c, text, base, ctx, deco);
+        last = c.end_byte();
+    }
+    if last < text.len() {
+        deco.push((base + last, base + text.len(), ctx, None));
+    }
+}
+
+fn md_inline_node_deco(node: tree_sitter::Node, text: &str, base: usize, ctx: MdSegKind, deco: &mut Vec<MdDeco>) {
+    match node.kind() {
+        "emphasis" | "strong_emphasis" | "code_span" => {
+            let kind = match node.kind() {
+                "emphasis" => MdSegKind::Emph,
+                "strong_emphasis" => MdSegKind::Strong,
+                _ => MdSegKind::Code,
+            };
+            let s = node.start_byte();
+            let e = node.end_byte();
+            let raw = node.utf8_text(text.as_bytes()).unwrap_or("");
+            let d = match raw.chars().next() {
+                Some(d) if !d.is_alphanumeric() && !d.is_whitespace() => d,
+                _ => {
+                    deco.push((base + s, base + e, kind, None));
+                    return;
+                }
+            };
+            let lead: usize = raw.chars().take_while(|&c| c == d).map(char::len_utf8).sum();
+            let trail: usize = raw.chars().rev().take_while(|&c| c == d).map(char::len_utf8).sum();
+            if lead > 0 {
+                deco.push((base + s, base + s + lead, ctx, Some(String::new())));
+            }
+            if s + lead < e - trail {
+                deco.push((base + s + lead, base + e - trail, kind, None));
+            }
+            if trail > 0 {
+                deco.push((base + e - trail, base + e, ctx, Some(String::new())));
+            }
+        }
+        "inline_link" | "image" => {
+            // [text](url) → show the text only, styled as a link.
+            let mut text_range: Option<(usize, usize)> = None;
+            for i in 0..node.child_count() {
+                let c = node.child(i as u32).unwrap();
+                if c.kind() == "link_text" {
+                    text_range = Some((c.start_byte(), c.end_byte()));
+                }
+            }
+            let s = node.start_byte();
+            let e = node.end_byte();
+            match text_range {
+                Some((ts, te)) if te > ts => {
+                    deco.push((base + s, base + ts, ctx, Some(String::new())));
+                    deco.push((base + ts, base + te, MdSegKind::Link, None));
+                    deco.push((base + te, base + e, ctx, Some(String::new())));
+                }
+                _ => deco.push((base + s, base + e, MdSegKind::Link, None)),
+            }
+        }
+        _ => {
+            if node.child_count() > 0 {
+                for i in 0..node.child_count() {
+                    md_inline_node_deco(node.child(i as u32).unwrap(), text, base, ctx, deco);
+                }
+            } else {
+                let (s, e) = (node.start_byte(), node.end_byte());
+                if e > s {
+                    deco.push((base + s, base + e, ctx, None));
+                }
+            }
+        }
+    }
+}
+
+fn md_node_level(node: tree_sitter::Node) -> u8 {
+    for i in 0..node.child_count() {
+        let k = node.child(i as u32).unwrap().kind();
+        if let Some(rest) = k.strip_prefix("atx_h") {
+            if let Some(n) = rest.chars().next().and_then(|c| c.to_digit(10)) {
+                return n as u8;
+            }
+        }
+        if k == "setext_h1_underline" {
+            return 1;
+        }
+        if k == "setext_h2_underline" {
+            return 2;
+        }
+    }
+    6
 }
 
 // ── fallback tokenizers (no grammar / parse failure) ─────────────

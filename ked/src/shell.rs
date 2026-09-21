@@ -536,6 +536,60 @@ impl Drop for ShellProcess {
 // Styles so coloured shell output (e.g. `ls --color`, `grep --color`,
 // git diff) shows up in the pop‑up shell.
 
+/// One-shot conversion of ANSI-coloured text into styled ratatui
+/// lines (used for the `glow` markdown preview).  Colour/attribute
+/// sequences are applied; other escape sequences are skipped.
+pub(crate) fn ansi_to_lines(text: &str, default_style: Style) -> Vec<Line<'static>> {
+    let mut lines: Vec<Vec<Span>> = vec![Vec::new()];
+    let mut style = default_style;
+    let mut chars = text.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '\x1b' => match chars.next() {
+                Some('[') => {
+                    let mut params = String::new();
+                    while let Some(&c2) = chars.peek() {
+                        if ('\u{40}'..='\u{7e}').contains(&c2) {
+                            let term = chars.next().unwrap();
+                            if term == 'm' {
+                                style = parse_sgr(&params, default_style);
+                            }
+                            break;
+                        }
+                        params.push(chars.next().unwrap());
+                    }
+                }
+                Some(']') => {
+                    // OSC — skip to BEL or ST.
+                    for c2 in &mut chars {
+                        if c2 == '\x07' {
+                            break;
+                        }
+                        if c2 == '\x1b' {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            },
+            '\n' => lines.push(Vec::new()),
+            '\r' => {}
+            c if c.is_control() => {}
+            c => {
+                let line = lines.last_mut().unwrap();
+                match line.last_mut() {
+                    // Merge adjacent same-styled chars into one span.
+                    Some(last) if last.style == style => last.content.to_mut().push(c),
+                    _ => line.push(Span::styled(c.to_string(), style)),
+                }
+            }
+        }
+    }
+    lines.into_iter().map(Line::from).collect()
+}
+
 /// A single character with its ANSI-derived style.
 #[derive(Clone, Copy)]
 struct StyledChar {
@@ -583,7 +637,7 @@ fn collapse_styled(chars: Vec<StyledChar>) -> Line<'static> {
 
 /// Parse an ANSI SGR parameter string (the part between `ESC[` and
 /// `m`) and return the resulting style.
-fn parse_sgr(params: &str, default_style: Style) -> Style {
+pub(crate) fn parse_sgr(params: &str, default_style: Style) -> Style {
     use Color::*;
     if params.is_empty() {
         return default_style;

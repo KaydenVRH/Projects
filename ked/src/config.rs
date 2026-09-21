@@ -5,8 +5,8 @@ use serde::Deserialize;
 /// User configuration loaded from `~/.config/ked/config.toml`.
 #[derive(Deserialize, Default)]
 pub struct Config {
-    /// Theme name (default, monokai, solarized, nord, gruvbox, bi,
-    /// blue-lagoon, catppuccin, tokyonight, amber, dracula, onedark,
+    /// Theme name (default, mono, monokai, solarized, nord, gruvbox,
+    /// bi, blue-lagoon, catppuccin, tokyonight, amber, dracula, onedark,
     /// everforest, rosepine, oxocarbon, ayu, kanagawa, palenight,
     /// darkplus, moonlight).
     #[serde(default)]
@@ -53,6 +53,12 @@ pub struct Config {
     /// Number of characters to scroll horizontally with Option+Left/Right.
     #[serde(default = "default_alt_scroll")]
     pub alt_scroll: usize,
+
+    /// Render `![alt](path)` images inline in markdown buffers (kitty
+    /// graphics protocol — kitty, ghostty, wezterm, foot, …).
+    /// Defaults to true.
+    #[serde(default = "default_inline_images")]
+    pub inline_images: bool,
 }
 
 const fn default_filetree_width() -> u16 {
@@ -73,6 +79,10 @@ const fn default_opacity() -> f32 {
 
 const fn default_alt_scroll() -> usize {
     5
+}
+
+const fn default_inline_images() -> bool {
+    true
 }
 
 impl Config {

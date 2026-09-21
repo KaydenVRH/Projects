@@ -11,7 +11,7 @@
 
 ked is a personal vim‑like text editor that runs entirely in your
 terminal. It's a single Rust binary: modal editing, hand‑rolled syntax
-highlighting, 20 themes, animated colour effects, a fuzzy finder, a
+highlighting, 21 themes, animated colour effects, a fuzzy finder, a
 file tree, a real PTY shell, a music player, and a system dashboard —
 all in the alternate screen.
 
@@ -64,6 +64,23 @@ all in the alternate screen.
   a playlist through `mpv` with auto‑advance and looping
   (`Enter` play, `s` stop, `l` loop, `Esc` close while it keeps
   playing)
+- **Markdown preview** — `Ctrl+V` opens a live rendered preview pane
+  next to the editor: styled headings, bullets, code blocks, quotes,
+  and links, re-rendered as you type and following your cursor.
+  Uses the `glow` CLI automatically when it's installed
+- **Markdown conceal** — while editing `.md` files, markers are
+  rendered away in the buffer itself: `#` heading markers hidden
+  (headings styled by level), `**`/`*`/`` ` `` delimiters hidden with
+  bold/italic/code applied, `-` shown as `•`, quotes as `│` bars, and
+  links shown as text without the URL — all fully editable, with the
+  cursor tracking correctly through concealed characters
+- **Markdown inline images** — terminals with the kitty graphics
+  protocol (kitty, ghostty, wezterm, foot, …) render `![alt](pic.png)`
+  images directly in the buffer, sized to the content width; the
+  covered source lines are blanked out.  Enter insert mode on an image
+  to reveal its markdown source for editing.  Paste a screenshot with
+  `:img` or `Ctrl+Shift+V` — it's saved next to the file, inserted as
+  a markdown image reference, and rendered immediately
 - **System dashboard** — `:sys` shows CPU, memory, disk, battery,
   uptime, and a tail of recent system errors
 - **Context bar** — the top bar shows the detected language, buffer
@@ -72,12 +89,14 @@ all in the alternate screen.
 
 ### Looks
 
-- **20 themes** — default, monokai, solarized, nord, gruvbox, bi,
+- **21 themes** — default, mono, monokai, solarized, nord, gruvbox, bi,
   blue-lagoon, catppuccin, tokyonight, amber, dracula, onedark,
   everforest, rosepine, oxocarbon, ayu, kanagawa, palenight, darkplus,
   moonlight. Palettes follow the canonical Neovim theme colours, with
   distinct roles for keywords, functions, types, strings, constants,
-  and properties
+  and properties.  **mono** is pure grayscale: tokens are separated by
+  a lightness ramp plus bold/italic styling instead of hue (`:theme
+  mono`, or `grayscale`/`grey`)
 - **Theme selector** — `Ctrl+T` list with live preview, Enter applies
 - **Colour FX** — animated theme modes from the config: gentle hue
   drift, breathing lightness, or a warm amber-purple wander. Only the
@@ -117,6 +136,7 @@ Optional helpers:
 
 - **Nerd Font** — file‑tree icons (``, ``, …) fall back to nothing
   without one
+- **glow** — optional, prettier markdown preview when installed
 - **mpv** — for the music player (`Ctrl+M`)
 - **kitty keyboard protocol** — `Ctrl+M` only works in terminals that
   speak it: kitty, foot, wezterm, iTerm2, ghostty, …; elsewhere it
@@ -148,8 +168,10 @@ The finder and file tree scan the directory you launched ked from, so
 | `Ctrl+M` | music player |
 | `Ctrl+T` | theme selector |
 | `Ctrl+K` | keybinds manual |
+| `Ctrl+V` | markdown preview (`.md` files) |
 | `Ctrl+S` | save |
 | `Ctrl+C` | quit — or, from insert/visual mode, step back to normal mode first |
+| `Ctrl+Shift+V` | paste the clipboard image into the buffer as `![](img-….png)` |
 
 ### Normal mode
 
@@ -217,6 +239,7 @@ The finder and file tree scan the directory you launched ked from, so
 | `:<line>` | jump to line |
 | `:theme <name>` | switch theme by name |
 | `:sys` | system dashboard |
+| `:img` | paste the clipboard image into the buffer as `![](img-….png)` |
 
 ## Config
 
@@ -224,7 +247,7 @@ The finder and file tree scan the directory you launched ked from, so
 files fall back to defaults.
 
 ```toml
-theme         = "oxocarbon"   # any of the 20 theme names
+theme         = "oxocarbon"   # any of the 21 theme names
 music_dir     = "~/Music"     # where Ctrl+M scans
 filetree_width = 30           # file-tree panel width in columns
 status_bar_top = false        # put the status bar above the buffer bar
@@ -236,6 +259,7 @@ fx_mode       = 0             # colour FX at startup: 0 off, 1 gentle,
                               # 2 breathing, 3 warm
 opacity       = 1.0           # UI chrome opacity (0.0 – 1.0)
 alt_scroll    = 5             # chars per ⌥/⌘-arrow jump
+inline_images = true          # render ![alt](path) in .md buffers
 ```
 
 ## How it works
@@ -280,7 +304,7 @@ src/
   main.rs       entry point: terminal setup, event loop, kitty protocol
   editor.rs     editor core: modes, key handling, render, undo, scrolling
   highlight.rs  tree-sitter highlighting + language detection
-  theme.rs      20 themes + HSL hue rotation for colour FX
+  theme.rs      21 themes + HSL hue rotation for colour FX
   config.rs     ~/.config/ked/config.toml loading
   finder.rs     fuzzy file finder (Ctrl+P)
   filetree.rs   file-tree panel with Nerd Font icons (Ctrl+F)

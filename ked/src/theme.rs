@@ -5,7 +5,7 @@
 //! token / UI element; palettes follow the canonical Neovim theme
 //! colours (gruvbox, catppuccin, tokyonight, nord, dracula, …).
 //!
-//! [`ThemeKind`] is an enum over the nineteen built-in themes.  All
+//! [`ThemeKind`] is an enum over the built-in themes.  All
 //! colours use ratatui's [`Color`] type, which supports named
 //! colours, indexed (256-colour) codes, and true-colour RGB.
 
@@ -41,10 +41,11 @@ pub struct Theme {
     pub punctuation:   Style,   // `(`, `)`, `:`, `,`
 }
 
-/// The nineteen built-in theme variants.
+/// The built-in theme variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeKind {
     Default,
+    Mono,
     Monokai,
     Solarized,
     Nord,
@@ -71,6 +72,7 @@ impl ThemeKind {
     pub fn theme(&self) -> Theme {
         match self {
             ThemeKind::Default    => default(),
+            ThemeKind::Mono       => mono(),
             ThemeKind::Monokai    => monokai(),
             ThemeKind::Solarized  => solarized(),
             ThemeKind::Nord       => nord(),
@@ -97,6 +99,7 @@ impl ThemeKind {
     pub fn name(&self) -> &'static str {
         match self {
             ThemeKind::Default    => "default",
+            ThemeKind::Mono       => "mono",
             ThemeKind::Monokai    => "monokai",
             ThemeKind::Solarized  => "solarized",
             ThemeKind::Nord       => "nord",
@@ -123,6 +126,7 @@ impl ThemeKind {
     pub fn all() -> &'static [ThemeKind] {
         &[
             ThemeKind::Default,
+            ThemeKind::Mono,
             ThemeKind::Monokai,
             ThemeKind::Solarized,
             ThemeKind::Nord,
@@ -149,6 +153,8 @@ impl ThemeKind {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "default"    => Some(ThemeKind::Default),
+            "mono" | "monochrome" | "grayscale" | "greyscale" | "grey" | "gray" =>
+                Some(ThemeKind::Mono),
             "monokai"    => Some(ThemeKind::Monokai),
             "solarized"  => Some(ThemeKind::Solarized),
             "nord"       => Some(ThemeKind::Nord),
@@ -180,6 +186,9 @@ const fn fg(c: Color) -> Style {
 const fn fg_bold(c: Color) -> Style {
     Style::new().fg(c).add_modifier(Modifier::BOLD)
 }
+const fn fg_italic(c: Color) -> Style {
+    Style::new().fg(c).add_modifier(Modifier::ITALIC)
+}
 
 // ── theme definitions ────────────────────────────────────────────
 
@@ -208,6 +217,40 @@ fn default() -> Theme {
         property:      fg(Color::Rgb(0x9c, 0xdc, 0xfe)),  // VS Code property blue
         operator:      fg(Color::Rgb(0xd4, 0xd4, 0xd4)),
         punctuation:   fg(Color::Rgb(0xd4, 0xd4, 0xd4)),
+    }
+}
+
+fn mono() -> Theme {
+    // Monochrome: pure grayscale — no hue at all.  Because colour can't
+    // separate tokens, the palette leans on two extra signals: a
+    // lightness ramp (dim comments → bright keywords) and font style
+    // (italic strings / lifetimes / decorators, bold keywords / types /
+    // constants).  Every pair of token styles differs in shade *or*
+    // modifier so syntax stays readable even in terminals without
+    // italic support.
+    Theme {
+        fg:            Color::Rgb(0xc4, 0xc4, 0xc4),
+        bg:            Color::Rgb(0x16, 0x16, 0x16),
+        selection_bg:  Color::Rgb(0x36, 0x36, 0x36),
+        line_number:   Style::new().fg(Color::Rgb(0x58, 0x58, 0x58)),
+        tilde:         Style::new().fg(Color::Rgb(0x2e, 0x2e, 0x2e)),
+        status_bg:     Color::Rgb(0x0d, 0x0d, 0x0d),
+        status_fg:     Color::Rgb(0xe6, 0xe6, 0xe6),
+        border:        Color::Rgb(0x6e, 0x6e, 0x6e),
+        keyword:       fg_bold(Color::Rgb(0xff, 0xff, 0xff)),   // brightest, bold
+        builtin:       fg(Color::Rgb(0xbc, 0xbc, 0xbc)),
+        rstype:        fg_bold(Color::Rgb(0xd8, 0xd8, 0xd8)),   // light, bold
+        function:      fg(Color::Rgb(0xf4, 0xf4, 0xf4)),        // near-white
+        lifetime:      fg_italic(Color::Rgb(0x9c, 0x9c, 0x9c)),
+        string:        fg_italic(Color::Rgb(0xe0, 0xe0, 0xe0)), // light, italic
+        fstring_prefix:fg_bold(Color::Rgb(0xe0, 0xe0, 0xe0)),
+        comment:       fg_italic(Color::Rgb(0x5c, 0x5c, 0x5c)), // dimmest, italic
+        number:        fg(Color::Rgb(0xce, 0xce, 0xce)),
+        constant:      fg_bold(Color::Rgb(0xec, 0xec, 0xec)),
+        decorator:     fg_italic(Color::Rgb(0xd8, 0xd8, 0xd8)),
+        property:      fg(Color::Rgb(0xb0, 0xb0, 0xb0)),
+        operator:      fg(Color::Rgb(0x8e, 0x8e, 0x8e)),
+        punctuation:   fg(Color::Rgb(0x76, 0x76, 0x76)),
     }
 }
 
@@ -761,4 +804,97 @@ pub fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
         ((g1 + m) * 255.0).round() as u8,
         ((b1 + m) * 255.0).round() as u8,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every colour the theme uses (UI chrome + token foregrounds).
+    fn theme_colors(t: &Theme) -> Vec<Color> {
+        let mut v = vec![t.fg, t.bg, t.selection_bg, t.status_bg, t.status_fg, t.border];
+        v.push(t.line_number.fg.unwrap_or(t.fg));
+        v.push(t.tilde.fg.unwrap_or(t.fg));
+        for s in [
+            &t.keyword, &t.builtin, &t.rstype, &t.function, &t.lifetime,
+            &t.string, &t.fstring_prefix, &t.comment, &t.number, &t.constant,
+            &t.decorator, &t.property, &t.operator, &t.punctuation,
+        ] {
+            if let Some(c) = s.fg {
+                v.push(c);
+            }
+            if let Some(c) = s.bg {
+                v.push(c);
+            }
+        }
+        v
+    }
+
+    fn token_styles(t: &Theme) -> Vec<(&'static str, Style)> {
+        vec![
+            ("keyword", t.keyword),
+            ("builtin", t.builtin),
+            ("type", t.rstype),
+            ("function", t.function),
+            ("lifetime", t.lifetime),
+            ("string", t.string),
+            ("fstring_prefix", t.fstring_prefix),
+            ("comment", t.comment),
+            ("number", t.number),
+            ("constant", t.constant),
+            ("decorator", t.decorator),
+            ("property", t.property),
+            ("operator", t.operator),
+            ("punctuation", t.punctuation),
+        ]
+    }
+
+    #[test]
+    fn every_theme_is_constructible_and_named() {
+        assert_eq!(ThemeKind::all().len(), 21);
+        for k in ThemeKind::all() {
+            let _ = k.theme();
+            assert_eq!(ThemeKind::from_str(k.name()), Some(*k), "{}", k.name());
+        }
+    }
+
+    #[test]
+    fn mono_is_pure_grayscale() {
+        for c in theme_colors(&mono()) {
+            match c {
+                Color::Rgb(r, g, b) => {
+                    assert_eq!(r, g, "non-gray colour {c:?} in mono theme");
+                    assert_eq!(g, b, "non-gray colour {c:?} in mono theme");
+                }
+                other => panic!("mono theme should only use RGB, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn mono_tokens_are_distinguishable() {
+        let styles = token_styles(&mono());
+        for i in 0..styles.len() {
+            for j in (i + 1)..styles.len() {
+                let (na, sa) = styles[i];
+                let (nb, sb) = styles[j];
+                assert!(
+                    (sa.fg, sa.add_modifier) != (sb.fg, sb.add_modifier),
+                    "mono tokens `{na}` and `{nb}` are visually identical"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_theme_has_fg_bg_contrast() {
+        for k in ThemeKind::all() {
+            let t = k.theme();
+            if let (Color::Rgb(fr, fg, fb), Color::Rgb(br, bg, bb)) = (t.fg, t.bg) {
+                let diff = (fr as i32 + fg as i32 + fb as i32)
+                    - (br as i32 + bg as i32 + bb as i32);
+                assert!(diff.abs() > 60, "{}: weak fg/bg contrast", k.name());
+            }
+        }
+    }
 }
