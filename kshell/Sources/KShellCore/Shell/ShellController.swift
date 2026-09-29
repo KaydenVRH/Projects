@@ -6,7 +6,9 @@ public final class ShellController {
     private let loader: ConfigLoader
     private let viewModel: BarViewModel
     private let ipc = IPCServer()
-    private lazy var launcher = AppLauncher(viewModel: viewModel)
+    private lazy var appLauncher = AppLauncher(viewModel: viewModel)
+    private var scriptLauncher: ScriptLauncher?
+    private var wallpaperLauncher: WallpaperLauncher?
     private lazy var autoHide = BarAutoHide(
         bars: { [weak self] in self?.bars ?? [] },
         suspended: { [weak self] in self?.manualHidden ?? false }
@@ -22,6 +24,8 @@ public final class ShellController {
 
     public func start() {
         ipc.start()
+        makeScriptLauncher()
+        makeWallpaperLauncher()
         subscribeToEvents()
         rebuildBars()
 
@@ -35,13 +39,17 @@ public final class ShellController {
         loader.startWatching { [weak self] config in
             guard let self else { return }
             self.viewModel.apply(config)
+            self.makeScriptLauncher()
+            self.makeWallpaperLauncher()
             self.rebuildBars()
         }
     }
 
     public func stop() {
         ipc.stop()
-        launcher.hide()
+        appLauncher.hide()
+        scriptLauncher?.hide()
+        wallpaperLauncher?.hide()
         autoHide.stop()
         for token in eventTokens { EventBus.unobserve(token) }
         eventTokens.removeAll()
@@ -58,9 +66,15 @@ public final class ShellController {
 
     private func subscribeToEvents() {
         let bus = EventBus.self
-        eventTokens.append(bus.observe("app_launcher_toggle") { [weak self] _ in self?.launcher.toggle() })
-        eventTokens.append(bus.observe("app_launcher_open") { [weak self] _ in self?.launcher.show() })
-        eventTokens.append(bus.observe("app_launcher_close") { [weak self] _ in self?.launcher.hide() })
+        eventTokens.append(bus.observe("app_launcher_toggle") { [weak self] _ in self?.appLauncher.toggle() })
+        eventTokens.append(bus.observe("app_launcher_open") { [weak self] _ in self?.appLauncher.show() })
+        eventTokens.append(bus.observe("app_launcher_close") { [weak self] _ in self?.appLauncher.hide() })
+        eventTokens.append(bus.observe("script_launcher_toggle") { [weak self] _ in self?.scriptLauncher?.toggle() })
+        eventTokens.append(bus.observe("script_launcher_open") { [weak self] _ in self?.scriptLauncher?.show() })
+        eventTokens.append(bus.observe("script_launcher_close") { [weak self] _ in self?.scriptLauncher?.hide() })
+        eventTokens.append(bus.observe("wallpaper_launcher_toggle") { [weak self] _ in self?.wallpaperLauncher?.toggle() })
+        eventTokens.append(bus.observe("wallpaper_launcher_open") { [weak self] _ in self?.wallpaperLauncher?.show() })
+        eventTokens.append(bus.observe("wallpaper_launcher_close") { [weak self] _ in self?.wallpaperLauncher?.hide() })
         eventTokens.append(bus.observe("bar_hide") { [weak self] _ in self?.setBarsHidden(true) })
         eventTokens.append(bus.observe("bar_show") { [weak self] _ in self?.setBarsHidden(false) })
         eventTokens.append(bus.observe("bar_toggle") { [weak self] _ in
@@ -70,6 +84,16 @@ public final class ShellController {
         eventTokens.append(bus.observe("config_reload") { [weak self] _ in
             self?.loader.reloadNow()
         })
+    }
+
+    private func makeScriptLauncher() {
+        let directory = KShellPaths.resolve(loader.config.scriptDirectory)
+        scriptLauncher = ScriptLauncher(viewModel: viewModel, directory: directory)
+    }
+
+    private func makeWallpaperLauncher() {
+        let directories = loader.config.wallpaperDirectories.map { KShellPaths.resolve($0) }
+        wallpaperLauncher = WallpaperLauncher(viewModel: viewModel, directories: directories)
     }
 
     /// Manually show/hide every bar, overriding auto-hide while hidden.

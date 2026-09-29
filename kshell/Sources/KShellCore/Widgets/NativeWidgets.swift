@@ -70,7 +70,7 @@ final class CPURuntime: MetricRuntime {
     private var previous: host_cpu_load_info?
 
     init(spec: WidgetSpec, theme: Theme) {
-        super.init(spec: spec, theme: theme, defaultIcon: "\u{f2db}")
+        super.init(spec: spec, theme: theme, defaultIcon: "\u{f4bc}")
         _ = SystemMetrics.cpuUsage(previous: &previous)
     }
 
@@ -82,7 +82,7 @@ final class CPURuntime: MetricRuntime {
 
 final class RAMRuntime: MetricRuntime {
     init(spec: WidgetSpec, theme: Theme) {
-        super.init(spec: spec, theme: theme, defaultIcon: "\u{efc1}")
+        super.init(spec: spec, theme: theme, defaultIcon: "\u{f0c9}")
     }
 
     override func tick() {

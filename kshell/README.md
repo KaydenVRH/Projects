@@ -105,15 +105,43 @@ exec-on-workspace-change = ['/bin/bash', '-c',
   'kshell trigger aerospace_workspace_change FOCUSED_WORKSPACE=$AEROSPACE_FOCUSED_WORKSPACE']
 ```
 
-## Panels & the app launcher
+## Panels & launchers
 
-`OverlayPanel` is a reusable, key-capable panel that slides up from below the
-screen — the base for popups and launchers. The app launcher is built on it:
+`OverlayPanel` is a reusable, key-capable panel that slides in from a screen
+edge; `OverlayLauncher` drives it. A panel is anchored to one edge
+(`OverlayEdge`), sits **flush** with that edge, and rounds only the corners
+facing away from it (`SheetShape`) so it reads as extending out of the edge.
+Frosted with the bar's blur, and it animates in from just past the edge. Three
+launchers are built on it:
 
-- Open with the Apple logo in the bar, or `kshell trigger app_launcher_toggle`
-  (`app_launcher_open` / `app_launcher_close` also exist).
-- Type to filter, `Enter` launches the first match, click to launch, `Esc` closes.
-- Uses the same `[bar]` background/blur/corner radius and `[theme]` colors as the bar.
+**App launcher** — search + grid of applications (bottom sheet).
+- Open with the Apple logo, or `kshell trigger app_launcher_toggle`.
+- `Enter` launches the first match, click to launch, `Esc` closes.
+
+**Script launcher** — search + grid of `.sh` files (bottom sheet).
+- Open with `kshell trigger script_launcher_toggle`.
+- Configure the directory:
+  ```toml
+  [script_launcher]
+  directory = "~/dotfiles/scripts"
+  ```
+- A selection runs `bash <script>`.
+
+**Wallpaper launcher** — a left sidebar of preview rows that slides in from the
+left edge (rounded right corners).
+- Open with `kshell trigger wallpaper_launcher_toggle`.
+- `↑`/`↓` browse, `⏎` applies, `Esc` closes; click a row to select it, click
+  it again to apply.
+- Images are set natively (`NSWorkspace.setDesktopImageURL` on every display);
+  videos (`.mp4`/`.mov`) are handed to `lwp` if present.
+- Configure the scanned directories:
+  ```toml
+  [wallpaper_launcher]
+  directories = ["~/dotfiles/wallpapers", "~/wallpapers", "~/dotfiles/live-wallpapers"]
+  ```
+
+Both accept `*_open` / `*_close` events, scan on open, and use the same `[bar]`
+background/blur/corner radius and `[theme]` colors as the bar.
 
 ## JavaScript widgets
 
@@ -157,6 +185,11 @@ kshell reload                      # reload the config
 kshell --diagnose                  # screens, notch, sensors
 kshell --version | --help
 ```
+
+Debug helpers: `kshell --render <file.png> [height]` renders the bar offscreen
+(handy for checking layout without eyeballing the screen), `kshell --glyphs`
+checks each icon codepoint exists in the font, and `kshell --icons` renders the
+icon set large.
 
 ## Auto-hide & displays
 

@@ -52,8 +52,8 @@ enum WidgetFactory {
             icon: icon ?? resolvedIcon(spec),
             label: label,
             flexible: flexible,
-            paddingX: paddingX ?? spec.number("padding") ?? 4,
-            spacing: spacing ?? spec.number("spacing") ?? 6
+            paddingX: paddingX ?? spec.number("padding") ?? 6,
+            spacing: spacing ?? spec.number("spacing") ?? 10
         )
         model.iconColor = spec.color("icon_color") ?? spec.color("color") ?? theme.accent
         model.labelColor = spec.color("label_color") ?? spec.color("color") ?? theme.highlight

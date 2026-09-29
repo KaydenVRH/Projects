@@ -72,19 +72,31 @@ public struct ShellConfig {
     public var left: [WidgetSpec]
     public var center: [WidgetSpec]
     public var right: [WidgetSpec]
+    /// Directory the script launcher lists (`.sh` files).
+    public var scriptDirectory: String
+    /// Directories the wallpaper launcher scans.
+    public var wallpaperDirectories: [String]
 
     public init(
         bar: BarConfig = BarConfig(),
         theme: Theme = Theme(),
         left: [WidgetSpec] = [],
         center: [WidgetSpec] = [],
-        right: [WidgetSpec] = []
+        right: [WidgetSpec] = [],
+        scriptDirectory: String = "~/dotfiles/scripts",
+        wallpaperDirectories: [String] = [
+            "~/dotfiles/wallpapers",
+            "~/wallpapers",
+            "~/dotfiles/live-wallpapers",
+        ]
     ) {
         self.bar = bar
         self.theme = theme
         self.left = left
         self.center = center
         self.right = right
+        self.scriptDirectory = scriptDirectory
+        self.wallpaperDirectories = wallpaperDirectories
     }
 
     public static func parse(toml text: String) throws -> ShellConfig {
@@ -121,12 +133,27 @@ public struct ShellConfig {
         }
 
         let barTable = root.table("bar")
+        var scriptDirectory = "~/dotfiles/scripts"
+        if let launcher = root.table("script_launcher"), let directory = launcher.string("directory") {
+            scriptDirectory = directory
+        }
+        var wallpaperDirectories = [
+            "~/dotfiles/wallpapers",
+            "~/wallpapers",
+            "~/dotfiles/live-wallpapers",
+        ]
+        if let launcher = root.table("wallpaper_launcher"), let array = launcher.array("directories") {
+            let directories = array.compactMap { $0.string }.filter { !$0.isEmpty }
+            if !directories.isEmpty { wallpaperDirectories = directories }
+        }
         return ShellConfig(
             bar: bar,
             theme: theme,
             left: parseWidgets(barTable?.array("left")),
             center: parseWidgets(barTable?.array("center")),
-            right: parseWidgets(barTable?.array("right"))
+            right: parseWidgets(barTable?.array("right")),
+            scriptDirectory: scriptDirectory,
+            wallpaperDirectories: wallpaperDirectories
         )
     }
 

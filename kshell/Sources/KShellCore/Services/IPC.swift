@@ -107,4 +107,12 @@ public enum IPCClient {
         let written = data.withUnsafeBufferPointer { write(fd, $0.baseAddress, $0.count) }
         return written == data.count
     }
+
+    /// Whether another kshell instance is currently listening on the socket.
+    public static func isInstanceRunning() -> Bool {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        return withSockAddr(path: IPCPaths.socketPath) { connect(fd, $0, $1) } == 0
+    }
 }

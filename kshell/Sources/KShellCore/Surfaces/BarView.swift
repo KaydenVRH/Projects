@@ -77,14 +77,17 @@ private struct WidgetItemView: View {
                     Text(icon)
                         .font(.custom(iconFontName, size: appearance.iconFontSize ?? appearance.fontSize + 3))
                         .foregroundColor(iconColor)
+                        .lineLimit(1)
                         .fixedSize()
+                        .layoutPriority(1)
                 }
                 if !model.label.isEmpty {
                     Text(model.label)
                         .font(.custom(appearance.fontFamily, size: appearance.fontSize))
                         .foregroundColor(labelColor)
                         .lineLimit(1)
-                        .fixedSize()
+                        .truncationMode(.tail)
+                        .minimumScaleFactor(0.9)
                 }
             }
             .padding(.horizontal, model.paddingX)
