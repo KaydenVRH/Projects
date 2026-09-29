@@ -1,0 +1,109 @@
+# kshell — example config (Synthwave)
+# Copy to ~/.config/kshell/config.toml and edit.
+#
+# Icons can be given as a literal `icon = ""` or, to avoid pasting
+# Private-Use glyphs, as an ASCII `icon_hex = "f8ff"` codepoint.
+#
+# Colors: "#RRGGBB", "#RRGGBBAA" (alpha last), or "0xAARRGGBB" (alpha first).
+
+[bar]
+height          = 34
+edge            = "top"          # top | bottom
+margin_x        = 0
+margin_y        = 0
+corner_radius   = 0
+padding_x       = 12
+background      = "#100018AA"    # translucent synthwave bg (0xAA100018)
+blur            = true           # frosted-glass via NSVisualEffectView
+font            = "Hack Nerd Font"
+font_size       = 16
+icon_font       = "Hack Nerd Font"
+icon_font_size  = 19
+# notch_width   = 200            # auto-detected from the display; set to override
+# display       = "all"          # all | main
+# autohide      = false          # slide the bar off the top edge until hovered
+# autohide_peek = 2
+# autohide_zone = 6
+# autohide_delay = 0.4
+
+[theme]
+accent     = "#ff2a85"           # icons  (sketchybar ACCENT)
+highlight  = "#00d4ff"           # labels (sketchybar HIGHLIGHT)
+foreground = "#e0d0f0"
+
+# ─────────────────────────────── left ───────────────────────────────
+# On notched displays these stay to the left of the notch automatically.
+
+[[bar.left]]
+type       = "apple"
+icon_hex   = "f8ff"              # U+F8FF Apple logo (SF Pro Display)
+icon_color = "#ff2a85"
+padding    = 6
+
+[[bar.left]]
+type            = "workspaces"
+workspaces      = "1,2,3,4,5,6,7,8,9"
+padding         = 3
+unfocused_color = "#ff2a85"
+focused_color   = "#00d4ff"
+
+[[bar.left]]
+type     = "chevron"
+icon_hex = "f054"                # chevron-right
+padding  = 4
+
+[[bar.left]]
+type        = "front_app"
+padding     = 8
+label_color = "#e0d0f0"
+
+[[bar.left]]
+type      = "script"
+command   = "~/programs/projects/kshell/scripts/widgets/now_playing.sh"
+interval  = 3
+icon_hex  = "f001"               # music note
+padding   = 10
+
+# ─────────────────────────────── right ──────────────────────────────
+
+[[bar.right]]
+type     = "js"
+file     = "~/programs/projects/kshell/scripts/widgets/git_branch.js"
+interval = 1
+
+[[bar.right]]
+type     = "clock"
+format   = "EEE h:mm a"
+interval = 10
+icon_hex = "f017"
+
+[[bar.right]]
+type     = "volume"
+interval = 2
+
+[[bar.right]]
+type     = "battery"
+interval = 120
+
+[[bar.right]]
+type     = "cpu"
+interval = 5
+
+[[bar.right]]
+type     = "ram"
+interval = 5
+
+[[bar.right]]
+type     = "wifi"
+interval = 10
+
+[[bar.right]]
+type     = "bluetooth"
+interval = 10
+
+[[bar.right]]
+type      = "script"
+command   = "brew outdated 2>/dev/null | wc -l | tr -d ' '"
+interval  = 3600
+icon_hex  = "f0fc"               # beer
+separator = "|"
