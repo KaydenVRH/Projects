@@ -24,9 +24,11 @@ final class OverlayLauncher {
         self.makeContent = content
     }
 
-    func toggle() { isVisible ? hide() : show() }
+    func toggle() { visible ? hide() : show() }
 
-    func show() {
+    var visible: Bool { isVisible }
+
+    func show(animated: Bool = true) {
         guard !isVisible else { return }
         let mouse = NSEvent.mouseLocation
         guard let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) })
@@ -38,17 +40,18 @@ final class OverlayLauncher {
             screen: screen,
             size: preferredSize(screen),
             edge: edge,
+            appearance: viewModel.appearance,
             content: makeContent { [weak self] in self?.hide() }
         )
         panel = overlay
-        overlay.show(animated: true)
+        overlay.show(animated: animated)
     }
 
-    func hide() {
+    func hide(animated: Bool = true) {
         guard isVisible else { return }
         isVisible = false
         let current = panel
         panel = nil
-        current?.hide(animated: true)
+        current?.hide(animated: animated)
     }
 }

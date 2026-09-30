@@ -13,7 +13,25 @@ public final class BarPanel: NSPanel {
     public private(set) var isRevealed: Bool
 
     private let shownFrame: NSRect
-    private let hiddenFrame: NSRect
+    private let shownWindowFrame: NSRect
+    private let hiddenWindowFrame: NSRect
+
+    /// Slack kept beyond the screen edge so the reveal's overshoot cannot lift
+    /// the bar off the edge (which reads as the bar floating for a moment).
+    static let revealBleed: CGFloat = 16
+
+    /// The full window frame for a visible bar frame: the bar itself plus slack
+    /// past the screen edge.
+    static func windowFrame(visible: NSRect, edge: BarEdge) -> NSRect {
+        switch edge {
+        case .top:
+            return NSRect(x: visible.minX, y: visible.minY,
+                          width: visible.width, height: visible.height + revealBleed)
+        case .bottom:
+            return NSRect(x: visible.minX, y: visible.minY - revealBleed,
+                          width: visible.width, height: visible.height + revealBleed)
+        }
+    }
 
     public init(screen: NSScreen, appearance: BarConfig, viewModel: BarViewModel) {
         self.targetScreen = screen
@@ -22,12 +40,14 @@ public final class BarPanel: NSPanel {
         self.hideDelay = appearance.autohideDelay
 
         let shown = BarPanel.frame(for: screen, appearance: appearance)
+        let hidden = BarPanel.hiddenFrame(for: screen, appearance: appearance, shown: shown)
         self.shownFrame = shown
-        self.hiddenFrame = BarPanel.hiddenFrame(for: screen, appearance: appearance, shown: shown)
+        self.shownWindowFrame = BarPanel.windowFrame(visible: shown, edge: appearance.edge)
+        self.hiddenWindowFrame = BarPanel.windowFrame(visible: hidden, edge: appearance.edge)
         self.isRevealed = !appearance.autohide
 
         super.init(
-            contentRect: appearance.autohide ? self.hiddenFrame : shown,
+            contentRect: appearance.autohide ? self.hiddenWindowFrame : self.shownWindowFrame,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -92,14 +112,23 @@ public final class BarPanel: NSPanel {
             .ignoresCycle,
         ]
 
-        let container = NSView(frame: NSRect(origin: .zero, size: size))
+        // The window is taller than the bar by `revealBleed`; the bar itself sits
+        // at the on-screen end of it.
+        let windowSize = NSSize(width: size.width, height: size.height + Self.revealBleed)
+        let barFrame = NSRect(
+            x: 0,
+            y: appearance.edge == .top ? 0 : Self.revealBleed,
+            width: size.width,
+            height: size.height
+        )
+        let container = NSView(frame: NSRect(origin: .zero, size: windowSize))
         container.wantsLayer = true
         container.layer?.cornerRadius = appearance.cornerRadius
         container.layer?.masksToBounds = appearance.cornerRadius > 0
 
         if appearance.blur {
-            let effect = NSVisualEffectView(frame: container.bounds)
-            effect.autoresizingMask = [.width, .height]
+            let effect = NSVisualEffectView(frame: barFrame)
+            effect.autoresizingMask = []
             effect.material = .hudWindow
             effect.blendingMode = .behindWindow
             effect.state = .active
@@ -107,8 +136,8 @@ public final class BarPanel: NSPanel {
         }
 
         let host = NSHostingView(rootView: BarView(viewModel: viewModel, notchWidth: notchWidth))
-        host.frame = container.bounds
-        host.autoresizingMask = [.width, .height]
+        host.frame = barFrame
+        host.autoresizingMask = []
         container.addSubview(host)
 
         contentView = container
@@ -124,15 +153,19 @@ public final class BarPanel: NSPanel {
 
     public func setRevealed(_ revealed: Bool, animated: Bool) {
         isRevealed = revealed
-        let target = revealed ? shownFrame : hiddenFrame
+        let target = revealed ? shownWindowFrame : hiddenWindowFrame
         guard frame != target else { return }
         guard animated else {
             setFrame(target, display: true)
             return
         }
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = revealed ? 0.22 : 0.18
-            context.timingFunction = CAMediaTimingFunction(name: revealed ? .easeOut : .easeIn)
+            context.duration = revealed ? 0.28 : 0.18
+            // easeOutBack on the way in: the bar overshoots its resting place a
+            // little and settles back, instead of stopping dead.
+            context.timingFunction = revealed
+                ? CAMediaTimingFunction(controlPoints: 0.34, 1.56, 0.64, 1.0)
+                : CAMediaTimingFunction(name: .easeIn)
             animator().setFrame(target, display: true)
         }
     }

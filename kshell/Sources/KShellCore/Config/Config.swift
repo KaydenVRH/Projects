@@ -38,10 +38,91 @@ public struct BarConfig {
 
 /// Resolved theme colors. Widgets may override per-instance.
 public struct Theme {
+    /// Name of the active theme (written by the theme switcher).
+    public var name: String? = nil
     public var accent: RGBA? = RGBA(hex: "#d0d0d0")
     public var highlight: RGBA? = RGBA(hex: "#a0a0a0")
     public var foreground: RGBA? = RGBA(hex: "#e0e0e0")
+    /// Muted color, for de-emphasised text.
+    public var dim: RGBA? = nil
+    /// Secondary accent (statusline insert mode, etc.).
+    public var mid: RGBA? = nil
     public var background: RGBA? = nil
+
+    public init() {}
+}
+
+/// One switchable theme: its palette plus the kitty/nvim/wallpaper to apply.
+public struct ThemeDefinition {
+    public var name: String
+    /// Kitty theme file to `include` (relative to the kitty config directory).
+    public var kitty: String?
+    /// Neovim colorscheme name.
+    public var nvim: String?
+    /// Wallpaper path (image, or a video for the live-wallpaper engine).
+    public var wallpaper: String?
+    public var accent: String?
+    public var highlight: String?
+    public var foreground: String?
+    public var dim: String?
+    public var mid: String?
+    public var background: String?
+    /// Kitty `background_opacity` for this theme (falls back to the launcher).
+    public var opacity: Double?
+    /// Kitty `background_blur` for this theme (falls back to the launcher).
+    public var blur: Double?
+
+    public init(
+        name: String,
+        kitty: String? = nil,
+        nvim: String? = nil,
+        wallpaper: String? = nil,
+        accent: String? = nil,
+        highlight: String? = nil,
+        foreground: String? = nil,
+        dim: String? = nil,
+        mid: String? = nil,
+        background: String? = nil,
+        opacity: Double? = nil,
+        blur: Double? = nil
+    ) {
+        self.name = name
+        self.kitty = kitty
+        self.nvim = nvim
+        self.wallpaper = wallpaper
+        self.accent = accent
+        self.highlight = highlight
+        self.foreground = foreground
+        self.dim = dim
+        self.mid = mid
+        self.background = background
+        self.opacity = opacity
+        self.blur = blur
+    }
+
+    /// `[theme]` entries for this theme, in config order.
+    public var palette: [(key: String, value: String)] {
+        [
+            ("accent", accent),
+            ("highlight", highlight),
+            ("foreground", foreground),
+            ("dim", dim),
+            ("mid", mid),
+            ("background", background),
+        ].compactMap { key, value in value.map { (key, $0) } }
+    }
+}
+
+/// The theme-switcher launcher: which files it rewrites and what it can pick.
+public struct ThemeLauncherConfig {
+    public var kittyConfig: String = "~/dotfiles/kitty/.config/kitty/kitty.conf"
+    public var nvimInit: String = "~/dotfiles/nvim/.config/nvim/init.lua"
+    public var shellConfig: String = "~/.config/kshell/config.toml"
+    /// Kitty `background_opacity` used by themes that don't set their own.
+    public var opacity: Double?
+    /// Kitty `background_blur` used by themes that don't set their own.
+    public var blur: Double?
+    public var themes: [ThemeDefinition] = []
 
     public init() {}
 }
@@ -76,6 +157,8 @@ public struct ShellConfig {
     public var scriptDirectory: String
     /// Directories the wallpaper launcher scans.
     public var wallpaperDirectories: [String]
+    /// The theme-switcher launcher.
+    public var themeLauncher: ThemeLauncherConfig
 
     public init(
         bar: BarConfig = BarConfig(),
@@ -88,7 +171,8 @@ public struct ShellConfig {
             "~/dotfiles/wallpapers",
             "~/wallpapers",
             "~/dotfiles/live-wallpapers",
-        ]
+        ],
+        themeLauncher: ThemeLauncherConfig = ThemeLauncherConfig()
     ) {
         self.bar = bar
         self.theme = theme
@@ -97,10 +181,15 @@ public struct ShellConfig {
         self.right = right
         self.scriptDirectory = scriptDirectory
         self.wallpaperDirectories = wallpaperDirectories
+        self.themeLauncher = themeLauncher
     }
 
     public static func parse(toml text: String) throws -> ShellConfig {
         let root = try TOMLTable(string: text)
+
+        // Colors anywhere in the config may be written as `$name` referring to
+        // the `[theme]` section, so install the tokens before parsing anything.
+        ThemeTokens.install(from: root.table("theme"))
 
         var bar = BarConfig()
         if let t = root.table("bar") {
@@ -125,10 +214,14 @@ public struct ShellConfig {
         }
 
         var theme = Theme()
-        if let t = root.table("theme") {
+        let themeTable = root.table("theme")
+        if let t = themeTable {
+            if let v = t.string("name") { theme.name = v }
             if let v = RGBA.parse(t.string("accent")) { theme.accent = v }
             if let v = RGBA.parse(t.string("highlight")) { theme.highlight = v }
             if let v = RGBA.parse(t.string("foreground")) { theme.foreground = v }
+            if let v = RGBA.parse(t.string("dim")) { theme.dim = v }
+            if let v = RGBA.parse(t.string("mid")) { theme.mid = v }
             if let v = RGBA.parse(t.string("background")) { theme.background = v }
         }
 
@@ -146,6 +239,33 @@ public struct ShellConfig {
             let directories = array.compactMap { $0.string }.filter { !$0.isEmpty }
             if !directories.isEmpty { wallpaperDirectories = directories }
         }
+        var themeLauncher = ThemeLauncherConfig()
+        if let launcher = root.table("theme_launcher") {
+            if let v = launcher.string("kitty_config") { themeLauncher.kittyConfig = v }
+            if let v = launcher.string("nvim_init") { themeLauncher.nvimInit = v }
+            if let v = launcher.string("shell_config") { themeLauncher.shellConfig = v }
+            if let v = launcher.number("opacity") { themeLauncher.opacity = v }
+            if let v = launcher.number("blur") { themeLauncher.blur = v }
+            if let array = launcher.array("themes") {
+                themeLauncher.themes = array.compactMap { element in
+                    guard let table = element.table, let name = table.string("name") else { return nil }
+                    return ThemeDefinition(
+                        name: name,
+                        kitty: table.string("kitty"),
+                        nvim: table.string("nvim"),
+                        wallpaper: table.string("wallpaper"),
+                        accent: table.string("accent"),
+                        highlight: table.string("highlight"),
+                        foreground: table.string("foreground"),
+                        dim: table.string("dim"),
+                        mid: table.string("mid"),
+                        background: table.string("background"),
+                        opacity: table.number("opacity"),
+                        blur: table.number("blur")
+                    )
+                }
+            }
+        }
         return ShellConfig(
             bar: bar,
             theme: theme,
@@ -153,7 +273,8 @@ public struct ShellConfig {
             center: parseWidgets(barTable?.array("center")),
             right: parseWidgets(barTable?.array("right")),
             scriptDirectory: scriptDirectory,
-            wallpaperDirectories: wallpaperDirectories
+            wallpaperDirectories: wallpaperDirectories,
+            themeLauncher: themeLauncher
         )
     }
 

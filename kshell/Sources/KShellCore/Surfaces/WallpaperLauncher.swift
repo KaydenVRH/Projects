@@ -162,6 +162,7 @@ struct WallpaperLauncherView: View {
         .overlay { sheet.stroke(accent.opacity(0.35), lineWidth: 1) }
         .clipShape(sheet)
         .focusable()
+        .focusEffectDisabled()
         .focused($focused)
         .onKeyPress(.upArrow) { move(-1); return .handled }
         .onKeyPress(.downArrow) { move(1); return .handled }
@@ -212,7 +213,7 @@ struct WallpaperLauncherView: View {
             .frame(maxHeight: .infinity)
             .onChange(of: selectedIndex) { _, newValue in
                 guard items.indices.contains(newValue) else { return }
-                withAnimation(.snappy(duration: 0.28)) {
+                withAnimation(.snappy(duration: 0.30, extraBounce: 0.12)) {
                     proxy.scrollTo(items[newValue].id, anchor: .center)
                 }
             }
@@ -248,7 +249,7 @@ struct WallpaperLauncherView: View {
                 .fill(selected ? accent.opacity(0.18) : Color.white.opacity(0.03))
         )
         .contentShape(Rectangle())
-        .animation(.snappy(duration: 0.22), value: selected)
+        .animation(.snappy(duration: 0.26, extraBounce: 0.18), value: selected)
     }
 
     @ViewBuilder

@@ -46,12 +46,18 @@ font      = "Hack Nerd Font"
 font_size = 14
 
 [theme]
-accent    = "#83c092"    # icons
-highlight = "#7fbbb3"    # labels
+name       = "Synthwave"  # written by the theme switcher
+accent     = "#83c092"    # icons  (primary accent)
+highlight  = "#7fbbb3"    # labels (secondary accent)
+foreground = "#d3c6aa"
+dim        = "#859289"    # muted text
+mid        = "#7fbbb3"
+background = "#2d353bAA"  # bar background
 
 [[bar.left]]
 type = "apple"
 icon_hex = "f8ff"
+icon_color = "$accent"    # any [theme] color, as a $token
 
 [[bar.right]]
 type = "clock"
@@ -63,12 +69,17 @@ first). Icons can be written as a literal `icon = ""` or as an ASCII
 codepoint `icon_hex = "f8ff"` (handy because Private-Use glyphs are awkward to
 paste).
 
+Any color may instead be a **token** — `$accent`, `$highlight`, `$foreground`,
+`$dim`, `$mid`, `$background` — resolved from `[theme]`. That way re-colouring
+the whole bar only means rewriting that one section, which is what the theme
+switcher does.
+
 ## Widgets
 
 | type | fields | notes |
 |---|---|---|
 | `apple` | `icon_hex`, `icon_font` | Apple logo, drawn from `SF Pro Display` |
-| `workspaces` | `workspaces` = "1,2,…", `focused_color`, `unfocused_color` | aerospace; click to switch. Discovered live from aerospace when no list is given |
+| `workspaces` | `workspaces` = "1,2,…", `focused_color`, `unfocused_color`, `hide_empty` | aerospace; click to switch. Discovered live from aerospace when no list is given. `hide_empty` (default `true`) shows only the focused workspace and those holding windows, like sketchybar |
 | `chevron` | `icon_hex` | separator glyph |
 | `spacer` | — | flexible gap |
 | `text` | `icon`, `text`, colors | static |
@@ -84,6 +95,10 @@ paste).
 
 Per-widget overrides: `icon`, `icon_hex`, `icon_color`, `label_color`,
 `color`, `padding`, `spacing`, `icon_font`.
+
+Built-in events: `app_launcher_{toggle,open,close}`,
+`script_launcher_{toggle,open,close}`, `wallpaper_launcher_{toggle,open,close}`,
+`theme_launcher_{toggle,open,close}`, `bar_{hide,show,toggle}`, `config_reload`.
 
 ## Events (IPC)
 
@@ -142,6 +157,57 @@ left edge (rounded right corners).
 
 Both accept `*_open` / `*_close` events, scan on open, and use the same `[bar]`
 background/blur/corner radius and `[theme]` colors as the bar.
+
+**Theme launcher** — a right sidebar that slides in from the right edge (rounded
+left corners) and re-colours your whole setup at once: kitty, neovim, kshell
+itself, and the desktop wallpaper.
+- Open with `kshell trigger theme_launcher_toggle`.
+- `↑`/`↓` browse, `⏎` or click applies, `Esc` closes. It stays open after
+  applying so you can flip through themes and try them.
+- Applying rewrites only the relevant values in each config (comments and
+  layout are preserved): the kitty `include` line (then `SIGUSR1`s kitty to
+  reload), `vim.cmd.colorscheme(...)` plus the lualine palette in `init.lua`,
+  the `[theme]` section of `~/.config/kshell/config.toml`, and the wallpaper
+  via `NSWorkspace` (or `lwp` for videos).
+- Define themes in config:
+  ```toml
+  [theme_launcher]
+  kitty_config = "~/dotfiles/kitty/.config/kitty/kitty.conf"
+  nvim_init    = "~/dotfiles/nvim/.config/nvim/init.lua"
+  shell_config = "~/.config/kshell/config.toml"
+  opacity      = 0.7                 # kitty background_opacity default
+  blur         = 40                  # kitty background_blur default
+
+  [[theme_launcher.themes]]
+  name       = "Synthwave"
+  kitty      = "synthwave.conf"                      # kitty include target
+  nvim       = "synthwave"                           # nvim colorscheme
+  wallpaper  = "~/dotfiles/wallpapers/synthwave.jpg" # optional
+  accent     = "#ff2a85"
+  highlight  = "#00d4ff"
+  foreground = "#e0d0f0"
+  dim        = "#9a80aa"
+  mid        = "#00d4ff"
+  background = "#100018AA"         # bar colour; lower the alpha for more glass
+  opacity    = 0.45                # optional per-theme kitty glass
+  blur       = 64
+  ```
+  Any target may be omitted (say, a theme with no wallpaper) and it is skipped.
+  `opacity`/`blur` fall back to the `[theme_launcher]` values, so switching away
+  from a glassy theme restores the default.
+
+  Shipped in the example config: **Synthwave**, **Everforest**, **Rose Pine**,
+  **Catppuccin**, **Monochrome**, **Tokyo Night**, **Gruvbox**, **Nord**,
+  **Kanagawa**, **Dracula**, **One Dark** — each with a kitty theme
+  (`~/.config/kitty/<name>.conf`), an nvim colorscheme
+  (`~/.config/nvim/colors/<name>.lua`) and a wallpaper in
+  `~/dotfiles/wallpapers/`. Adding another is just another
+  `[[theme_launcher.themes]]` block plus those three files.
+
+  Wallpapers are sourced from [Omarchy](https://github.com/basecamp/omarchy),
+  [tokyo-night/wallpapers](https://github.com/tokyo-night/wallpapers),
+  [rose-pine/wallpapers](https://github.com/rose-pine/wallpapers) and
+  [dracula/wallpaper](https://github.com/dracula/wallpaper).
 
 ## JavaScript widgets
 

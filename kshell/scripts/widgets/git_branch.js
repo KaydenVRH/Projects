@@ -5,6 +5,10 @@
 // Define render() -> { icon, label, iconColor, labelColor, action,
 //                      actionEvent, padding, flexible } and optionally
 // onEvent(name, payload).
+//
+// Colors accept hex, or a theme token — "$accent", "$highlight", "$foreground",
+// "$dim", "$mid", "$background" — so the widget follows the active theme instead
+// of being stuck on one palette.
 
 var branch = "";
 
@@ -16,8 +20,8 @@ function render() {
   return {
     icon: "\uf126",            // fa-code-fork
     label: branch || "—",
-    iconColor: "#ff2a85",
-    labelColor: "#00d4ff",
+    iconColor: "$accent",
+    labelColor: "$highlight",
     actionEvent: "app_launcher_toggle"
   };
 }

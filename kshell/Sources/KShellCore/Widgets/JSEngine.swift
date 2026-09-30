@@ -57,8 +57,8 @@ final class JSEngine {
         var result = JSRender()
         result.icon = dictionary["icon"] as? String
         result.label = dictionary["label"] as? String
-        if let hex = dictionary["iconColor"] as? String { result.iconColor = RGBA(hex: hex) }
-        if let hex = dictionary["labelColor"] as? String { result.labelColor = RGBA(hex: hex) }
+        if let hex = dictionary["iconColor"] as? String { result.iconColor = RGBA.parse(hex) }
+        if let hex = dictionary["labelColor"] as? String { result.labelColor = RGBA.parse(hex) }
         result.action = dictionary["action"] as? String
         result.actionEvent = dictionary["actionEvent"] as? String
         result.padding = (dictionary["padding"] as? NSNumber)?.doubleValue

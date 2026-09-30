@@ -26,9 +26,39 @@ if arguments.count >= 2 {
           kshell                              run the shell
           kshell trigger <event> [payload]    push an event into the running shell
           kshell reload                       reload the config
+          kshell theme                        list configured themes
+          kshell theme <name>                 apply a theme (kitty/nvim/kshell/wallpaper)
           kshell --diagnose                   print screen + system info
           kshell --version | --help
         """)
+        exit(0)
+
+    case "theme":
+        let loader = ConfigLoader()
+        let launcher = loader.config.themeLauncher
+        let query = arguments.count >= 3 ? arguments[2] : ""
+
+        guard !query.isEmpty else {
+            guard !launcher.themes.isEmpty else {
+                fail("kshell: no themes configured — add [[theme_launcher.themes]] to \(loader.path.path)")
+            }
+            for theme in launcher.themes {
+                let mark = theme.name == loader.config.theme.name ? "*" : " "
+                print("\(mark) \(theme.name)")
+            }
+            exit(0)
+        }
+        guard let theme = launcher.themes.first(where: { $0.name.lowercased() == query.lowercased() }) else {
+            let names = launcher.themes.map(\.name).joined(separator: ", ")
+            fail("kshell: unknown theme '\(query)' — available: \(names)")
+        }
+        let result = ThemeApplier.apply(theme, config: launcher)
+        // Nudge the running shell so the bar re-colours right away.
+        _ = IPCClient.send("config_reload")
+        print("applied \(theme.name) → \(result.changed.joined(separator: ", "))")
+        if !result.failed.isEmpty {
+            FileHandle.standardError.write(Data("kshell: could not update: \(result.failed.joined(separator: ", "))\n".utf8))
+        }
         exit(0)
 
     case "trigger":
@@ -138,7 +168,7 @@ if let index = arguments.firstIndex(of: "--render") {
     host.frame = NSRect(origin: .zero, size: size)
     guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
     host.cacheDisplay(in: host.bounds, to: rep)
-    if let data = rep.representation(using: .png, properties: [:]) {
+    if let data = rep.representation(using: NSBitmapImageRep.FileType.png, properties: [:]) {
         try? data.write(to: URL(fileURLWithPath: path))
         print("wrote \(path) (\(Int(size.width))x\(Int(size.height)), notch=\(Int(notch)))")
     }
@@ -186,7 +216,7 @@ if arguments.contains("--icons") {
     host.frame = NSRect(x: 0, y: 0, width: CGFloat(codepoints.count) * 60 + 48, height: 110)
     if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
         host.cacheDisplay(in: host.bounds, to: rep)
-        if let data = rep.representation(using: .png, properties: [:]) {
+        if let data = rep.representation(using: NSBitmapImageRep.FileType.png, properties: [:]) {
             let path = "/tmp/kshell-icons.png"
             try? data.write(to: URL(fileURLWithPath: path))
             print("wrote \(path)")
@@ -195,18 +225,98 @@ if arguments.contains("--icons") {
     exit(0)
 }
 
-if arguments.contains("--render-sheet") {
-    let size = NSSize(width: 560, height: 340)
-    let view = ZStack {
-        Color.clear
-        SheetShape(radius: 40).fill(Color(red: 0.55, green: 0.1, blue: 0.7))
+if arguments.contains("--render-icons") {
+    // Diagnostic: Nerd Font glyphs have ink wider than the font's advance, so
+    // SwiftUI clips them to the text's layout box. Draw a variants x glyphs grid
+    // and count ink per cell to find the smallest fix at the bar's real size.
+    let size: CGFloat = arguments.count > 2 ? (Double(arguments[2]).map { CGFloat($0) } ?? 19) : 19
+    let glyphs: [(String, UInt32)] = [
+        ("apple", 0xf8ff), ("cpu", 0xf4bc), ("ram", 0xf0c9), ("clock", 0xf43a),
+        ("brew", 0xf487), ("music", 0xf001), ("volume", 0xf028), ("wifi", 0xf1eb),
+        ("bt", 0xf293),
+    ]
+    let font = "Hack Nerd Font"
+    func glyph(_ code: UInt32) -> String {
+        guard let scalar = UnicodeScalar(code) else { return "?" }
+        return String(Character(scalar))
     }
-    .frame(width: size.width, height: size.height)
+    let cell: CGFloat = 30
+
+    @ViewBuilder
+    func variant<V: View>(_ text: V, _ kind: Int) -> some View {
+        if kind == 0 {
+            text.fixedSize()                                   // bar's current recipe
+        } else if kind == 1 {
+            text.fixedSize().padding(.trailing, size * 0.05)
+        } else if kind == 2 {
+            text.fixedSize().padding(.trailing, size * 0.10)
+        } else if kind == 3 {
+            text.fixedSize().padding(.trailing, size * 0.15)
+        } else if kind == 4 {
+            text.fixedSize().padding(.horizontal, size * 0.06)
+        } else {
+            text                                               // no fixedSize
+        }
+    }
+
+    let view = VStack(alignment: .leading, spacing: 2) {
+        ForEach(0..<6, id: \.self) { kind in
+            HStack(spacing: 0) {
+                Text("v\(kind)")
+                    .font(.system(size: 9))
+                    .foregroundColor(.yellow)
+                    .frame(width: 22, alignment: .leading)
+                ForEach(glyphs, id: \.0) { _, code in
+                    variant(Text(glyph(code)).font(.custom(font, size: size)).lineLimit(1), kind)
+                        .frame(width: cell, height: cell)
+                        .background(Color.black)
+                }
+            }
+        }
+    }
+    .padding(10)
+    .background(Color.black)
+    let hostSize = NSSize(width: cell * CGFloat(glyphs.count) + 42, height: cell * 6 + 20)
     let host = NSHostingView(rootView: view)
-    host.frame = NSRect(origin: .zero, size: size)
+    host.frame = NSRect(origin: .zero, size: hostSize)
+    host.layoutSubtreeIfNeeded()
+    host.displayIfNeeded()
     if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
         host.cacheDisplay(in: host.bounds, to: rep)
-        if let data = rep.representation(using: .png, properties: [:]) {
+        if let data = rep.representation(using: NSBitmapImageRep.FileType.png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: "/tmp/kshell-icons.png"))
+            print("wrote /tmp/kshell-icons.png (size \(size)pt)")
+        }
+    }
+    exit(0)
+}
+
+if arguments.contains("--render-sheet") {
+    let size = NSSize(width: 560, height: 340)
+    // Three sheets exactly like the launchers draw them: fill + 1px stroke,
+    // clipped to the shape — so the corners can be checked at high zoom.
+    let view = VStack(spacing: 20) {
+        ForEach([SheetShape.Corners.top, .leading, .trailing], id: \.rawValue) { corners in
+            let shape = SheetShape(radius: 34, corners: corners)
+            ZStack {
+                Color(red: 0.10, green: 0.10, blue: 0.12)
+                Color(red: 0.55, green: 0.1, blue: 0.7)
+                    .clipShape(shape)
+                    .overlay(shape.stroke(Color(red: 1, green: 0.16, blue: 0.52), lineWidth: 1))
+                    .clipShape(shape)
+            }
+            .frame(width: size.width, height: 90)
+        }
+    }
+    .padding(20)
+    .background(Color.black)
+    .frame(width: size.width + 40, height: 3 * 110 + 40)
+    let host = NSHostingView(rootView: view)
+    let hostSize = NSSize(width: size.width + 40, height: 3 * 110 + 40)
+    host.frame = NSRect(origin: .zero, size: hostSize)
+    if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+        host.cacheDisplay(in: host.bounds, to: rep)
+        if let data = rep.representation(using: NSBitmapImageRep.FileType.png, properties: [:]) {
             let path = "/tmp/kshell-sheet.png"
             try? data.write(to: URL(fileURLWithPath: path))
             print("wrote \(path)")

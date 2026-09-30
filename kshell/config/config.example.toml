@@ -13,7 +13,7 @@ margin_x        = 0
 margin_y        = 0
 corner_radius   = 0
 padding_x       = 12
-background      = "#100018AA"    # translucent synthwave bg (0xAA100018)
+background      = "$background"    # from [theme] below
 blur            = true           # frosted-glass via NSVisualEffectView
 font            = "Hack Nerd Font"
 font_size       = 16
@@ -26,10 +26,17 @@ icon_font_size  = 19
 # autohide_zone = 6
 # autohide_delay = 0.4
 
+# Colors anywhere in this file may be a token — "$accent", "$highlight",
+# "$foreground", "$dim", "$mid", "$background" — resolved from [theme] below,
+# so the theme switcher only has to rewrite that section.
 [theme]
-accent     = "#ff2a85"           # icons  (sketchybar ACCENT)
-highlight  = "#00d4ff"           # labels (sketchybar HIGHLIGHT)
+name       = "Synthwave"         # written by the theme switcher
+accent     = "#ff2a85"           # icons / primary accent
+highlight  = "#00d4ff"           # labels / secondary accent
 foreground = "#e0d0f0"
+dim        = "#9a80aa"           # muted text
+mid        = "#00d4ff"           # secondary accent (nvim statusline)
+background = "#100018AA"         # bar background
 
 # Script launcher (trigger with `kshell trigger script_launcher_toggle`)
 [script_launcher]
@@ -45,15 +52,16 @@ directories = ["~/dotfiles/wallpapers", "~/wallpapers", "~/dotfiles/live-wallpap
 [[bar.left]]
 type       = "apple"
 icon_hex   = "f8ff"              # U+F8FF Apple logo (SF Pro Display)
-icon_color = "#ff2a85"
+icon_color = "$accent"
 padding    = 6
 
 [[bar.left]]
 type            = "workspaces"
 workspaces      = "1,2,3,4,5,6,7,8,9"
 padding         = 3
-unfocused_color = "#ff2a85"
-focused_color   = "#00d4ff"
+unfocused_color = "$accent"
+focused_color   = "$highlight"
+hide_empty      = true            # only show workspaces that are focused or hold windows
 
 [[bar.left]]
 type     = "chevron"
@@ -63,7 +71,7 @@ padding  = 4
 [[bar.left]]
 type        = "front_app"
 padding     = 8
-label_color = "#e0d0f0"
+label_color = "$foreground"
 
 [[bar.left]]
 type      = "script"
@@ -117,3 +125,151 @@ command   = "brew outdated 2>/dev/null | wc -l | tr -d ' '"
 interval  = 3600
 icon_hex  = "f487"               # mug
 separator = "|"
+
+
+# ─────────────────────────── theme switcher ────────────────────────
+# Trigger with `kshell trigger theme_launcher_toggle`.
+# Applying a theme rewrites kitty, neovim, this file, and the wallpaper.
+
+[theme_launcher]
+kitty_config = "~/dotfiles/kitty/.config/kitty/kitty.conf"
+nvim_init    = "~/dotfiles/nvim/.config/nvim/init.lua"
+shell_config = "~/.config/kshell/config.toml"
+
+# Kitty glass used by themes that don't set their own.
+opacity = 0.7
+blur    = 40
+
+[[theme_launcher.themes]]
+name       = "Synthwave"
+kitty      = "synthwave.conf"
+nvim       = "synthwave"
+wallpaper  = "~/dotfiles/wallpapers/synthwave.jpg"
+accent     = "#ff2a85"
+highlight  = "#00d4ff"
+foreground = "#e0d0f0"
+dim        = "#9a80aa"
+mid        = "#00d4ff"
+background = "#100018AA"
+
+[[theme_launcher.themes]]
+name       = "Everforest"
+kitty      = "everforest.conf"
+nvim       = "everforest"
+wallpaper  = "~/dotfiles/wallpapers/everforest.png"
+accent     = "#83c092"
+highlight  = "#7fbbb3"
+foreground = "#d3c6aa"
+dim        = "#859289"
+mid        = "#7fbbb3"
+background = "#2d353bAA"
+
+[[theme_launcher.themes]]
+name       = "Rose Pine"
+kitty      = "rose-pine.conf"
+nvim       = "rose-pine"
+accent     = "#ebbcba"
+highlight  = "#c4a7e7"
+foreground = "#e0def4"
+dim        = "#6e6a86"
+mid        = "#c4a7e7"
+background = "#191724AA"
+wallpaper  = "~/dotfiles/wallpapers/rose-pine.jpg"
+
+[[theme_launcher.themes]]
+name       = "Catppuccin"
+kitty      = "catppuccin.conf"
+nvim       = "catppuccin"
+accent     = "#cba6f7"
+highlight  = "#89b4fa"
+foreground = "#cdd6f4"
+dim        = "#7f849c"
+mid        = "#89b4fa"
+background = "#1e1e2eAA"
+wallpaper  = "~/dotfiles/wallpapers/catppuccin.jpg"
+
+[[theme_launcher.themes]]
+name       = "Monochrome"
+kitty      = "bi.conf"
+nvim       = "mono"
+wallpaper  = "~/dotfiles/wallpapers/monochrome.jpg"
+accent     = "#d0d0d0"
+highlight  = "#808080"
+foreground = "#e0e0e0"
+dim        = "#606060"
+mid        = "#a0a0a0"
+background = "#1a1a1a55"           # extra glassy: barely-there grey
+opacity    = 0.45                  # extra glassy: kitty opacity
+blur       = 64                    # extra glassy: kitty blur
+[[theme_launcher.themes]]
+name       = "Tokyo Night"
+kitty      = "tokyo-night.conf"
+nvim       = "tokyo-night"
+wallpaper  = "~/dotfiles/wallpapers/tokyo-night.jpg"
+accent     = "#7aa2f7"
+highlight  = "#bb9af7"
+foreground = "#c0caf5"
+dim        = "#565f89"
+mid        = "#7dcfff"
+background = "#1a1b26AA"
+
+[[theme_launcher.themes]]
+name       = "Gruvbox"
+kitty      = "gruvbox.conf"
+nvim       = "gruvbox"
+wallpaper  = "~/dotfiles/wallpapers/gruvbox.jpg"
+accent     = "#fabd2f"
+highlight  = "#83a598"
+foreground = "#ebdbb2"
+dim        = "#928374"
+mid        = "#8ec07c"
+background = "#282828AA"
+
+[[theme_launcher.themes]]
+name       = "Nord"
+kitty      = "nord.conf"
+nvim       = "nord"
+wallpaper  = "~/dotfiles/wallpapers/nord.jpg"
+accent     = "#88c0d0"
+highlight  = "#81a1c1"
+foreground = "#d8dee9"
+dim        = "#4c566a"
+mid        = "#88c0d0"
+background = "#2e3440AA"
+
+[[theme_launcher.themes]]
+name       = "Kanagawa"
+kitty      = "kanagawa.conf"
+nvim       = "kanagawa"
+wallpaper  = "~/dotfiles/wallpapers/kanagawa.jpg"
+accent     = "#7e9cd8"
+highlight  = "#98bb6c"
+foreground = "#dcd7ba"
+dim        = "#727169"
+mid        = "#7aa89f"
+background = "#1f1f28AA"
+
+[[theme_launcher.themes]]
+name       = "Dracula"
+kitty      = "dracula.conf"
+nvim       = "dracula"
+wallpaper  = "~/dotfiles/wallpapers/dracula.jpg"
+accent     = "#bd93f9"
+highlight  = "#ff79c6"
+foreground = "#f8f8f2"
+dim        = "#6272a4"
+mid        = "#8be9fd"
+background = "#282a36AA"
+
+[[theme_launcher.themes]]
+name       = "One Dark"
+kitty      = "one-dark.conf"
+nvim       = "one-dark"
+wallpaper  = "~/dotfiles/wallpapers/one-dark.jpg"
+accent     = "#61afef"
+highlight  = "#98c379"
+foreground = "#abb2bf"
+dim        = "#5c6370"
+mid        = "#56b6c2"
+background = "#282c34AA"
+

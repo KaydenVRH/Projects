@@ -9,6 +9,7 @@ public final class ShellController {
     private lazy var appLauncher = AppLauncher(viewModel: viewModel)
     private var scriptLauncher: ScriptLauncher?
     private var wallpaperLauncher: WallpaperLauncher?
+    private var themeLauncher: ThemeLauncher?
     private lazy var autoHide = BarAutoHide(
         bars: { [weak self] in self?.bars ?? [] },
         suspended: { [weak self] in self?.manualHidden ?? false }
@@ -26,6 +27,7 @@ public final class ShellController {
         ipc.start()
         makeScriptLauncher()
         makeWallpaperLauncher()
+        makeThemeLauncher()
         subscribeToEvents()
         rebuildBars()
 
@@ -41,6 +43,7 @@ public final class ShellController {
             self.viewModel.apply(config)
             self.makeScriptLauncher()
             self.makeWallpaperLauncher()
+            self.makeThemeLauncher()
             self.rebuildBars()
         }
     }
@@ -50,6 +53,7 @@ public final class ShellController {
         appLauncher.hide()
         scriptLauncher?.hide()
         wallpaperLauncher?.hide()
+        themeLauncher?.hide(animated: false)
         autoHide.stop()
         for token in eventTokens { EventBus.unobserve(token) }
         eventTokens.removeAll()
@@ -75,6 +79,9 @@ public final class ShellController {
         eventTokens.append(bus.observe("wallpaper_launcher_toggle") { [weak self] _ in self?.wallpaperLauncher?.toggle() })
         eventTokens.append(bus.observe("wallpaper_launcher_open") { [weak self] _ in self?.wallpaperLauncher?.show() })
         eventTokens.append(bus.observe("wallpaper_launcher_close") { [weak self] _ in self?.wallpaperLauncher?.hide() })
+        eventTokens.append(bus.observe("theme_launcher_toggle") { [weak self] _ in self?.themeLauncher?.toggle() })
+        eventTokens.append(bus.observe("theme_launcher_open") { [weak self] _ in self?.themeLauncher?.show() })
+        eventTokens.append(bus.observe("theme_launcher_close") { [weak self] _ in self?.themeLauncher?.hide() })
         eventTokens.append(bus.observe("bar_hide") { [weak self] _ in self?.setBarsHidden(true) })
         eventTokens.append(bus.observe("bar_show") { [weak self] _ in self?.setBarsHidden(false) })
         eventTokens.append(bus.observe("bar_toggle") { [weak self] _ in
@@ -94,6 +101,24 @@ public final class ShellController {
     private func makeWallpaperLauncher() {
         let directories = loader.config.wallpaperDirectories.map { KShellPaths.resolve($0) }
         wallpaperLauncher = WallpaperLauncher(viewModel: viewModel, directories: directories)
+    }
+
+    /// Applying a theme rewrites `config.toml`, which reloads straight back into
+    /// here. The picker is updated in place rather than re-created, so it never
+    /// blinks or re-animates while it is open.
+    private func makeThemeLauncher() {
+        let config = loader.config.themeLauncher
+        if let existing = themeLauncher {
+            existing.update(config: config, activeName: viewModel.theme.name)
+            return
+        }
+        guard !config.themes.isEmpty else { return }
+
+        let launcher = ThemeLauncher(viewModel: viewModel) { [weak self] in
+            self?.loader.reloadNow()
+        }
+        launcher.update(config: config, activeName: viewModel.theme.name)
+        themeLauncher = launcher
     }
 
     /// Manually show/hide every bar, overriding auto-hide while hidden.

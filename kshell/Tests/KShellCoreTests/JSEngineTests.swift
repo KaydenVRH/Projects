@@ -47,6 +47,41 @@ final class JSEngineTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(engine.render()).labelColor?.r, 1)
     }
 
+    /// JS widgets can use the same `$token` colours as the config, so a widget
+    /// follows the active theme instead of being stuck on one palette.
+    func testColorsFollowThemeTokens() throws {
+        _ = try ShellConfig.parse(toml: """
+        [theme]
+        accent    = "#ff2a85"
+        highlight = "#00d4ff"
+        """)
+        let engine = try XCTUnwrap(JSEngine(
+            source: "function render(){ return { iconColor: '$accent', labelColor: '$highlight' } }",
+            runner: StubRunner()
+        ))
+        let render = try XCTUnwrap(engine.render())
+        XCTAssertEqual(render.iconColor, RGBA(hex: "#ff2a85"))
+        XCTAssertEqual(render.labelColor, RGBA(hex: "#00d4ff"))
+
+        // …and re-resolve when the theme changes.
+        _ = try ShellConfig.parse(toml: """
+        [theme]
+        accent    = "#fabd2f"
+        highlight = "#83a598"
+        """)
+        let updated = try XCTUnwrap(engine.render())
+        XCTAssertEqual(updated.iconColor, RGBA(hex: "#fabd2f"))
+        XCTAssertEqual(updated.labelColor, RGBA(hex: "#83a598"))
+    }
+
+    func testUnknownTokenColorIsNil() throws {
+        let engine = try XCTUnwrap(JSEngine(
+            source: "function render(){ return { labelColor: '$nope' } }",
+            runner: StubRunner()
+        ))
+        XCTAssertNil(try XCTUnwrap(engine.render()).labelColor)
+    }
+
     func testMissingRenderReturnsNil() throws {
         let engine = try XCTUnwrap(JSEngine(source: "var x = 1;", runner: StubRunner()))
         XCTAssertNil(engine.render())

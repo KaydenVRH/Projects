@@ -9,6 +9,9 @@ public final class WidgetModel: ObservableObject {
     @Published public var labelColor: RGBA?
     @Published public var iconFont: String?
     @Published public var action: (() -> Void)?
+    /// When true the widget takes no space in the bar (like sketchybar's
+    /// `drawing=off`), e.g. a workspace with no windows that isn't focused.
+    @Published public var hidden: Bool
 
     /// Horizontal breathing room contributed by this widget.
     public var paddingX: Double
@@ -33,6 +36,7 @@ public final class WidgetModel: ObservableObject {
         self.flexible = flexible
         self.paddingX = paddingX
         self.spacing = spacing
+        self.hidden = false
     }
 
     public var isEmpty: Bool {

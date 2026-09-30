@@ -8,12 +8,15 @@ public enum OverlayEdge: Sendable {
     case bottom
     /// Slides in from the left edge of the screen (trailing corners rounded).
     case leading
+    /// Slides in from the right edge of the screen (leading corners rounded).
+    case trailing
 
     /// The corners a sheet on this edge should round.
     var sheetCorners: SheetShape.Corners {
         switch self {
         case .bottom: return .top
         case .leading: return .trailing
+        case .trailing: return .leading
         }
     }
 }
@@ -34,29 +37,93 @@ private struct SheetHost: View {
     @ObservedObject var presentation: OverlayPresentation
     let edge: OverlayEdge
     let size: CGSize
+    let appearance: BarConfig
     let content: AnyView
 
-    private var hiddenOffset: CGSize {
-        guard !presentation.presented else { return .zero }
+    /// Slack past the anchored edge. The spring's overshoot is spent here, so
+    /// the panel stays flush with the screen edge instead of lifting off it
+    /// (which reads as the panel floating for a moment).
+    private var bleed: CGFloat {
+        switch edge {
+        case .bottom: return max(16, size.height * 0.08)
+        case .leading, .trailing: return max(16, size.width * 0.08)
+        }
+    }
+
+    private var box: CGSize {
+        switch edge {
+        case .bottom: return CGSize(width: size.width, height: size.height + bleed)
+        case .leading, .trailing: return CGSize(width: size.width + bleed, height: size.height)
+        }
+    }
+
+    /// Where the sheet sits in the oversized box: pushed to the end that faces
+    /// the screen, leaving the slack behind the anchored edge.
+    private var offset: CGSize {
+        guard !presentation.presented else {
+            // At rest the sheet's free edge lines up with the window's.
+            switch edge {
+            case .bottom, .trailing: return .zero
+            case .leading: return CGSize(width: -bleed, height: 0)
+            }
+        }
         switch edge {
         case .bottom: return CGSize(width: 0, height: size.height)
-        case .leading: return CGSize(width: -size.width, height: 0)
+        case .leading: return CGSize(width: -(size.width + bleed), height: 0)
+        case .trailing: return CGSize(width: size.width, height: 0)
         }
     }
 
     private var animation: Animation? {
         guard presentation.animated else { return nil }
         return presentation.presented
-            // A gentle ease-out: the travel has to be spread across the whole
-            // duration or the sheet reads as a pop rather than a slide.
-            ? .timingCurve(0.215, 0.61, 0.355, 1.0, duration: OverlayPanel.showDuration)
+            // A springy ease-out with a little overshoot so the sheet settles
+            // into place with a bit of bounce instead of just stopping.
+            ? .spring(response: 0.36, dampingFraction: 0.72)
+            // Hiding stays crisp — a bounce on the way out just reads as a
+            // wobble, and most of it would be off-screen anyway.
             : .timingCurve(0.4, 0.0, 1.0, 1.0, duration: OverlayPanel.hideDuration)
     }
 
+    /// Whether the sheet's free edge points at the leading/trailing end.
+    private var slackSize: CGSize {
+        switch edge {
+        case .bottom: return CGSize(width: size.width, height: bleed)
+        case .leading, .trailing: return CGSize(width: bleed, height: size.height)
+        }
+    }
+
+    /// The sheet's surface, continued into the slack. Kept as a separate view
+    /// beside the sheet (not behind it) so it can never fill in the sheet's
+    /// rounded corners.
+    private var slack: some View {
+        ZStack {
+            if appearance.blur { VisualEffectBackground() }
+            appearance.background.color
+        }
+        .frame(width: slackSize.width, height: slackSize.height)
+    }
+
+    private var sheet: some View {
+        content.frame(width: size.width, height: size.height)
+    }
+
+    @ViewBuilder
+    private var layout: some View {
+        switch edge {
+        case .bottom:
+            VStack(spacing: 0) { sheet; slack }
+        case .trailing:
+            HStack(spacing: 0) { sheet; slack }
+        case .leading:
+            HStack(spacing: 0) { slack; sheet }
+        }
+    }
+
     var body: some View {
-        content
-            .frame(width: size.width, height: size.height)
-            .offset(hiddenOffset)
+        layout
+            .frame(width: box.width, height: box.height)
+            .offset(offset)
             .animation(animation, value: presentation.presented)
             .clipped()
     }
@@ -77,6 +144,7 @@ public final class OverlayPanel: NSPanel {
         size: NSSize,
         edge: OverlayEdge = .bottom,
         margin: CGFloat = 0,
+        appearance: BarConfig = BarConfig(),
         content: AnyView
     ) {
         let screenFrame = screen.frame
@@ -88,6 +156,9 @@ public final class OverlayPanel: NSPanel {
             y = screenFrame.minY + margin
         case .leading:
             x = screenFrame.minX + margin
+            y = screenFrame.midY - size.height / 2
+        case .trailing:
+            x = screenFrame.maxX - margin - size.width
             y = screenFrame.midY - size.height / 2
         }
         // The window always sits at its final spot; only the content slides.
@@ -112,6 +183,7 @@ public final class OverlayPanel: NSPanel {
             presentation: presentation,
             edge: edge,
             size: size,
+            appearance: appearance,
             content: content
         ))
         host.frame = NSRect(origin: .zero, size: size)

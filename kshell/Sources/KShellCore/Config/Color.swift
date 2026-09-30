@@ -58,7 +58,7 @@ public struct RGBA: Equatable {
 
     public static func parse(_ string: String?) -> RGBA? {
         guard let string else { return nil }
-        return RGBA(hex: string)
+        return RGBA(hex: ThemeTokens.resolve(string))
     }
 
     public var nsColor: NSColor {

@@ -68,31 +68,39 @@ private struct WidgetItemView: View {
     let appearance: BarConfig
     let theme: Theme
 
+    private var iconSize: Double {
+        appearance.iconFontSize ?? appearance.fontSize + 3
+    }
+
     var body: some View {
-        if model.flexible {
-            Spacer(minLength: 0)
-        } else {
-            HStack(spacing: model.spacing) {
-                if let icon = model.icon, !icon.isEmpty {
-                    Text(icon)
-                        .font(.custom(iconFontName, size: appearance.iconFontSize ?? appearance.fontSize + 3))
-                        .foregroundColor(iconColor)
-                        .lineLimit(1)
-                        .fixedSize()
+        if !model.hidden {
+            if model.flexible {
+                Spacer(minLength: 0)
+            } else {
+                HStack(spacing: model.spacing) {
+                    if let icon = model.icon, !icon.isEmpty {
+                        NerdIcon(
+                            symbol: icon,
+                            fontName: iconFontName,
+                            size: iconSize,
+                            color: iconColor,
+                            slack: model.spacing
+                        )
                         .layoutPriority(1)
+                    }
+                    if !model.label.isEmpty {
+                        Text(model.label)
+                            .font(.custom(appearance.fontFamily, size: appearance.fontSize))
+                            .foregroundColor(labelColor)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .minimumScaleFactor(0.9)
+                    }
                 }
-                if !model.label.isEmpty {
-                    Text(model.label)
-                        .font(.custom(appearance.fontFamily, size: appearance.fontSize))
-                        .foregroundColor(labelColor)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .minimumScaleFactor(0.9)
-                }
+                .padding(.horizontal, model.paddingX)
+                .contentShape(Rectangle())
+                .onTapGesture { model.action?() }
             }
-            .padding(.horizontal, model.paddingX)
-            .contentShape(Rectangle())
-            .onTapGesture { model.action?() }
         }
     }
 
