@@ -14,6 +14,13 @@ public enum KShellPaths {
         return base.appendingPathComponent("kshell", isDirectory: true)
     }
 
+    /// Where kshell keeps caches (artwork, metadata, media sidecars).
+    public static var cacheDirectory: URL {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches")
+        return base.appendingPathComponent("kshell", isDirectory: true)
+    }
+
     public static var configFile: URL {
         configDirectory.appendingPathComponent("config.toml")
     }

@@ -56,12 +56,13 @@ public enum AppCatalog {
 public final class AppLauncher {
     private let overlay: OverlayLauncher
 
-    public init(viewModel: BarViewModel) {
+    public init(viewModel: BarViewModel, margin: CGFloat = 0) {
         let items = AppCatalog.load().map {
             LauncherItem(id: $0.url.path, name: $0.name, appIcon: $0.icon)
         }
         overlay = OverlayLauncher(
             viewModel: viewModel,
+            margin: margin,
             size: { screen in
                 NSSize(
                     width: min(screen.frame.width * 0.7, 900),

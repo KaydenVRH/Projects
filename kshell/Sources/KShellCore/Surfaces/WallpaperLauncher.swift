@@ -93,7 +93,7 @@ public enum WallpaperCatalog {
 public final class WallpaperLauncher {
     private let overlay: OverlayLauncher
 
-    public init(viewModel: BarViewModel, directories: [URL]) {
+    public init(viewModel: BarViewModel, directories: [URL], margin: CGFloat = 0) {
         // Warm the preview cache in the background so the first open slides in
         // with its rows already decoded rather than stalling on 20 MB PNGs.
         DispatchQueue.global(qos: .utility).async {
@@ -103,6 +103,7 @@ public final class WallpaperLauncher {
         overlay = OverlayLauncher(
             viewModel: viewModel,
             edge: .leading,
+            margin: margin,
             size: { screen in
                 NSSize(
                     width: min(screen.frame.width * 0.32, 460),
@@ -153,14 +154,7 @@ struct WallpaperLauncherView: View {
             footer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background {
-            ZStack {
-                if bar.blur { VisualEffectBackground() }
-                bar.background.color
-            }
-        }
-        .overlay { sheet.stroke(accent.opacity(0.35), lineWidth: 1) }
-        .clipShape(sheet)
+        .modifier(PanelSurface(viewModel: viewModel, edge: .leading, fallback: sheet))
         .focusable()
         .focusEffectDisabled()
         .focused($focused)

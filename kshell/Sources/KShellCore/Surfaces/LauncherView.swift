@@ -69,14 +69,7 @@ struct LauncherView: View {
                 .padding(18)
             }
         }
-        .background {
-            ZStack {
-                if bar.blur { VisualEffectBackground() }
-                bar.background.color
-            }
-        }
-        .overlay { SheetShape(radius: 22).stroke(accent.opacity(0.35), lineWidth: 1) }
-        .clipShape(SheetShape(radius: 22))
+        .modifier(PanelSurface(viewModel: viewModel, edge: .bottom, fallback: SheetShape(radius: 22)))
         .onExitCommand { onClose() }
         .onAppear { refocus() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in

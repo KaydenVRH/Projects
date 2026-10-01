@@ -43,6 +43,9 @@ public struct SheetShape: Shape {
         public static let all: Corners = [.topLeading, .topTrailing, .bottomLeading, .bottomTrailing]
     }
 
+    /// The radius the shell's surfaces round with by default.
+    public static let defaultRadius: CGFloat = 22
+
     public var radius: CGFloat
     public var corners: Corners
 

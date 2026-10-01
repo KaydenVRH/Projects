@@ -6,6 +6,8 @@ import SwiftUI
 final class OverlayLauncher {
     private let viewModel: BarViewModel
     private let edge: OverlayEdge
+    private let align: OverlayAlign
+    private let margin: CGFloat
     private let preferredSize: (NSScreen) -> NSSize
     private let makeContent: (@escaping () -> Void) -> AnyView
 
@@ -15,11 +17,15 @@ final class OverlayLauncher {
     init(
         viewModel: BarViewModel,
         edge: OverlayEdge = .bottom,
+        align: OverlayAlign = .center,
+        margin: CGFloat = 0,
         size: @escaping (NSScreen) -> NSSize,
         content: @escaping (@escaping () -> Void) -> AnyView
     ) {
         self.viewModel = viewModel
         self.edge = edge
+        self.align = align
+        self.margin = margin
         self.preferredSize = size
         self.makeContent = content
     }
@@ -40,7 +46,11 @@ final class OverlayLauncher {
             screen: screen,
             size: preferredSize(screen),
             edge: edge,
+            margin: margin,
+            align: align,
             appearance: viewModel.appearance,
+            style: viewModel.panelStyle(for: edge),
+            glass: viewModel.makeGlass,
             content: makeContent { [weak self] in self?.hide() }
         )
         panel = overlay

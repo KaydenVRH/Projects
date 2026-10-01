@@ -23,6 +23,25 @@ public final class ProcessRunner {
         self.timer = timer
     }
 
+    /// Run a command and return its stdout. Blocking — call it off the main
+    /// queue.
+    public static func capture(_ command: String) -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-lc", command]
+        let stdout = Pipe()
+        process.standardOutput = stdout
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            return ""
+        }
+        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
     public func runOnce(command: String, onOutput: @escaping (String) -> Void) {
         queue.async { [weak self] in
             self?.execute(command: command, onOutput: onOutput)

@@ -257,11 +257,12 @@ public final class ThemeLauncher {
     private let store = ThemeStore()
     private let overlay: OverlayLauncher
 
-    public init(viewModel: BarViewModel, onApplied: @escaping () -> Void) {
+    public init(viewModel: BarViewModel, margin: CGFloat = 0, onApplied: @escaping () -> Void) {
         let store = self.store
         overlay = OverlayLauncher(
             viewModel: viewModel,
             edge: .trailing,
+            margin: margin,
             size: { screen in
                 NSSize(
                     width: min(screen.frame.width * 0.30, 420),
@@ -342,14 +343,7 @@ struct ThemeLauncherView: View {
             footer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background {
-            ZStack {
-                if bar.blur { VisualEffectBackground() }
-                bar.background.color
-            }
-        }
-        .overlay { sheet.stroke(accent.opacity(0.35), lineWidth: 1) }
-        .clipShape(sheet)
+        .modifier(PanelSurface(viewModel: viewModel, edge: .trailing, fallback: sheet))
         .focusable()
         .focusEffectDisabled()   // the system focus ring is drawn as a rectangle,
                                  // which leaves red line stubs where the sheet's

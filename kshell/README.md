@@ -98,7 +98,8 @@ Per-widget overrides: `icon`, `icon_hex`, `icon_color`, `label_color`,
 
 Built-in events: `app_launcher_{toggle,open,close}`,
 `script_launcher_{toggle,open,close}`, `wallpaper_launcher_{toggle,open,close}`,
-`theme_launcher_{toggle,open,close}`, `bar_{hide,show,toggle}`, `config_reload`.
+`theme_launcher_{toggle,open,close}`, `media_center_{toggle,open,close}`,
+`media_{play_pause,next,previous}`, `bar_{hide,show,toggle}`, `config_reload`.
 
 ## Events (IPC)
 
@@ -124,10 +125,24 @@ exec-on-workspace-change = ['/bin/bash', '-c',
 
 `OverlayPanel` is a reusable, key-capable panel that slides in from a screen
 edge; `OverlayLauncher` drives it. A panel is anchored to one edge
-(`OverlayEdge`), sits **flush** with that edge, and rounds only the corners
-facing away from it (`SheetShape`) so it reads as extending out of the edge.
-Frosted with the bar's blur, and it animates in from just past the edge. Three
-launchers are built on it:
+(`OverlayEdge`) and sits clear of the screen's edge by the panel margin, which
+puts it flush against the frame's inner edge.
+
+While the frame is on, a panel has no material of its own: its glass and tint are
+another piece of the frame's, in the frame's own window (two material views in one
+window render alike; in different windows they never do), so a panel meets the
+frame with no seam. The panel's outline carries caelestia-style concave fillets on
+the corners that touch the frame, so it reads as attached, and its own window
+draws only content, masked to the same outline. With the frame off, a panel goes
+back to its own frosted material and convex corners (`SheetShape`), flush with the
+screen's edge.
+
+Either way the slide is stepped frame by frame rather than handed to Core
+Animation, with the decelerating curve the media centre uses: the window server
+renders an effect view's blur from model geometry, so an animating view frame
+would not move it. For the same reason a panel's glass is its own view rather than
+part of the frame's mask — a masked backdrop is refreshed lazily, which made the
+glass lag the content and snap into place at the end of the slide. Three launchers are built on it:
 
 **App launcher** — search + grid of applications (bottom sheet).
 - Open with the Apple logo, or `kshell trigger app_launcher_toggle`.
@@ -209,6 +224,101 @@ itself, and the desktop wallpaper.
   [rose-pine/wallpapers](https://github.com/rose-pine/wallpapers) and
   [dracula/wallpaper](https://github.com/dracula/wallpaper).
 
+**Media centre** — a panel that slides down out of the bar. Its glass is its own
+vibrancy view *in the frame's window*, with the bar's and the frame's, so the
+three read as one continuous surface — no seam where they meet. It lives in a
+clip just below the bar, so it waits behind the bar and slides down out of it,
+and only its outward corners are rounded.
+
+The slide is stepped frame by frame (content and glass from one clock) rather
+than handed to Core Animation. That is deliberate: the window server renders an
+effect view's blur from the layer's *model* geometry, so neither an animated mask
+nor an animating view frame moves the blur — without the manual step the glass
+snapped out at full size and left a bare sheet sitting under the content.
+- Shows the current track's artwork, title/artist/album, a progress bar and
+  transport controls. `Space`, `←`/`→` and `Esc` work while it is open.
+- Open with `kshell trigger media_center_toggle`, or click the bar's
+  now-playing widget (the example config wires that widget's `action` to it).
+- Alignment and the termusic helper live in config:
+  ```toml
+  [media]
+  termusic = "~/programs/projects/kshell/scripts/termusic/termusic.sh"
+  align    = "leading"        # leading | center | trailing
+  ```
+- **termusic** is supported directly. It plays through its own Rust backend and
+  never registers with macOS' now-playing, so kshell talks to it over its gRPC
+  unix socket (`$TMPDIR/termusic.socket`) using `grpcurl` and the protobuf in
+  `scripts/termusic/proto/`. That helper also reads tags and album art out of
+  the audio file and caches them per track, and drives play/pause/skip. Needs
+  `grpcurl` (`brew install grpcurl`) plus `jq` and `ffmpeg` for tags/artwork.
+- When termusic is idle the macOS now-playing APIs are used instead
+  (`nowplaying-cli`, or Spotify/Music via AppleScript for the widget).
+- Bindable on their own: `kshell trigger media_play_pause`, `media_next`,
+  `media_previous`.
+
+**Music panel** — the shell's own music player: a bottom sheet with a **Search**
+tab (YouTube Music, or paste a link), a **Library** tab, and a player bar. It
+replaces an external player rather than driving one.
+
+- Searching runs `yt-dlp` and lists results with thumbnails and durations.
+  Downloading extracts audio (`m4a` by default), embeds the cover and tags, and
+  streams its progress into the panel. Finished tracks appear in the Library.
+- Playback happens **inside kshell** through AVFoundation, so the bar's
+  now-playing widget, the media centre and this panel all read the same state,
+  with real position, seeking and volume. Music keeps playing with the panel
+  closed. (The player also mirrors its state to
+  `~/Library/Caches/kshell/now-playing.json`, which is how the bar's
+  shell-script widget sees it.)
+- Playing is AVFoundation's business, so codecs it cannot open (opus, webm) are
+  skipped rather than listed — hence m4a as the download format.
+- Enter searches, ⏎ in the field runs it, `Esc` closes. Tabs are clickable;
+  the library row under the pointer can be played, and trashed.
+  ```toml
+  [music]
+  directory      = "~/Music/kshell"   # where downloads land
+  search_results = 15
+  format         = "m4a"
+  ytdlp          = "yt-dlp"
+  ```
+- Bindable: `kshell trigger music_launcher_toggle` (or `_open` / `_close`), and
+  `music_play_library` to start the whole library. `music_play_pause`,
+  `music_next` and `music_previous` drive it directly.
+
+**Screen border** — a bezel around the screen's edges (caelestia style): a frame
+that reaches the screen's edge on every side, bounded inside by a rounded
+opening, so it thickens into its corners. The bar nests inside the opening at the
+top — its margins and corner radius are raised to the frame's thickness and
+radius, and all four of its corners are rounded, so they hug the opening's — and
+the launcher panels sit flush against the opening's inner edge, leaving no sliver
+of wallpaper between them and the border. It lives in the window
+manager's outer gap. A sheet hanging off the bar is inset far enough to clear the
+bar's rounded corners.
+
+The frame, the bar and any sheet hanging off the bar are cut from **one** vibrancy
+view (held by the border's window, with a mask), not several materials that
+happen to be configured alike. Two nearby material views never render the same,
+which is what used to leave a visible seam where they met.
+- Decoration only: its window ignores mouse events, so it never intercepts a
+  click meant for something behind it.
+- On by default; toggle it at runtime with `kshell trigger border_toggle`
+  (or `border_show` / `border_hide`). With it off, the bar goes back to its own
+  material view, flush with the screen's edges.
+- The shell steps out of the way of full-screen windows: its windows do not join
+  a full-screen space, and a window that fills a display within the current space
+  (how window managers such as aerospace do full screen) hides the shell on that
+  display until it goes away. A merely maximised window keeps the window
+  manager's gaps, so it does not count.
+- One per display, and it follows `[bar] display`. Config:
+  ```toml
+  [border]
+  enabled   = true
+  inset     = 5              # the frame's thickness is inset + thickness
+  thickness = 3
+  radius    = 20             # rounds the frame's inner opening
+  color     = "$background"  # tokens work; "$accent" gives a brighter frame
+  blur      = true           # frost the frame with whatever is behind it
+  ```
+
 ## JavaScript widgets
 
 A widget with `type = "js"` renders whatever a user script produces. Point it at
@@ -269,7 +379,11 @@ autohide_delay = 0.4      # seconds before hiding after the pointer leaves
 ```
 
 Bars can also be toggled at runtime: `kshell trigger bar_hide`, `bar_show`,
-`bar_toggle`. Auto-hide applies per bar; the launcher opens on the display the
+`bar_toggle`; the frame likewise with `border_toggle`, `border_show`,
+`border_hide`. The music panel likewise with `music_launcher_toggle`, and its
+player with `music_play_pause`, `music_next`, `music_previous` and
+`music_play_library`. Full-screen apps are left alone: the shell hides on a
+display while a window fills it, and returns when it does not. Auto-hide applies per bar; the launcher opens on the display the
 pointer is on.
 
 ## macOS notes

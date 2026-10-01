@@ -114,8 +114,7 @@ public struct ThemeDefinition {
 }
 
 /// The theme-switcher launcher: which files it rewrites and what it can pick.
-public struct ThemeLauncherConfig {
-    public var kittyConfig: String = "~/dotfiles/kitty/.config/kitty/kitty.conf"
+public struct ThemeLauncherConfig {    public var kittyConfig: String = "~/dotfiles/kitty/.config/kitty/kitty.conf"
     public var nvimInit: String = "~/dotfiles/nvim/.config/nvim/init.lua"
     public var shellConfig: String = "~/.config/kshell/config.toml"
     /// Kitty `background_opacity` used by themes that don't set their own.
@@ -123,6 +122,50 @@ public struct ThemeLauncherConfig {
     /// Kitty `background_blur` used by themes that don't set their own.
     public var blur: Double?
     public var themes: [ThemeDefinition] = []
+
+    public init() {}
+}
+
+/// The thin rounded line drawn just inside the screen edges — the bar's glass
+/// carried around the screen, in the same style as the media centre's surface.
+/// It only spans the sides the bar doesn't cover, so it never crosses the bar.
+public struct BorderConfig {
+    public var enabled: Bool = true
+    /// Distance from the screen's edge to the line's outer edge. Set this to the
+    /// window manager's outer gap so the line sits in the padding.
+    public var inset: Double = 5
+    /// How thick the line is.
+    public var thickness: Double = 3
+    /// Corner radius the line turns with.
+    public var radius: Double = 20
+    /// The line's surface tint, like the bar's and media centre's background.
+    /// Tokens such as `$background` work here.
+    public var color: RGBA = RGBA(hex: "#1a1b26aa") ?? RGBA(hex: "#000000aa")!
+    /// Frost the line with whatever is behind it, exactly like the bar.
+    public var blur: Bool = true
+
+    public init() {}
+}
+
+/// The music panel: where downloads land and how they are fetched.
+public struct MusicConfig {
+    /// Where downloaded tracks are kept.
+    public var directory: String = "~/Music/kshell"
+    /// How many search results to ask YouTube for.
+    public var searchCount: Int = 15
+    /// Audio container `yt-dlp` extracts to. m4a keeps AVFoundation happy.
+    public var format: String = "m4a"
+    public var ytdlp: String = "yt-dlp"
+
+    public init() {}
+}
+
+/// The media centre: where termusic's helper script lives and where the panel
+/// hangs from the bar.
+public struct MediaConfig {
+    public var termusic: String = "~/programs/projects/kshell/scripts/termusic/termusic.sh"
+    /// Where the panel lines up along the bar: `leading`, `center` or `trailing`.
+    public var align: OverlayAlign = .leading
 
     public init() {}
 }
@@ -159,6 +202,12 @@ public struct ShellConfig {
     public var wallpaperDirectories: [String]
     /// The theme-switcher launcher.
     public var themeLauncher: ThemeLauncherConfig
+    /// The media centre.
+    public var media: MediaConfig
+    /// The line drawn inside the screen edges.
+    public var border: BorderConfig
+    /// The music panel.
+    public var music: MusicConfig
 
     public init(
         bar: BarConfig = BarConfig(),
@@ -172,7 +221,10 @@ public struct ShellConfig {
             "~/wallpapers",
             "~/dotfiles/live-wallpapers",
         ],
-        themeLauncher: ThemeLauncherConfig = ThemeLauncherConfig()
+        themeLauncher: ThemeLauncherConfig = ThemeLauncherConfig(),
+        media: MediaConfig = MediaConfig(),
+        border: BorderConfig = BorderConfig(),
+        music: MusicConfig = MusicConfig()
     ) {
         self.bar = bar
         self.theme = theme
@@ -182,6 +234,9 @@ public struct ShellConfig {
         self.scriptDirectory = scriptDirectory
         self.wallpaperDirectories = wallpaperDirectories
         self.themeLauncher = themeLauncher
+        self.media = media
+        self.border = border
+        self.music = music
     }
 
     public static func parse(toml text: String) throws -> ShellConfig {
@@ -266,6 +321,33 @@ public struct ShellConfig {
                 }
             }
         }
+        var media = MediaConfig()
+        if let table = root.table("media") {
+            if let v = table.string("termusic") { media.termusic = v }
+            if let v = table.string("align") {
+                switch v.lowercased() {
+                case "leading", "left": media.align = .leading
+                case "trailing", "right": media.align = .trailing
+                default: media.align = .center
+                }
+            }
+        }
+        var music = MusicConfig()
+        if let table = root.table("music") {
+            if let v = table.string("directory") { music.directory = v }
+            if let v = table.number("search_results") { music.searchCount = Int(v) }
+            if let v = table.string("format") { music.format = v }
+            if let v = table.string("ytdlp") { music.ytdlp = v }
+        }
+        var border = BorderConfig()
+        if let table = root.table("border") {
+            if let v = table.bool("enabled") { border.enabled = v }
+            if let v = table.number("inset") { border.inset = v }
+            if let v = table.number("thickness") { border.thickness = v }
+            if let v = table.number("radius") { border.radius = v }
+            if let v = table.string("color"), let parsed = RGBA.parse(v) { border.color = parsed }
+            if let v = table.bool("blur") { border.blur = v }
+        }
         return ShellConfig(
             bar: bar,
             theme: theme,
@@ -274,7 +356,10 @@ public struct ShellConfig {
             right: parseWidgets(barTable?.array("right")),
             scriptDirectory: scriptDirectory,
             wallpaperDirectories: wallpaperDirectories,
-            themeLauncher: themeLauncher
+            themeLauncher: themeLauncher,
+            media: media,
+            border: border,
+            music: music
         )
     }
 

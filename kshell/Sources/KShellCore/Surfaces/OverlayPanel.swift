@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import SwiftUI
 
 /// The screen edge an overlay panel is anchored to — the edge it appears to
@@ -10,150 +11,83 @@ public enum OverlayEdge: Sendable {
     case leading
     /// Slides in from the right edge of the screen (leading corners rounded).
     case trailing
+    /// Drops down from the top edge — or, with a margin, from under the bar —
+    /// so it reads as extending from the bar (bottom corners rounded).
+    case top
 
-    /// The corners a sheet on this edge should round.
+    /// The corners a sheet on this edge rounds convexly.
     var sheetCorners: SheetShape.Corners {
         switch self {
         case .bottom: return .top
         case .leading: return .trailing
         case .trailing: return .leading
+        case .top: return .bottom
         }
     }
 }
 
-/// Drives the slide of a sheet's content inside its (stationary) window.
-final class OverlayPresentation: ObservableObject {
-    /// Whether the sheet is slid into view.
-    @Published var presented = false
-    /// `false` places the sheet without animating (an instant show/hide).
-    @Published var animated = true
+/// Where a panel sits along the screen edge it is anchored to.
+public enum OverlayAlign: Sendable {
+    case leading, center, trailing
 }
 
-/// Hosts a sheet's content inside a window that never leaves its screen: the
-/// content slides in from (and back out to) the anchored edge while the window
-/// stays put. The window clips the content, so nothing can ever leak onto a
-/// neighbouring display the way an off-screen window frame would.
-private struct SheetHost: View {
-    @ObservedObject var presentation: OverlayPresentation
-    let edge: OverlayEdge
-    let size: CGSize
-    let appearance: BarConfig
-    let content: AnyView
-
-    /// Slack past the anchored edge. The spring's overshoot is spent here, so
-    /// the panel stays flush with the screen edge instead of lifting off it
-    /// (which reads as the panel floating for a moment).
-    private var bleed: CGFloat {
-        switch edge {
-        case .bottom: return max(16, size.height * 0.08)
-        case .leading, .trailing: return max(16, size.width * 0.08)
-        }
-    }
-
-    private var box: CGSize {
-        switch edge {
-        case .bottom: return CGSize(width: size.width, height: size.height + bleed)
-        case .leading, .trailing: return CGSize(width: size.width + bleed, height: size.height)
-        }
-    }
-
-    /// Where the sheet sits in the oversized box: pushed to the end that faces
-    /// the screen, leaving the slack behind the anchored edge.
-    private var offset: CGSize {
-        guard !presentation.presented else {
-            // At rest the sheet's free edge lines up with the window's.
-            switch edge {
-            case .bottom, .trailing: return .zero
-            case .leading: return CGSize(width: -bleed, height: 0)
-            }
-        }
-        switch edge {
-        case .bottom: return CGSize(width: 0, height: size.height)
-        case .leading: return CGSize(width: -(size.width + bleed), height: 0)
-        case .trailing: return CGSize(width: size.width, height: 0)
-        }
-    }
-
-    private var animation: Animation? {
-        guard presentation.animated else { return nil }
-        return presentation.presented
-            // A springy ease-out with a little overshoot so the sheet settles
-            // into place with a bit of bounce instead of just stopping.
-            ? .spring(response: 0.36, dampingFraction: 0.72)
-            // Hiding stays crisp — a bounce on the way out just reads as a
-            // wobble, and most of it would be off-screen anyway.
-            : .timingCurve(0.4, 0.0, 1.0, 1.0, duration: OverlayPanel.hideDuration)
-    }
-
-    /// Whether the sheet's free edge points at the leading/trailing end.
-    private var slackSize: CGSize {
-        switch edge {
-        case .bottom: return CGSize(width: size.width, height: bleed)
-        case .leading, .trailing: return CGSize(width: bleed, height: size.height)
-        }
-    }
-
-    /// The sheet's surface, continued into the slack. Kept as a separate view
-    /// beside the sheet (not behind it) so it can never fill in the sheet's
-    /// rounded corners.
-    private var slack: some View {
-        ZStack {
-            if appearance.blur { VisualEffectBackground() }
-            appearance.background.color
-        }
-        .frame(width: slackSize.width, height: slackSize.height)
-    }
-
-    private var sheet: some View {
-        content.frame(width: size.width, height: size.height)
-    }
-
-    @ViewBuilder
-    private var layout: some View {
-        switch edge {
-        case .bottom:
-            VStack(spacing: 0) { sheet; slack }
-        case .trailing:
-            HStack(spacing: 0) { sheet; slack }
-        case .leading:
-            HStack(spacing: 0) { slack; sheet }
-        }
-    }
-
-    var body: some View {
-        layout
-            .frame(width: box.width, height: box.height)
-            .offset(offset)
-            .animation(animation, value: presentation.presented)
-            .clipped()
-    }
-}
-
-/// A reusable, key-capable overlay panel that slides in from a screen edge.
-/// This is the base for popups and the launchers.
+/// A reusable, key-capable panel that slides in from a screen edge.
+///
+/// The slide is stepped frame by frame rather than handed to Core Animation, and
+/// its content is masked to the panel's outline. Both are deliberate: when the
+/// frame is on, this panel's glass lives on the frame's surface (see
+/// `SurfaceGlass`), and the window server renders that blur from model geometry
+/// — so an animating view frame would not move it. Stepping keeps the glass and
+/// the content locked together.
 public final class OverlayPanel: NSPanel {
-    static let showDuration: TimeInterval = 0.30
-    static let hideDuration: TimeInterval = 0.18
+    static let showDuration: TimeInterval = 0.32
+    static let hideDuration: TimeInterval = 0.20
 
     private let shownFrame: NSRect
-    private let presentation = OverlayPresentation()
+    private let edge: OverlayEdge
+    private let size: NSSize
+    private let style: PanelStyle?
+    private let makeGlass: ((NSScreen) -> SurfaceGlass?)?
+    private let targetScreen: NSScreen
+
+    private weak var host: NSView?
+    private var glass: SurfaceGlass?
+    private var ticker: DispatchSourceTimer?
     private var isShown = false
+    private var offset: CGSize = .zero
 
     public init(
         screen: NSScreen,
         size: NSSize,
         edge: OverlayEdge = .bottom,
         margin: CGFloat = 0,
+        align: OverlayAlign = .center,
         appearance: BarConfig = BarConfig(),
+        style: PanelStyle? = nil,
+        glass: ((NSScreen) -> SurfaceGlass?)? = nil,
         content: AnyView
     ) {
         let screenFrame = screen.frame
+        // Line a top-anchored panel up with the bar's content.
+        let inset = CGFloat(appearance.paddingX)
+        func alignedX(_ width: CGFloat) -> CGFloat {
+            switch align {
+            case .leading: return screenFrame.minX + inset
+            case .trailing: return screenFrame.maxX - inset - width
+            case .center: return screenFrame.midX - width / 2
+            }
+        }
         let x: CGFloat
         let y: CGFloat
         switch edge {
         case .bottom:
-            x = screenFrame.midX - size.width / 2
+            x = alignedX(size.width)
             y = screenFrame.minY + margin
+        case .top:
+            // `margin` is the distance from the screen's top edge (the bar's
+            // height), so the panel's top sits flush against the bar's bottom.
+            x = alignedX(size.width)
+            y = screenFrame.maxY - margin - size.height
         case .leading:
             x = screenFrame.minX + margin
             y = screenFrame.midY - size.height / 2
@@ -163,6 +97,11 @@ public final class OverlayPanel: NSPanel {
         }
         // The window always sits at its final spot; only the content slides.
         self.shownFrame = NSRect(x: x, y: y, width: size.width, height: size.height)
+        self.targetScreen = screen
+        self.edge = edge
+        self.size = size
+        self.style = style
+        self.makeGlass = glass
 
         super.init(
             contentRect: shownFrame,
@@ -171,24 +110,37 @@ public final class OverlayPanel: NSPanel {
             defer: false
         )
 
-        level = .statusBar + 1
+        // Above the surface holder and the bar's content window.
+        level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
         isOpaque = false
         backgroundColor = .clear
-        hasShadow = true
+        // The media centre has no shadow, and these should read as the same
+        // surface as it does — a shadow made them look like a separate window.
+        hasShadow = false
         isMovable = false
+        isMovableByWindowBackground = false
         hidesOnDeactivate = false
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        becomesKeyOnlyIfNeeded = true
+        // No `.fullScreenAuxiliary`: the panels step aside for full-screen apps.
+        collectionBehavior = [.canJoinAllSpaces, .ignoresCycle]
 
-        let host = NSHostingView(rootView: SheetHost(
-            presentation: presentation,
-            edge: edge,
-            size: size,
-            appearance: appearance,
-            content: content
-        ))
+        // The content lives in a container masked to the panel's outline, so the
+        // tint and the panel's glass agree about where the edges are.
+        let container = NSView(frame: NSRect(origin: .zero, size: size))
+        container.wantsLayer = true
+        if let style {
+            let mask = CAShapeLayer()
+            mask.fillColor = NSColor.black.cgColor
+            mask.path = PanelGeometry.path(in: CGRect(origin: .zero, size: size), style: style)
+            container.layer?.mask = mask
+        }
+
+        let host = NSHostingView(rootView: content)
         host.frame = NSRect(origin: .zero, size: size)
-        host.autoresizingMask = [.width, .height]
-        contentView = host
+        host.autoresizingMask = []
+        container.addSubview(host)
+        self.host = host
+        contentView = container
     }
 
     public override var canBecomeKey: Bool { true }
@@ -200,31 +152,37 @@ public final class OverlayPanel: NSPanel {
 
     public var isPresented: Bool { isShown }
 
+    /// Where the panel waits before sliding in — past the edge it comes from.
+    private var hiddenOffset: CGSize {
+        switch edge {
+        case .bottom: return CGSize(width: 0, height: -size.height)
+        case .leading: return CGSize(width: -size.width, height: 0)
+        case .trailing: return CGSize(width: size.width, height: 0)
+        case .top: return CGSize(width: 0, height: size.height)
+        }
+    }
+
     public func show(animated: Bool) {
         guard !isShown else { return }
         isShown = true
 
-        // Lay the window out at its final position with the content slid out, so
-        // the first frame the window server composites is the hidden one.
-        presentation.animated = animated
-        presentation.presented = false
-        setFrame(shownFrame, display: true)
+        // Take a piece of the frame's glass, if the frame is providing it.
+        glass = makeGlass?(targetScreen)
+        glass?.setResting(shownFrame, style: style)
 
-        // Force the accessory app to the front and make this panel key so it can
-        // receive keystrokes immediately.
+        // Lay the content out flat, then slide it in.
+        offset = animated ? hiddenOffset : .zero
+        applyOffset()
         NSApp.activate(ignoringOtherApps: true)
         makeKeyAndOrderFront(nil)
         makeKey()
 
-        guard animated else {
-            presentation.presented = true
-            return
-        }
-        // Slide in on the next run loop turn: animating in the same turn that the
-        // window is first ordered front is skipped by the window server.
+        guard animated else { return }
+        // Slide on the next run loop turn: an animation started in the same turn
+        // the window is first ordered front is skipped.
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isShown else { return }
-            self.presentation.presented = true
+            self.slide(to: .zero, duration: Self.showDuration, opening: true)
         }
     }
 
@@ -232,20 +190,56 @@ public final class OverlayPanel: NSPanel {
         guard isShown else { return }
         isShown = false
 
-        presentation.animated = animated
-        presentation.presented = false
-
         guard animated else {
-            orderOut(nil)
+            finishHide()
             return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.hideDuration + 0.02) { [weak self] in
+        slide(to: hiddenOffset, duration: Self.hideDuration, opening: false)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.hideDuration + 0.03) { [weak self] in
             guard let self, !self.isShown else { return }
-            self.orderOut(nil)
+            self.finishHide()
         }
     }
 
     public func toggle(animated: Bool) {
         isShown ? hide(animated: animated) : show(animated: animated)
+    }
+
+    private func finishHide() {
+        ticker?.cancel()
+        ticker = nil
+        glass?.park()
+        glass = nil
+        orderOut(nil)
+    }
+
+    /// Step the panel from where it is to `target`.
+    private func slide(to target: CGSize, duration: TimeInterval, opening: Bool) {
+        ticker?.cancel()
+        let from = offset
+        let start = CACurrentMediaTime()
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now(), repeating: 1.0 / 60.0)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            let t = min(1, max(0, (CACurrentMediaTime() - start) / duration))
+            let eased = SlideEasing.value(t, opening: opening)
+            self.offset = CGSize(
+                width: from.width + (target.width - from.width) * eased,
+                height: from.height + (target.height - from.height) * eased
+            )
+            self.applyOffset()
+            if t >= 1 {
+                self.ticker?.cancel()
+                self.ticker = nil
+            }
+        }
+        ticker = timer
+        timer.resume()
+    }
+
+    private func applyOffset() {
+        host?.frame = NSRect(x: offset.width, y: offset.height, width: size.width, height: size.height)
+        glass?.setOffset(offset)
     }
 }

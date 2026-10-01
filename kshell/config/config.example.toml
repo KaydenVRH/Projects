@@ -42,6 +42,12 @@ background = "#100018AA"         # bar background
 [script_launcher]
 directory = "~/dotfiles/scripts"
 
+# Media centre (trigger with `kshell trigger media_center_toggle`, or click the
+# now-playing widget). Hangs off the bar, flush with it.
+[media]
+termusic = "~/programs/projects/kshell/scripts/termusic/termusic.sh"
+align    = "leading"            # leading | center | trailing
+
 # Wallpaper launcher (trigger with `kshell trigger wallpaper_launcher_toggle`)
 [wallpaper_launcher]
 directories = ["~/dotfiles/wallpapers", "~/wallpapers", "~/dotfiles/live-wallpapers"]
@@ -76,6 +82,7 @@ label_color = "$foreground"
 [[bar.left]]
 type      = "script"
 command   = "~/programs/projects/kshell/scripts/widgets/now_playing.sh"
+action    = "kshell trigger media_center_toggle"   # click to open the media centre
 interval  = 3
 icon_hex  = "f001"               # music note
 padding   = 10
@@ -273,3 +280,29 @@ dim        = "#5c6370"
 mid        = "#56b6c2"
 background = "#282c34AA"
 
+
+# The line drawn inside the screen edges — the bar's glass carried around the
+# screen, in the same style as the media centre's surface. It stops at the bar
+# (it never crosses it) and lives in your window manager's outer gap.
+[border]
+# Toggle at runtime with `kshell trigger border_toggle`.
+enabled   = true
+# The frame fills from the screen's edge inward; inset + thickness is how thick
+# it ends up, and radius rounds its inner opening. The bar sits inside that
+# opening (its margins are raised to match), and the frame, bar and media centre
+# share one material view so their junctions are seamless.
+inset     = 5
+thickness = 3
+radius    = 20
+color     = "$background"  # tokens work here; try "$accent" for a brighter frame
+blur      = true         # frost the frame with whatever is behind it
+
+# The music panel (trigger with `kshell trigger music_launcher_toggle`, or
+# `music_play_library` to start the whole library). Searches YouTube Music and
+# downloads through yt-dlp; playback happens inside kshell, so the bar's
+# now-playing widget and the media centre both follow it.
+[music]
+directory      = "~/Music/kshell"   # where downloads land
+search_results = 15                  # results per search
+format         = "m4a"               # yt-dlp's audio container
+ytdlp          = "yt-dlp"

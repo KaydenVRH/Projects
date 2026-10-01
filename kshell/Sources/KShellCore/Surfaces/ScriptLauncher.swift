@@ -39,10 +39,11 @@ public final class ScriptLauncher {
     private let overlay: OverlayLauncher
     private let directory: URL
 
-    public init(viewModel: BarViewModel, directory: URL) {
+    public init(viewModel: BarViewModel, directory: URL, margin: CGFloat = 0) {
         self.directory = directory
         overlay = OverlayLauncher(
             viewModel: viewModel,
+            margin: margin,
             size: { screen in
                 NSSize(
                     width: min(screen.frame.width * 0.5, 640),
