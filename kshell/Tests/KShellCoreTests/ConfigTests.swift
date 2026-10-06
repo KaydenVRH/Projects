@@ -86,6 +86,37 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(WidgetFactory.resolvedIcon(spec), "\u{f8ff}")
     }
 
+    func testVisualiserParses() throws {
+        let config = try ShellConfig.parse(toml: """
+        [visualiser]
+        enabled = true
+        layer   = "Background"
+        layout  = "Sweep"
+        bars    = 48
+        height  = 120
+        mirror  = 0
+        opacity = 1.5
+        display = "main"
+        """)
+        XCTAssertTrue(config.visualiser.enabled)
+        XCTAssertEqual(config.visualiser.layer, "background")
+        XCTAssertEqual(config.visualiser.layout, "sweep")
+        XCTAssertEqual(config.visualiser.bars, 48)
+        XCTAssertEqual(config.visualiser.height, 120)
+        XCTAssertEqual(config.visualiser.mirror, 0)
+        // Out-of-range values are clamped rather than trusted.
+        XCTAssertEqual(config.visualiser.opacity, 1)
+        XCTAssertEqual(config.visualiser.display, "main")
+    }
+
+    func testVisualiserDefaults() throws {
+        let config = try ShellConfig.parse(toml: "[bar]\nheight = 30")
+        XCTAssertEqual(config.visualiser.layer, "background")
+        XCTAssertEqual(config.visualiser.layout, "centered")
+        XCTAssertEqual(config.visualiser.bars, 64)
+        XCTAssertGreaterThan(config.visualiser.mirror, 0)
+    }
+
     func testUnknownWidgetTypeProducesNoRuntime() throws {
         let config = try ShellConfig.parse(toml: """
         [[bar.left]]

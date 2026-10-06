@@ -30,6 +30,10 @@ public final class BarPanel: NSPanel {
     public let revealZone: CGFloat
     public let hideDelay: TimeInterval
     public private(set) var isRevealed: Bool
+    /// Where the bar's visible rectangle actually is. This is the shown frame
+    /// with the frame's margins already folded in, so anything hanging off the
+    /// bar should measure from here rather than from the raw config.
+    public var visibleFrame: NSRect { shownFrame }
 
     private let shownFrame: NSRect
     /// The bar's frame while hidden. The window's frame is derived from whichever

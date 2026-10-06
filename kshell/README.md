@@ -123,10 +123,15 @@ exec-on-workspace-change = ['/bin/bash', '-c',
 
 ## Panels & launchers
 
-`OverlayPanel` is a reusable, key-capable panel that slides in from a screen
-edge; `OverlayLauncher` drives it. A panel is anchored to one edge
-(`OverlayEdge`) and sits clear of the screen's edge by the panel margin, which
-puts it flush against the frame's inner edge.
+`OverlayPanel` is a reusable, key-capable panel that grows out of a screen edge;
+`OverlayLauncher` drives it. Opening is a fluid morph rather than a slide: the
+panel starts as a small pill resting on the edge it is anchored to and swells
+into its full size — widening about its centre and reaching away from the edge —
+with its outline and its glass travelling with it. The contents keep their final
+size and stay pinned to that edge, so the growing outline *reveals* them instead
+of reflowing them. A panel is anchored to one edge (`OverlayEdge`) and sits clear
+of the screen's edge by the panel margin, which puts it flush against the frame's
+inner edge.
 
 While the frame is on, a panel has no material of its own: its glass and tint are
 another piece of the frame's, in the frame's own window (two material views in one
@@ -137,12 +142,12 @@ draws only content, masked to the same outline. With the frame off, a panel goes
 back to its own frosted material and convex corners (`SheetShape`), flush with the
 screen's edge.
 
-Either way the slide is stepped frame by frame rather than handed to Core
+Either way the morph is stepped frame by frame rather than handed to Core
 Animation, with the decelerating curve the media centre uses: the window server
 renders an effect view's blur from model geometry, so an animating view frame
 would not move it. For the same reason a panel's glass is its own view rather than
 part of the frame's mask — a masked backdrop is refreshed lazily, which made the
-glass lag the content and snap into place at the end of the slide. Three launchers are built on it:
+glass lag the content and snap into place at the end of the animation. Five panels are built on it:
 
 **App launcher** — search + grid of applications (bottom sheet).
 - Open with the Apple logo, or `kshell trigger app_launcher_toggle`.
@@ -157,7 +162,7 @@ glass lag the content and snap into place at the end of the slide. Three launche
   ```
 - A selection runs `bash <script>`.
 
-**Wallpaper launcher** — a left sidebar of preview rows that slides in from the
+**Wallpaper launcher** — a left sidebar of preview rows that grows out of the
 left edge (rounded right corners).
 - Open with `kshell trigger wallpaper_launcher_toggle`.
 - `↑`/`↓` browse, `⏎` applies, `Esc` closes; click a row to select it, click
@@ -173,7 +178,7 @@ left edge (rounded right corners).
 Both accept `*_open` / `*_close` events, scan on open, and use the same `[bar]`
 background/blur/corner radius and `[theme]` colors as the bar.
 
-**Theme launcher** — a right sidebar that slides in from the right edge (rounded
+**Theme launcher** — a right sidebar that grows out of the right edge (rounded
 left corners) and re-colours your whole setup at once: kitty, neovim, kshell
 itself, and the desktop wallpaper.
 - Open with `kshell trigger theme_launcher_toggle`.
@@ -183,7 +188,9 @@ itself, and the desktop wallpaper.
   layout are preserved): the kitty `include` line (then `SIGUSR1`s kitty to
   reload), `vim.cmd.colorscheme(...)` plus the lualine palette in `init.lua`,
   the `[theme]` section of `~/.config/kshell/config.toml`, and the wallpaper
-  via `NSWorkspace` (or `lwp` for videos).
+  via `NSWorkspace` (or `lwp` for videos). A theme may also set
+  `live_wallpaper`, a video played *on top of* its still wallpaper; themes
+  without one stop any live wallpaper that is running.
 - Define themes in config:
   ```toml
   [theme_launcher]
@@ -194,18 +201,19 @@ itself, and the desktop wallpaper.
   blur         = 40                  # kitty background_blur default
 
   [[theme_launcher.themes]]
-  name       = "Synthwave"
-  kitty      = "synthwave.conf"                      # kitty include target
-  nvim       = "synthwave"                           # nvim colorscheme
-  wallpaper  = "~/dotfiles/wallpapers/synthwave.jpg" # optional
-  accent     = "#ff2a85"
-  highlight  = "#00d4ff"
-  foreground = "#e0d0f0"
-  dim        = "#9a80aa"
-  mid        = "#00d4ff"
-  background = "#100018AA"         # bar colour; lower the alpha for more glass
-  opacity    = 0.45                # optional per-theme kitty glass
-  blur       = 64
+  name           = "Synthwave"
+  kitty          = "synthwave.conf"                      # kitty include target
+  nvim           = "synthwave"                           # nvim colorscheme
+  wallpaper      = "~/dotfiles/wallpapers/synthwave.jpg" # optional still image
+  live_wallpaper = "~/dotfiles/live-wallpapers/glow.mp4" # optional, played on top
+  accent         = "#ff2a85"
+  highlight      = "#00d4ff"
+  foreground     = "#e0d0f0"
+  dim            = "#9a80aa"
+  mid            = "#00d4ff"
+  background     = "#100018AA"         # bar colour; lower the alpha for more glass
+  opacity        = 0.45                # optional per-theme kitty glass
+  blur           = 64
   ```
   Any target may be omitted (say, a theme with no wallpaper) and it is skipped.
   `opacity`/`blur` fall back to the `[theme_launcher]` values, so switching away
@@ -213,32 +221,46 @@ itself, and the desktop wallpaper.
 
   Shipped in the example config: **Synthwave**, **Everforest**, **Rose Pine**,
   **Catppuccin**, **Monochrome**, **Tokyo Night**, **Gruvbox**, **Nord**,
-  **Kanagawa**, **Dracula**, **One Dark** — each with a kitty theme
+  **Kanagawa**, **Dracula**, **One Dark**, plus the customs **Amber**,
+  **Amethyst Lagoon**, **Blue Lagoon**, **Cherry Blossom**, **Glow**,
+  **Night Lagoon**, **Sunset** and the community set **Ristretto**,
+  **Osaka Jade**, **Ethereal**, **Lumon**, **Matte Black**, **Hackerman**,
+  **Last Horizon**, **Vantablack** — each with a kitty theme
   (`~/.config/kitty/<name>.conf`), an nvim colorscheme
   (`~/.config/nvim/colors/<name>.lua`) and a wallpaper in
   `~/dotfiles/wallpapers/`. Adding another is just another
   `[[theme_launcher.themes]]` block plus those three files.
+  **Synthwave**, **Glow**, **Night Lagoon** and **Sunset** also have a
+  `live_wallpaper` video that plays over their still image.
 
   Wallpapers are sourced from [Omarchy](https://github.com/basecamp/omarchy),
   [tokyo-night/wallpapers](https://github.com/tokyo-night/wallpapers),
   [rose-pine/wallpapers](https://github.com/rose-pine/wallpapers) and
   [dracula/wallpaper](https://github.com/dracula/wallpaper).
 
-**Media centre** — a panel that slides down out of the bar. Its glass is its own
-vibrancy view *in the frame's window*, with the bar's and the frame's, so the
-three read as one continuous surface — no seam where they meet. It lives in a
-clip just below the bar, so it waits behind the bar and slides down out of it,
-and only its outward corners are rounded.
+**Media centre** — a dynamic island: a 260×44 pill flush under the bar that
+grows, widening about its own centre and dropping away from the bar, into the
+full 460×300 centre. The pill's contents crossfade into the full centre on the
+way, so the artwork carries across the morph rather than being replaced.
 
-The slide is stepped frame by frame (content and glass from one clock) rather
-than handed to Core Animation. That is deliberate: the window server renders an
-effect view's blur from the layer's *model* geometry, so neither an animated mask
-nor an animating view frame moves the blur — without the manual step the glass
-snapped out at full size and left a bare sheet sitting under the content.
+It is its own panel rather than a sheet inside the bar's window, because the
+island's *outline* changes as it grows. Its glass is still a piece of the frame's
+surface — the same vibrancy view the frame, the bar and the launchers are cut
+from — so it is the same material as everything it touches.
+
+The geometry is stepped frame by frame from one clock (rectangle, outline and
+glass together) rather than handed to Core Animation. That is deliberate: the
+window server renders an effect view's blur from the layer's *model* geometry,
+so an animated frame or mask does not move the blur — the glass would be left
+behind, and the island would float during the morph and snap into place at the
+end.
 - Shows the current track's artwork, title/artist/album, a progress bar and
   transport controls. `Space`, `←`/`→` and `Esc` work while it is open.
-- Open with `kshell trigger media_center_toggle`, or click the bar's
-  now-playing widget (the example config wires that widget's `action` to it).
+- Open with `kshell trigger media_center_toggle` (bound to `alt-n` in the
+  example aerospace config), or click the bar's now-playing widget (the example
+  config wires that widget's `action` to it).
+- It hangs off the display the pointer's bar is on, and steps aside when a
+  full-screen window takes that display.
 - Alignment and the termusic helper live in config:
   ```toml
   [media]
@@ -256,7 +278,7 @@ snapped out at full size and left a bare sheet sitting under the content.
 - Bindable on their own: `kshell trigger media_play_pause`, `media_next`,
   `media_previous`.
 
-**Music panel** — the shell's own music player: a bottom sheet with a **Search**
+**Music panel** — the shell's own music player: a bottom panel with a **Search**
 tab (YouTube Music, or paste a link), a **Library** tab, and a player bar. It
 replaces an external player rather than driving one.
 
@@ -273,6 +295,16 @@ replaces an external player rather than driving one.
   skipped rather than listed — hence m4a as the download format.
 - Enter searches, ⏎ in the field runs it, `Esc` closes. Tabs are clickable;
   the library row under the pointer can be played, and trashed.
+- Keyboard, like the other pickers: **↑/↓** arm a row, **⏎** acts on it — play a
+  library track, or download a search result — and **Esc** closes. **Space**
+  plays or pauses. Holding **⌘** turns the arrows into transport: ⌘↑/⌘↓ volume,
+  ⌘←/⌘→ seek ±5s. The arrows keep working while the search field has the
+  keyboard; space does not, so it stays a space.
+- The player also registers as the system's now-playing app, so the **media
+  keys**, Control Centre and headphone controls drive it. macOS routes those to
+  whichever app is currently playing, though, so the explicit bindings are the
+  ones that always work: `alt-shift-m` play/pause, `alt-ctrl-m` next,
+  `alt-ctrl-shift-m` previous.
   ```toml
   [music]
   directory      = "~/Music/kshell"   # where downloads land
@@ -317,6 +349,62 @@ which is what used to leave a visible seam where they met.
   radius    = 20             # rounds the frame's inner opening
   color     = "$background"  # tokens work; "$accent" gives a brighter frame
   blur      = true           # frost the frame with whatever is behind it
+  ```
+
+**Audio visualiser** — cava-style bars along the bottom of the screen that rise
+while kshell is playing music and fade away when it stops. Purely decoration: the
+window ignores the mouse.
+
+- The levels are real: playback runs through an `AVAudioEngine`, and a tap on its
+  main mixer is FFT'd into log-spaced bands. Nothing is captured from the
+  system, so there is no recording permission and no loopback device — it reacts
+  to what kshell itself is playing, which is the shell's own player.
+- The analysis window is 4096 samples, slid along in 512-frame hops — an FFT per
+  tap callback, each one covering the last eight buffers. The size matters at the
+  bottom of the range: at 1024 samples the lowest dozen bands were closer
+  together than one FFT bin, so they read the same number and moved as a single
+  slab. Each band now takes several interpolated samples across its range too, so
+  neighbours stay distinct even where a band is narrower than a bin.
+- Responsiveness comes from the small hop rather than a short window: a band is
+  the peak across the window, so a transient shows up within one ~11 ms hop of it
+  starting, and the smoothing rises fast and falls quickly.
+- The bars are drawn with CoreGraphics as a handful of passes over the whole
+  strip — one path holds every bar, so the gradient, the glow and the reflection
+  are three draws regardless of how many bars there are. The levels are pushed
+  straight into the view, with no SwiftUI update hop between the tap and the
+  pixels, and AppKit coalesces the redraws to the display's refresh.
+- `layout = "centered"` mirrors the bands about the middle of the screen — the
+  lowest frequencies innermost, each band drawn once per side, so the two halves
+  move as one symmetric shape. `layout = "sweep"` runs low to high, left to
+  right.
+- Each bar is drawn on a `Canvas` fed by the tap (roughly 40 frames a second),
+  with a fast attack and a slow release so bars leap and settle like cava's.
+  Colours come from `$accent` (the body) and `$highlight` (the tips), so switching
+  theme re-colours the bars without the strip blinking.
+- `layer = "background"` puts it on the desktop, behind windows — so a window
+  tiled to the bottom edge will cover it; widen the window manager's bottom gap
+  to give it room. `layer = "overlay"` draws it just below the frame's surface
+  instead, above ordinary windows, which keeps it visible under a tiling window
+  manager.
+- Quiet detail reaches further up the bars than a plain dB mapping would: the
+  levels run through a gentle response curve, and the bars rise fast and fall
+  slow. Silence still sits at zero.
+- It steps aside for full-screen windows with the rest of the shell.
+- Toggle at runtime with `kshell trigger visualiser_toggle` (or `visualiser_show`
+  / `visualiser_hide`). Config:
+  ```toml
+  [visualiser]
+  enabled = true
+  layer   = "background"  # background | overlay
+  layout  = "centered"    # centered (mirrored) | sweep (low->high)
+  bars    = 64            # bands; centered draws each one twice
+  height  = 140           # how tall the bars can get, in points
+  gap     = 2             # gap between bars
+  inset   = 0             # extra gap above the frame's bottom edge
+  opacity = 0.8
+  mirror  = 0.35          # reflection under the baseline; 0 turns it off
+  fade    = 0.5           # seconds to fade in and out
+  display = "all"         # all | main
   ```
 
 ## JavaScript widgets
@@ -380,7 +468,8 @@ autohide_delay = 0.4      # seconds before hiding after the pointer leaves
 
 Bars can also be toggled at runtime: `kshell trigger bar_hide`, `bar_show`,
 `bar_toggle`; the frame likewise with `border_toggle`, `border_show`,
-`border_hide`. The music panel likewise with `music_launcher_toggle`, and its
+`border_hide`, and the visualiser with `visualiser_toggle`, `visualiser_show`,
+`visualiser_hide`. The music panel likewise with `music_launcher_toggle`, and its
 player with `music_play_pause`, `music_next`, `music_previous` and
 `music_play_library`. Full-screen apps are left alone: the shell hides on a
 display while a window fills it, and returns when it does not. Auto-hide applies per bar; the launcher opens on the display the
@@ -408,6 +497,8 @@ Sources/KShellCore/
   Shell/BarViewModel.swift       appearance + widget runtimes (observable)
   Surfaces/BarPanel.swift        NSPanel: borderless, non-activating, .statusBar
   Surfaces/BarView.swift         SwiftUI left/center/right widget rows
+  Surfaces/VisualiserPanel.swift cava-style bars on the desktop (Canvas, tap-fed)
+  Music/AudioSpectrum.swift      mixer tap -> FFT -> smoothed log-spaced bands
   Widgets/                       Widget protocol, factory, runtimes
   Services/                      ProcessRunner, Shell, SystemMetrics
   Config/                        TOML models, loader + file watching, colors

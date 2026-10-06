@@ -59,7 +59,11 @@ struct MusicPanelView: View {
 
     @State private var tab: Tab = .library
     @State private var query = ""
+    /// An armed row per tab, moved with the arrow keys like the theme picker.
+    @State private var librarySelection = 0
+    @State private var resultSelection = 0
     @FocusState private var focusedField: Bool
+    @FocusState private var panelFocused: Bool
     @Namespace private var pill
 
     private var bar: BarConfig { viewModel.appearance }
@@ -70,6 +74,54 @@ struct MusicPanelView: View {
     private var dim: Color { (theme.dim ?? theme.foreground)?.color ?? .gray }
 
     var body: some View {
+        panel
+        .focusable()
+        .focusEffectDisabled()
+        .focused($panelFocused)
+        .onExitCommand { onClose() }
+        .modifier(MusicKeys(
+            move: move,
+            activate: activate,
+            togglePlay: { player.toggle() },
+            seek: { delta in player.seek(toSeconds: player.position + delta) },
+            volume: { delta in player.volume = min(1, max(0, player.volume + delta)) },
+            fieldFocused: focusedField
+        ))
+        .onExitCommand { onClose() }
+        .onAppear {
+            library.refresh()
+            // Arm the playing track, like the theme picker arming the active theme.
+            if let playing = player.current, let at = library.tracks.firstIndex(of: playing) {
+                librarySelection = at
+            }
+            // Claim the keyboard for the panel itself, so the transport keys
+            // work before anything is clicked.
+            refocusPanel()
+        }
+        .onChange(of: library.tracks) { _, tracks in
+            librarySelection = min(librarySelection, max(tracks.count - 1, 0))
+        }
+        .onChange(of: downloads.results) { _, results in
+            resultSelection = min(resultSelection, max(results.count - 1, 0))
+        }
+        .onChange(of: tab) { _, new in tabChanged(to: new) }
+    }
+
+    /// Search wants the field; Library leaves the keys to the panel.
+    private func tabChanged(to new: Tab) {
+        if new == .search { focusedField = true } else { refocusPanel() }
+    }
+
+    /// Focus the panel itself (not the search field), so transport keys land.
+    private func refocusPanel() {
+        focusedField = false
+        DispatchQueue.main.async { panelFocused = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { panelFocused = true }
+    }
+
+    /// The panel's layout, kept separate from its keyboard so the two type-check
+    /// independently.
+    private var panel: some View {
         VStack(spacing: 0) {
             header
             if !downloads.jobs.filter(\.isActive).isEmpty { downloadsStrip }
@@ -81,10 +133,53 @@ struct MusicPanelView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .modifier(PanelSurface(viewModel: viewModel, edge: .bottom, fallback: SheetShape(radius: 22)))
-        .focusable()
-        .focusEffectDisabled()
-        .onExitCommand { onClose() }
-        .onAppear { library.refresh() }
+    }
+
+    /// The index the arrow keys are moving, per tab.
+    private var selection: Int {
+        tab == .library ? librarySelection : resultSelection
+    }
+
+    private var selectionCount: Int {
+        tab == .library ? library.tracks.count : downloads.results.count
+    }
+
+    private func setSelection(_ value: Int) {
+        if tab == .library { librarySelection = value } else { resultSelection = value }
+    }
+
+    private func move(_ delta: Int) -> KeyPress.Result {
+        let count = selectionCount
+        guard count > 0 else { return .ignored }
+        let next = min(max(0, selection + delta), count - 1)
+        guard next != selection else { return .handled }
+        withAnimation(.snappy(duration: 0.2, extraBounce: 0.18)) { setSelection(next) }
+        return .handled
+    }
+
+    /// Run the armed row: play it in the library, download it in search.
+    private func activate() -> KeyPress.Result {
+        switch tab {
+        case .library:
+            guard library.tracks.indices.contains(librarySelection) else { return .ignored }
+            player.play(library.tracks, startAt: librarySelection)
+        case .search:
+            guard downloads.results.indices.contains(resultSelection) else { return .ignored }
+            downloads.download(downloads.results[resultSelection])
+        }
+        return .handled
+    }
+
+    /// Scroll a list so the armed row stays in view.
+    private func keepVisible(_ proxy: ScrollViewProxy, id: String, when value: Int) {
+        DispatchQueue.main.async { proxy.scrollTo(id, anchor: .center) }
+    }
+
+    /// Run a transport action unless the search field has the keyboard.
+    private func transport(_ action: () -> Void) -> KeyPress.Result {
+        guard !focusedField else { return .ignored }
+        action()
+        return .handled
     }
 
     // MARK: header
@@ -226,21 +321,31 @@ struct MusicPanelView: View {
                     subtitle: "Searches YouTube Music. Results download into your library."
                 )
             } else {
-                ScrollView {
+                ScrollViewReader { proxy in
+                    ScrollView {
                     LazyVStack(spacing: 6) {
                         ForEach(downloads.results) { result in
                             SearchRow(
                                 result: result,
                                 job: downloads.job(for: result),
+                                selected: result.id == downloads.results[safe: resultSelection]?.id,
                                 accent: accent, dim: dim, foreground: foreground,
                                 font: bar.fontFamily,
                                 existing: library.tracks.contains { $0.path.contains("[\(result.id)]") },
                                 onDownload: { downloads.download(result) }
                             )
+                            .id(result.id)
                         }
                     }
                     .padding(.horizontal, 12)
                     .padding(.bottom, 14)
+                    }
+                    .onChange(of: resultSelection) { _, new in
+                        guard downloads.results.indices.contains(new) else { return }
+                        withAnimation(.snappy(duration: 0.25, extraBounce: 0.1)) {
+                            proxy.scrollTo(downloads.results[new].id, anchor: .center)
+                        }
+                    }
                 }
             }
         }
@@ -259,12 +364,14 @@ struct MusicPanelView: View {
                     subtitle: "Downloads land in \(library.directory.path)"
                 )
             } else {
-                ScrollView {
+                ScrollViewReader { proxy in
+                    ScrollView {
                     LazyVStack(spacing: 4) {
                         ForEach(Array(library.tracks.enumerated()), id: \.element.id) { index, track in
                             LibraryRow(
                                 track: track,
                                 index: index,
+                                selected: index == librarySelection,
                                 playing: player.current == track,
                                 isPlaying: player.isPlaying,
                                 accent: accent, dim: dim, foreground: foreground,
@@ -275,10 +382,18 @@ struct MusicPanelView: View {
                                     player.remove(track)
                                 }
                             )
+                            .id(track.id)
                         }
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
+                    }
+                    .onChange(of: librarySelection) { _, new in
+                        guard library.tracks.indices.contains(new) else { return }
+                        withAnimation(.snappy(duration: 0.25, extraBounce: 0.1)) {
+                            proxy.scrollTo(library.tracks[new].id, anchor: .center)
+                        }
+                    }
                 }
             }
         }
@@ -307,9 +422,17 @@ struct MusicPanelView: View {
 
 // MARK: - rows
 
+private extension Array {
+    /// Nil instead of trapping when a list shrinks under an armed index.
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
+}
+
 private struct SearchRow: View {
     let result: MusicSearchResult
     let job: MusicDownloadJob?
+    let selected: Bool
     let accent: Color
     let dim: Color
     let foreground: Color
@@ -347,14 +470,15 @@ private struct SearchRow: View {
         .padding(.horizontal, 10)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(Color.white.opacity(hovering ? 0.07 : 0.03))
+                .fill(Color.white.opacity(selected ? 0.09 : (hovering ? 0.07 : 0.03)))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(accent.opacity(hovering ? 0.35 : 0), lineWidth: 1)
+                .stroke(accent.opacity(selected ? 0.9 : (hovering ? 0.35 : 0)), lineWidth: selected ? 1.5 : 1)
         )
-        .scaleEffect(hovering ? 1.008 : 1)
+        .scaleEffect(selected ? 1.01 : (hovering ? 1.008 : 1))
         .animation(.snappy(duration: 0.2, extraBounce: 0.2), value: hovering)
+        .animation(.snappy(duration: 0.22, extraBounce: 0.2), value: selected)
         .onHover { hovering = $0 }
     }
 
@@ -410,6 +534,7 @@ private struct SearchRow: View {
 private struct LibraryRow: View {
     let track: MusicTrack
     let index: Int
+    let selected: Bool
     let playing: Bool
     let isPlaying: Bool
     let accent: Color
@@ -478,7 +603,11 @@ private struct LibraryRow: View {
         .padding(.horizontal, 10)
         .background(
             RoundedRectangle(cornerRadius: 9)
-                .fill(Color.white.opacity(playing ? 0.08 : (hovering ? 0.06 : 0.02)))
+                .fill(Color.white.opacity(playing ? 0.08 : (selected ? 0.09 : (hovering ? 0.06 : 0.02))))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 9)
+                .stroke(accent.opacity(selected ? 0.9 : 0), lineWidth: selected ? 1.5 : 1)
         )
         .overlay(alignment: .leading) {
             if playing {
@@ -674,4 +803,49 @@ struct Equaliser: View {
 
     private func high(_ index: Int) -> CGFloat { [6, 14, 9, 12][index % 4] }
     private func low(_ index: Int) -> CGFloat { [3, 5, 4, 6][index % 4] }
+}
+
+/// The panel's keyboard, kept out of the panel's body so the type checker has an
+/// easier time of it.
+///
+/// Arrow keys walk the armed row, return acts on it (play, or download), and
+/// holding command turns the arrows into transport — volume on up/down, seek on
+/// left/right. Space plays or pauses unless the search field has the keyboard.
+private struct MusicKeys: ViewModifier {
+    let move: (Int) -> KeyPress.Result
+    let activate: () -> KeyPress.Result
+    let togglePlay: () -> Void
+    let seek: (Double) -> Void
+    let volume: (Double) -> Void
+    let fieldFocused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .onKeyPress(.upArrow, phases: .down) { press in
+                guard press.modifiers.contains(.command) else { return move(-1) }
+                volume(0.05)
+                return .handled
+            }
+            .onKeyPress(.downArrow, phases: .down) { press in
+                guard press.modifiers.contains(.command) else { return move(1) }
+                volume(-0.05)
+                return .handled
+            }
+            .onKeyPress(.leftArrow, phases: .down) { press in
+                guard press.modifiers.contains(.command) else { return .ignored }
+                seek(-5)
+                return .handled
+            }
+            .onKeyPress(.rightArrow, phases: .down) { press in
+                guard press.modifiers.contains(.command) else { return .ignored }
+                seek(5)
+                return .handled
+            }
+            .onKeyPress(.return, phases: .down) { press in activate() }
+            .onKeyPress(.space, phases: .down) { press in
+                guard !fieldFocused else { return .ignored }
+                togglePlay()
+                return .handled
+            }
+    }
 }

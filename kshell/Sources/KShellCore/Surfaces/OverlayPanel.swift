@@ -2,17 +2,16 @@ import AppKit
 import QuartzCore
 import SwiftUI
 
-/// The screen edge an overlay panel is anchored to — the edge it appears to
-/// extend out of (and slides in from).
+/// The screen edge an overlay panel is anchored to — the edge it grows out of.
 public enum OverlayEdge: Sendable {
     /// Rises out of the bottom edge of the screen (top corners rounded).
     case bottom
-    /// Slides in from the left edge of the screen (trailing corners rounded).
+    /// Grows out of the left edge of the screen (trailing corners rounded).
     case leading
-    /// Slides in from the right edge of the screen (leading corners rounded).
+    /// Grows out of the right edge of the screen (leading corners rounded).
     case trailing
-    /// Drops down from the top edge — or, with a margin, from under the bar —
-    /// so it reads as extending from the bar (bottom corners rounded).
+    /// Drops out of the top edge — or, with a margin, from under the bar — so it
+    /// reads as extending from the bar (bottom corners rounded).
     case top
 
     /// The corners a sheet on this edge rounds convexly.
@@ -31,17 +30,26 @@ public enum OverlayAlign: Sendable {
     case leading, center, trailing
 }
 
-/// A reusable, key-capable panel that slides in from a screen edge.
+/// A reusable, key-capable panel that grows out of a screen edge.
 ///
-/// The slide is stepped frame by frame rather than handed to Core Animation, and
-/// its content is masked to the panel's outline. Both are deliberate: when the
-/// frame is on, this panel's glass lives on the frame's surface (see
-/// `SurfaceGlass`), and the window server renders that blur from model geometry
-/// — so an animating view frame would not move it. Stepping keeps the glass and
-/// the content locked together.
+/// Opening is a fluid morph rather than a slide: the panel starts as a small
+/// pill resting on the edge it is anchored to and swells into its full size —
+/// widening about its centre and reaching away from the edge — with its outline
+/// and its glass travelling with it. The content is laid out at its final size
+/// and anchored to that same edge, so the growing outline *reveals* it instead
+/// of reflowing it.
+///
+/// The morph is stepped frame by frame rather than handed to Core Animation.
+/// That is deliberate: when the frame is on, this panel's glass lives on the
+/// frame's surface (see `SurfaceGlass`), and the window server renders that blur
+/// from model geometry — so an animating view frame or mask would not move it.
+/// Stepping keeps the glass and the content locked together.
 public final class OverlayPanel: NSPanel {
-    static let showDuration: TimeInterval = 0.32
-    static let hideDuration: TimeInterval = 0.20
+    static let showDuration: TimeInterval = 0.42
+    static let hideDuration: TimeInterval = 0.26
+    /// How far the pill reaches along the edge, and out from it.
+    private static let seedLength: CGFloat = 300
+    private static let seedDepth: CGFloat = 44
 
     private let shownFrame: NSRect
     private let edge: OverlayEdge
@@ -49,12 +57,15 @@ public final class OverlayPanel: NSPanel {
     private let style: PanelStyle?
     private let makeGlass: ((NSScreen) -> SurfaceGlass?)?
     private let targetScreen: NSScreen
+    /// The outline to step while the frame is off: same rounding, no fillets.
+    private let fallbackStyle: PanelStyle
 
+    private let container = NSView()
+    private let mask = CAShapeLayer()
     private weak var host: NSView?
     private var glass: SurfaceGlass?
     private var ticker: DispatchSourceTimer?
     private var isShown = false
-    private var offset: CGSize = .zero
 
     public init(
         screen: NSScreen,
@@ -95,13 +106,15 @@ public final class OverlayPanel: NSPanel {
             x = screenFrame.maxX - margin - size.width
             y = screenFrame.midY - size.height / 2
         }
-        // The window always sits at its final spot; only the content slides.
+        // The window always sits at its final spot; only the content grows.
         self.shownFrame = NSRect(x: x, y: y, width: size.width, height: size.height)
         self.targetScreen = screen
         self.edge = edge
         self.size = size
         self.style = style
         self.makeGlass = glass
+        self.fallbackStyle = style
+            ?? PanelStyle(radius: SheetShape.defaultRadius, filletRadius: 0, attachment: .none)
 
         super.init(
             contentRect: shownFrame,
@@ -124,16 +137,11 @@ public final class OverlayPanel: NSPanel {
         // No `.fullScreenAuxiliary`: the panels step aside for full-screen apps.
         collectionBehavior = [.canJoinAllSpaces, .ignoresCycle]
 
-        // The content lives in a container masked to the panel's outline, so the
-        // tint and the panel's glass agree about where the edges are.
-        let container = NSView(frame: NSRect(origin: .zero, size: size))
+        // The container is what morphs — the window stays put — and it is masked
+        // to the current outline so the content is revealed by the growing shape.
         container.wantsLayer = true
-        if let style {
-            let mask = CAShapeLayer()
-            mask.fillColor = NSColor.black.cgColor
-            mask.path = PanelGeometry.path(in: CGRect(origin: .zero, size: size), style: style)
-            container.layer?.mask = mask
-        }
+        mask.fillColor = NSColor.black.cgColor
+        container.layer?.mask = mask
 
         let host = NSHostingView(rootView: content)
         host.frame = NSRect(origin: .zero, size: size)
@@ -141,6 +149,8 @@ public final class OverlayPanel: NSPanel {
         container.addSubview(host)
         self.host = host
         contentView = container
+
+        apply(progress: 0)
     }
 
     public override var canBecomeKey: Bool { true }
@@ -152,13 +162,28 @@ public final class OverlayPanel: NSPanel {
 
     public var isPresented: Bool { isShown }
 
-    /// Where the panel waits before sliding in — past the edge it comes from.
-    private var hiddenOffset: CGSize {
+    /// The pill the panel starts as: resting on the anchored edge, centred along
+    /// it, so growing it out is symmetric.
+    private var seedFrame: NSRect {
         switch edge {
-        case .bottom: return CGSize(width: 0, height: -size.height)
-        case .leading: return CGSize(width: -size.width, height: 0)
-        case .trailing: return CGSize(width: size.width, height: 0)
-        case .top: return CGSize(width: 0, height: size.height)
+        case .bottom:
+            let length = min(size.width, Self.seedLength)
+            return NSRect(x: shownFrame.midX - length / 2, y: shownFrame.minY,
+                          width: length, height: min(size.height, Self.seedDepth))
+        case .top:
+            let length = min(size.width, Self.seedLength)
+            let depth = min(size.height, Self.seedDepth)
+            return NSRect(x: shownFrame.midX - length / 2, y: shownFrame.maxY - depth,
+                          width: length, height: depth)
+        case .leading:
+            let length = min(size.height, Self.seedLength)
+            return NSRect(x: shownFrame.minX, y: shownFrame.midY - length / 2,
+                          width: min(size.width, Self.seedDepth), height: length)
+        case .trailing:
+            let length = min(size.height, Self.seedLength)
+            let depth = min(size.width, Self.seedDepth)
+            return NSRect(x: shownFrame.maxX - depth, y: shownFrame.midY - length / 2,
+                          width: depth, height: length)
         }
     }
 
@@ -168,21 +193,21 @@ public final class OverlayPanel: NSPanel {
 
         // Take a piece of the frame's glass, if the frame is providing it.
         glass = makeGlass?(targetScreen)
-        glass?.setResting(shownFrame, style: style)
+        apply(progress: 0)
 
-        // Lay the content out flat, then slide it in.
-        offset = animated ? hiddenOffset : .zero
-        applyOffset()
         NSApp.activate(ignoringOtherApps: true)
         makeKeyAndOrderFront(nil)
         makeKey()
 
-        guard animated else { return }
-        // Slide on the next run loop turn: an animation started in the same turn
-        // the window is first ordered front is skipped.
+        guard animated else {
+            apply(progress: 1)
+            return
+        }
+        // Grow on the next run loop turn: a morph started in the same turn the
+        // window is first ordered front is skipped.
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isShown else { return }
-            self.slide(to: .zero, duration: Self.showDuration, opening: true)
+            self.morph(to: 1, duration: Self.showDuration, opening: true)
         }
     }
 
@@ -194,8 +219,8 @@ public final class OverlayPanel: NSPanel {
             finishHide()
             return
         }
-        slide(to: hiddenOffset, duration: Self.hideDuration, opening: false)
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.hideDuration + 0.03) { [weak self] in
+        morph(to: 0, duration: Self.hideDuration, opening: false)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.hideDuration + 0.04) { [weak self] in
             guard let self, !self.isShown else { return }
             self.finishHide()
         }
@@ -213,22 +238,17 @@ public final class OverlayPanel: NSPanel {
         orderOut(nil)
     }
 
-    /// Step the panel from where it is to `target`.
-    private func slide(to target: CGSize, duration: TimeInterval, opening: Bool) {
+    /// Step the panel from where it is to `progress` (0 = the pill, 1 = open).
+    private func morph(to target: CGFloat, duration: TimeInterval, opening: Bool) {
         ticker?.cancel()
-        let from = offset
+        let from = progress
         let start = CACurrentMediaTime()
         let timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(deadline: .now(), repeating: 1.0 / 60.0)
         timer.setEventHandler { [weak self] in
             guard let self else { return }
             let t = min(1, max(0, (CACurrentMediaTime() - start) / duration))
-            let eased = SlideEasing.value(t, opening: opening)
-            self.offset = CGSize(
-                width: from.width + (target.width - from.width) * eased,
-                height: from.height + (target.height - from.height) * eased
-            )
-            self.applyOffset()
+            self.apply(progress: from + (target - from) * SlideEasing.value(t, opening: opening))
             if t >= 1 {
                 self.ticker?.cancel()
                 self.ticker = nil
@@ -238,8 +258,54 @@ public final class OverlayPanel: NSPanel {
         timer.resume()
     }
 
-    private func applyOffset() {
-        host?.frame = NSRect(x: offset.width, y: offset.height, width: size.width, height: size.height)
-        glass?.setOffset(offset)
+    private var progress: CGFloat = 0
+
+    /// Put the panel, its outline, its content and its glass at `progress`.
+    ///
+    /// Everything is set to its model value each tick rather than animated: the
+    /// window server renders an effect view's blur from the layer's model
+    /// geometry, so an animated frame or mask would leave the glass behind.
+    private func apply(progress value: CGFloat) {
+        progress = value
+        let seed = seedFrame
+        let rect = NSRect(
+            x: seed.minX + (shownFrame.minX - seed.minX) * value,
+            y: seed.minY + (shownFrame.minY - seed.minY) * value,
+            width: seed.width + (shownFrame.width - seed.width) * value,
+            height: seed.height + (shownFrame.height - seed.height) * value
+        )
+        let style = self.style ?? fallbackStyle
+
+        // The container is the window's frame, less the shown frame's origin.
+        let local = NSRect(
+            x: rect.minX - shownFrame.minX,
+            y: rect.minY - shownFrame.minY,
+            width: rect.width,
+            height: rect.height
+        )
+        container.frame = local
+
+        let shape = CGMutablePath()
+        shape.addPath(PanelGeometry.path(
+            in: NSRect(origin: .zero, size: local.size),
+            style: style
+        ))
+        mask.path = shape
+
+        // The content keeps its final size and stays pinned to the anchored
+        // edge, so the growing outline reveals it. It is centred along the edge,
+        // which is the axis the pill grows about.
+        if let host {
+            var origin = CGPoint.zero
+            switch edge {
+            case .bottom: origin = CGPoint(x: (local.width - size.width) / 2, y: 0)
+            case .top: origin = CGPoint(x: (local.width - size.width) / 2, y: local.height - size.height)
+            case .leading: origin = CGPoint(x: 0, y: (local.height - size.height) / 2)
+            case .trailing: origin = CGPoint(x: local.width - size.width, y: (local.height - size.height) / 2)
+            }
+            host.frame = NSRect(origin: origin, size: size)
+        }
+
+        glass?.setResting(rect, style: style)
     }
 }

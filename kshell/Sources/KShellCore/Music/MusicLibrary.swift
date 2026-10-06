@@ -77,8 +77,17 @@ public final class MusicLibrary: ObservableObject {
     /// Where downloads land. Settable from config.
     public var directory: URL
 
+    /// A cached track, tagged with the file's size and modification time so a
+    /// file that is still being written (or has been replaced) is re-probed
+    /// rather than remembered half-finished.
+    private struct CacheEntry: Codable {
+        var track: MusicTrack
+        var size: Int64
+        var modified: Double
+    }
+
     private let queue = DispatchQueue(label: "kshell.music.library", qos: .utility)
-    private var cache: [String: MusicTrack] = [:]
+    private var cache: [String: CacheEntry] = [:]
     private var cacheLoaded = false
 
     static let audioExtensions: Set<String> = ["mp3", "m4a", "aac", "flac", "wav", "aiff", "aif"]
@@ -138,13 +147,14 @@ public final class MusicLibrary: ObservableObject {
             let ext = url.pathExtension.lowercased()
             guard MusicLibrary.audioExtensions.contains(ext) else { continue }
             let path = url.path
-            if let cached = cache[path], FileManager.default.fileExists(atPath: path) {
-                result.append(cached)
+            let stamp = MusicLibrary.stamp(of: path)
+            if let cached = cache[path], cached.size == stamp.size, cached.modified == stamp.modified {
+                result.append(cached.track)
                 continue
             }
             var track = MusicLibrary.probe(path: path)
             track.artworkPath = MusicLibrary.extractArtwork(path: path)
-            cache[path] = track
+            cache[path] = CacheEntry(track: track, size: stamp.size, modified: stamp.modified)
             result.append(track)
         }
         // Drop cache entries for files that are gone.
@@ -152,6 +162,16 @@ public final class MusicLibrary: ObservableObject {
         cache = cache.filter { live.contains($0.key) }
         saveCache()
         return result
+    }
+
+    /// A file's size and modification time, or zeros if it cannot be read.
+    static func stamp(of path: String) -> (size: Int64, modified: Double) {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path) else {
+            return (0, 0)
+        }
+        let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
+        let modified = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        return (size, modified)
     }
 
     /// Tags via ffprobe. Falls back to the file name.
@@ -224,9 +244,9 @@ public final class MusicLibrary: ObservableObject {
         guard !cacheLoaded else { return }
         cacheLoaded = true
         guard let data = try? Data(contentsOf: cacheURL),
-              let decoded = try? JSONDecoder().decode([MusicTrack].self, from: data)
+              let decoded = try? JSONDecoder().decode([CacheEntry].self, from: data)
         else { return }
-        cache = Dictionary(uniqueKeysWithValues: decoded.map { ($0.path, $0) })
+        cache = Dictionary(uniqueKeysWithValues: decoded.map { ($0.track.path, $0) })
     }
 
     private func saveCache() {

@@ -152,6 +152,7 @@ name       = "Synthwave"
 kitty      = "synthwave.conf"
 nvim       = "synthwave"
 wallpaper  = "~/dotfiles/wallpapers/synthwave.jpg"
+live_wallpaper = "~/dotfiles/live-wallpapers/synthwave-city-moewalls-com.mp4"
 accent     = "#ff2a85"
 highlight  = "#00d4ff"
 foreground = "#e0d0f0"
@@ -280,6 +281,191 @@ dim        = "#5c6370"
 mid        = "#56b6c2"
 background = "#282c34AA"
 
+[[theme_launcher.themes]]
+name           = "Amber"
+kitty          = "amber-amethyst.conf"
+nvim           = "amber"
+wallpaper      = "~/dotfiles/wallpapers/amber.jpg"
+accent         = "#fbbf24"
+highlight      = "#a855f7"
+foreground     = "#e2e8f0"
+dim            = "#8880a0"
+mid            = "#a855f7"
+background     = "#1e1a2eAA"
+
+[[theme_launcher.themes]]
+name           = "Amethyst Lagoon"
+kitty          = "amethyst-lagoon.conf"
+nvim           = "amethyst-lagoon"
+wallpaper      = "~/dotfiles/wallpapers/amethyst-lagoon.jpg"
+accent         = "#a78bfa"
+highlight      = "#b8a4f0"
+foreground     = "#e8e0f0"
+dim            = "#8a80a0"
+mid            = "#b8a4f0"
+background     = "#120e1aAA"
+
+[[theme_launcher.themes]]
+name           = "Blue Lagoon"
+kitty          = "blue-lagoon.conf"
+nvim           = "blue-lagoon"
+wallpaper      = "~/dotfiles/wallpapers/blue-lagoon.jpg"
+accent         = "#6ba3ff"
+highlight      = "#7ecfd4"
+foreground     = "#e8f0f8"
+dim            = "#8ba0b0"
+mid            = "#7ecfd4"
+background     = "#0e1419AA"
+
+[[theme_launcher.themes]]
+name           = "Cherry Blossom"
+kitty          = "cherry-blossom.conf"
+nvim           = "cherry-blossom"
+wallpaper      = "~/dotfiles/wallpapers/cherryblossom.jpg"
+accent         = "#f8a5c2"
+highlight      = "#c3aedb"
+foreground     = "#f5e6e8"
+dim            = "#a88a92"
+mid            = "#c3aedb"
+background     = "#1c1116AA"
+
+[[theme_launcher.themes]]
+name           = "Glow"
+kitty          = "glow.conf"
+nvim           = "glow"
+wallpaper      = "~/dotfiles/wallpapers/glow.jpg"
+live_wallpaper = "~/dotfiles/live-wallpapers/glow.mp4"
+accent         = "#8a8ff8"
+highlight      = "#8aa4f0"
+foreground     = "#e6e8f4"
+dim            = "#868aa4"
+mid            = "#8aa4f0"
+background     = "#0c0e18AA"
+
+[[theme_launcher.themes]]
+name           = "Night Lagoon"
+kitty          = "night-lagoon.conf"
+nvim           = "night-lagoon"
+wallpaper      = "~/dotfiles/wallpapers/night-lagoon.jpg"
+live_wallpaper = "~/dotfiles/live-wallpapers/night-lagoon.mp4"
+accent         = "#8c6ad8"
+highlight      = "#b098e8"
+foreground     = "#e4def0"
+dim            = "#7a7490"
+mid            = "#b098e8"
+background     = "#0a0812AA"
+
+[[theme_launcher.themes]]
+name           = "Sunset"
+kitty          = "sunset.conf"
+nvim           = "sunset"
+wallpaper      = "~/dotfiles/wallpapers/sunset_static.png"
+live_wallpaper = "~/dotfiles/live-wallpapers/sunset.mp4"
+accent         = "#6ba3ff"
+highlight      = "#f5c842"
+foreground     = "#e8f0f8"
+dim            = "#8ba0b0"
+mid            = "#f5c842"
+background     = "#0e1419AA"
+
+[[theme_launcher.themes]]
+name           = "Ristretto"
+kitty          = "ristretto.conf"
+nvim           = "ristretto"
+wallpaper      = "~/dotfiles/wallpapers/ristretto.jpg"
+accent         = "#f38d70"
+highlight      = "#a8a9eb"
+foreground     = "#e6d9db"
+dim            = "#72696a"
+mid            = "#a8a9eb"
+background     = "#2c2525AA"
+
+[[theme_launcher.themes]]
+name           = "Osaka Jade"
+kitty          = "osaka-jade.conf"
+nvim           = "osaka-jade"
+wallpaper      = "~/dotfiles/wallpapers/osaka-jade.jpg"
+accent         = "#509475"
+highlight      = "#2dd5b7"
+foreground     = "#c1c497"
+dim            = "#53685b"
+mid            = "#2dd5b7"
+background     = "#111c18AA"
+
+[[theme_launcher.themes]]
+name           = "Ethereal"
+kitty          = "ethereal.conf"
+nvim           = "ethereal"
+wallpaper      = "~/dotfiles/wallpapers/ethereal.jpg"
+accent         = "#7d82d9"
+highlight      = "#eb8b54"
+foreground     = "#ffcead"
+dim            = "#6d7db6"
+mid            = "#eb8b54"
+background     = "#060b1eAA"
+
+[[theme_launcher.themes]]
+name           = "Lumon"
+kitty          = "lumon.conf"
+nvim           = "lumon"
+wallpaper      = "~/dotfiles/wallpapers/lumon.jpg"
+accent         = "#8bc9eb"
+highlight      = "#6fb8e3"
+foreground     = "#d6e2ee"
+dim            = "#304860"
+mid            = "#6fb8e3"
+background     = "#16242dAA"
+
+[[theme_launcher.themes]]
+name           = "Matte Black"
+kitty          = "matte-black.conf"
+nvim           = "matte-black"
+wallpaper      = "~/dotfiles/wallpapers/matte-black.jpg"
+accent         = "#e68e0d"
+highlight      = "#ffc107"
+foreground     = "#bebebe"
+dim            = "#555555"
+mid            = "#ffc107"
+background     = "#121212AA"
+
+[[theme_launcher.themes]]
+name           = "Hackerman"
+kitty          = "hackerman.conf"
+nvim           = "hackerman"
+wallpaper      = "~/dotfiles/wallpapers/hackerman.jpg"
+accent         = "#82fb9c"
+highlight      = "#7cf8f7"
+foreground     = "#ddf7ff"
+dim            = "#2d3450"
+mid            = "#7cf8f7"
+background     = "#0b0c16AA"
+
+[[theme_launcher.themes]]
+name           = "Last Horizon"
+kitty          = "last-horizon.conf"
+nvim           = "last-horizon"
+wallpaper      = "~/dotfiles/wallpapers/last-horizon.jpg"
+accent         = "#b59790"
+highlight      = "#c4d8e2"
+foreground     = "#fafcfb"
+dim            = "#584e51"
+mid            = "#a5a0b6"
+background     = "#0c0b0cAA"
+
+[[theme_launcher.themes]]
+name           = "Vantablack"
+kitty          = "vantablack.conf"
+nvim           = "vantablack"
+wallpaper      = "~/dotfiles/wallpapers/vantablack.jpg"
+accent         = "#8d8d8d"
+highlight      = "#cecece"
+foreground     = "#ffffff"
+dim            = "#7a7a7a"
+mid            = "#b0b0b0"
+background     = "#000000AA"
+
+
+
 
 # The line drawn inside the screen edges — the bar's glass carried around the
 # screen, in the same style as the media centre's surface. It stops at the bar
@@ -306,3 +492,20 @@ directory      = "~/Music/kshell"   # where downloads land
 search_results = 15                  # results per search
 format         = "m4a"               # yt-dlp's audio container
 ytdlp          = "yt-dlp"
+# The audio visualiser: cava-style bars along the bottom of the screen that rise
+# while music plays and fade away when it stops. Purely decoration — it ignores
+# the mouse. `layer = "overlay"` keeps it above ordinary windows (visible over
+# tiled ones); `layer = "background"` puts it on the desktop behind them.
+# Toggle at runtime with `kshell trigger visualiser_toggle`.
+[visualiser]
+enabled = true
+layer   = "background" # overlay | background
+layout  = "centered"    # centered (mirrored) | sweep (low->high)
+bars    = 64            # bands; centered draws each one twice
+height  = 140           # how tall the bars can get, in points
+gap     = 2             # gap between bars
+inset   = 0             # extra gap above the frame's bottom edge
+opacity = 0.8
+mirror  = 0.35          # reflection under the baseline; 0 turns it off
+fade    = 0.5           # seconds to fade in and out
+display = "all"         # all | main

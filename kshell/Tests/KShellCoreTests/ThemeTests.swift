@@ -49,6 +49,19 @@ final class ThemeTests: XCTestCase {
         XCTAssertEqual(config.themeLauncher.themes.first?.nvim, "synthwave")
     }
 
+    func testLiveWallpaperParses() throws {
+        let config = try ShellConfig.parse(toml: """
+        [[theme_launcher.themes]]
+        name           = "Glow"
+        kitty          = "glow.conf"
+        nvim           = "glow"
+        wallpaper      = "~/wall.jpg"
+        live_wallpaper = "~/glow.mp4"
+        """)
+        XCTAssertEqual(config.themeLauncher.themes.first?.wallpaper, "~/wall.jpg")
+        XCTAssertEqual(config.themeLauncher.themes.first?.liveWallpaper, "~/glow.mp4")
+    }
+
     func testUnknownTokenBecomesNil() throws {
         let config = try ShellConfig.parse(toml: """
         [theme]

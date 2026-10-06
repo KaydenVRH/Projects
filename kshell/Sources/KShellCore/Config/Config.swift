@@ -61,6 +61,8 @@ public struct ThemeDefinition {
     public var nvim: String?
     /// Wallpaper path (image, or a video for the live-wallpaper engine).
     public var wallpaper: String?
+    /// Optional live wallpaper played *on top of* `wallpaper` (via `lwp`).
+    public var liveWallpaper: String?
     public var accent: String?
     public var highlight: String?
     public var foreground: String?
@@ -77,6 +79,7 @@ public struct ThemeDefinition {
         kitty: String? = nil,
         nvim: String? = nil,
         wallpaper: String? = nil,
+        liveWallpaper: String? = nil,
         accent: String? = nil,
         highlight: String? = nil,
         foreground: String? = nil,
@@ -90,6 +93,7 @@ public struct ThemeDefinition {
         self.kitty = kitty
         self.nvim = nvim
         self.wallpaper = wallpaper
+        self.liveWallpaper = liveWallpaper
         self.accent = accent
         self.highlight = highlight
         self.foreground = foreground
@@ -160,6 +164,38 @@ public struct MusicConfig {
     public init() {}
 }
 
+/// The desktop audio visualiser: cava-style bars that rise while music plays and
+/// fade away when it stops. Purely decoration — it ignores the mouse.
+public struct VisualiserConfig {
+    public var enabled: Bool = true
+    /// Where the bars live. `background` puts them on the desktop, behind
+    /// windows; `overlay` draws them above ordinary windows instead, which is
+    /// the only way a tiling window manager leaves them visible.
+    public var layer: String = "background"
+    /// How the bands are laid out: `centered` mirrors them about the middle of
+    /// the screen (the lowest band innermost), `sweep` runs low to high, left to
+    /// right.
+    public var layout: String = "centered"
+    /// How many bands to draw. `centered` draws each one twice, once per side.
+    public var bars: Int = 64
+    /// Height of the strip, in points.
+    public var height: Double = 140
+    /// Gap between bars, in points.
+    public var gap: Double = 2
+    /// Extra gap between the bars and the screen edge, on top of the frame's.
+    public var inset: Double = 0
+    /// Overall opacity of the bars.
+    public var opacity: Double = 0.8
+    /// How much of each bar to mirror below the baseline, 0 disables it.
+    public var mirror: Double = 0.35
+    /// Seconds the fade in and out takes.
+    public var fade: Double = 0.5
+    /// `all` shows it on every display; `main` only the main display.
+    public var display: String = "all"
+
+    public init() {}
+}
+
 /// The media centre: where termusic's helper script lives and where the panel
 /// hangs from the bar.
 public struct MediaConfig {
@@ -208,6 +244,8 @@ public struct ShellConfig {
     public var border: BorderConfig
     /// The music panel.
     public var music: MusicConfig
+    /// The desktop audio visualiser.
+    public var visualiser: VisualiserConfig
 
     public init(
         bar: BarConfig = BarConfig(),
@@ -224,7 +262,8 @@ public struct ShellConfig {
         themeLauncher: ThemeLauncherConfig = ThemeLauncherConfig(),
         media: MediaConfig = MediaConfig(),
         border: BorderConfig = BorderConfig(),
-        music: MusicConfig = MusicConfig()
+        music: MusicConfig = MusicConfig(),
+        visualiser: VisualiserConfig = VisualiserConfig()
     ) {
         self.bar = bar
         self.theme = theme
@@ -237,6 +276,7 @@ public struct ShellConfig {
         self.media = media
         self.border = border
         self.music = music
+        self.visualiser = visualiser
     }
 
     public static func parse(toml text: String) throws -> ShellConfig {
@@ -309,6 +349,7 @@ public struct ShellConfig {
                         kitty: table.string("kitty"),
                         nvim: table.string("nvim"),
                         wallpaper: table.string("wallpaper"),
+                        liveWallpaper: table.string("live_wallpaper"),
                         accent: table.string("accent"),
                         highlight: table.string("highlight"),
                         foreground: table.string("foreground"),
@@ -339,6 +380,20 @@ public struct ShellConfig {
             if let v = table.string("format") { music.format = v }
             if let v = table.string("ytdlp") { music.ytdlp = v }
         }
+        var visualiser = VisualiserConfig()
+        if let table = root.table("visualiser") {
+            if let v = table.bool("enabled") { visualiser.enabled = v }
+            if let v = table.string("layer") { visualiser.layer = v.lowercased() }
+            if let v = table.string("layout") { visualiser.layout = v.lowercased() }
+            if let v = table.number("bars") { visualiser.bars = min(max(Int(v), 4), 256) }
+            if let v = table.number("height") { visualiser.height = max(8, v) }
+            if let v = table.number("gap") { visualiser.gap = max(0, v) }
+            if let v = table.number("inset") { visualiser.inset = max(0, v) }
+            if let v = table.number("opacity") { visualiser.opacity = min(max(v, 0), 1) }
+            if let v = table.number("mirror") { visualiser.mirror = min(max(v, 0), 1) }
+            if let v = table.number("fade") { visualiser.fade = max(0, v) }
+            if let v = table.string("display") { visualiser.display = v.lowercased() }
+        }
         var border = BorderConfig()
         if let table = root.table("border") {
             if let v = table.bool("enabled") { border.enabled = v }
@@ -359,7 +414,8 @@ public struct ShellConfig {
             themeLauncher: themeLauncher,
             media: media,
             border: border,
-            music: music
+            music: music,
+            visualiser: visualiser
         )
     }
 

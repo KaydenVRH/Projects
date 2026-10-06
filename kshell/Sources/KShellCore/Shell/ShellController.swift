@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 
 /// Builds and owns one bar surface per display, rebuilding when the config or
 /// the display arrangement changes.
@@ -10,7 +11,7 @@ public final class ShellController {
     private var scriptLauncher: ScriptLauncher?
     private var wallpaperLauncher: WallpaperLauncher?
     private var themeLauncher: ThemeLauncher?
-    private var mediaCenter: MediaCenter?
+    private var mediaCenter: MediaIsland?
     private var musicLauncher: MusicPanel?
     private var musicLibrary: MusicLibrary?
     private var mediaCenterAlign: OverlayAlign?
@@ -21,9 +22,13 @@ public final class ShellController {
     private var eventTokens: [NSObjectProtocol] = []
     private var bars: [BarPanel] = []
     private var borders: [ScreenBorderPanel] = []
+    private var visualisers: [VisualiserPanel] = []
+    private var playingObserver: AnyCancellable?
     private var manualHidden = false
     /// Runtime override for `[border] enabled`; `nil` follows the config.
     private var borderOverride: Bool?
+    /// Runtime override for `[visualiser] enabled`; `nil` follows the config.
+    private var visualiserOverride: Bool?
     /// Displays whose frontmost window fills them.
     private var fullscreenDisplays: Set<CGDirectDisplayID> = []
     private lazy var fullscreen = FullscreenWatch { [weak self] covered in
@@ -47,6 +52,12 @@ public final class ShellController {
         subscribeToEvents()
         rebuildBars()
         fullscreen.start()
+
+        // The bars follow the player: up while something plays, away when it
+        // stops. The levels themselves arrive from the engine's tap.
+        playingObserver = MusicPlayer.shared.$isPlaying
+            .receive(on: RunLoop.main)
+            .sink { [weak self] playing in self?.setVisualiserPlaying(playing) }
 
         NotificationCenter.default.addObserver(
             self,
@@ -78,6 +89,9 @@ public final class ShellController {
         mediaCenter?.hide(animated: false)
         musicLauncher?.hide(animated: false)
         autoHide.stop()
+        playingObserver = nil
+        for panel in visualisers { panel.dismiss() }
+        visualisers.removeAll()
         for token in eventTokens { EventBus.unobserve(token) }
         eventTokens.removeAll()
         loader.stopWatching()
@@ -133,6 +147,12 @@ public final class ShellController {
         })
         eventTokens.append(bus.observe("border_show") { [weak self] _ in self?.setBorderEnabled(true) })
         eventTokens.append(bus.observe("border_hide") { [weak self] _ in self?.setBorderEnabled(false) })
+        eventTokens.append(bus.observe("visualiser_toggle") { [weak self] _ in
+            guard let self else { return }
+            self.setVisualiserEnabled(!self.visualiserEnabled)
+        })
+        eventTokens.append(bus.observe("visualiser_show") { [weak self] _ in self?.setVisualiserEnabled(true) })
+        eventTokens.append(bus.observe("visualiser_hide") { [weak self] _ in self?.setVisualiserEnabled(false) })
         eventTokens.append(bus.observe("config_reload") { [weak self] _ in
             self?.loader.reloadNow()
         })
@@ -141,6 +161,58 @@ public final class ShellController {
     /// Whether the border frame is on: a runtime override, or the config.
     private var borderEnabled: Bool {
         borderOverride ?? loader.config.border.enabled
+    }
+
+    /// Whether the visualiser is on: a runtime override, or the config.
+    private var visualiserEnabled: Bool {
+        visualiserOverride ?? loader.config.visualiser.enabled
+    }
+
+    public func setVisualiserEnabled(_ enabled: Bool) {
+        guard enabled != visualiserEnabled else { return }
+        visualiserOverride = enabled
+        rebuildVisualisers()
+    }
+
+    private func setVisualiserPlaying(_ playing: Bool, animated: Bool = true) {
+        for panel in visualisers { panel.setPlaying(playing, animated: animated) }
+    }
+
+    /// Build the visualiser strips for whichever displays the config asks for.
+    /// Panels are updated in place when the screen set is unchanged, so a theme
+    /// change re-colours the bars without the window blinking.
+    private func rebuildVisualisers() {
+        let config = loader.config.visualiser
+        let player = MusicPlayer.shared
+        player.spectrum.bandCount = config.bars
+        player.spectrumWanted = visualiserEnabled
+        if !visualiserEnabled { player.spectrum.isEnabled = false }
+
+        let screens: [NSScreen]
+        if config.display == "main" {
+            screens = [NSScreen.main ?? NSScreen.screens.first].compactMap { $0 }
+        } else {
+            screens = NSScreen.screens
+        }
+
+        guard visualiserEnabled, !screens.isEmpty else {
+            for panel in visualisers { panel.dismiss() }
+            visualisers.removeAll()
+            return
+        }
+
+        if visualisers.count == screens.count,
+           zip(visualisers, screens).allSatisfy({ $0.visualiserScreen == $1 }) {
+            for (panel, screen) in zip(visualisers, screens) {
+                panel.apply(config: config, theme: viewModel.theme, margin: panelMargin, screen: screen)
+            }
+        } else {
+            for panel in visualisers { panel.dismiss() }
+            visualisers = screens.map { screen in
+                VisualiserPanel(screen: screen, config: config, theme: viewModel.theme, margin: panelMargin)
+            }
+        }
+        setVisualiserPlaying(MusicPlayer.shared.isPlaying, animated: false)
     }
 
     /// Where the launcher panels start: flush against the frame's inner opening,
@@ -175,6 +247,7 @@ public final class ShellController {
         themeLauncher = nil
         makeThemeLauncher()
         rebuildBars()
+        rebuildVisualisers()
     }
 
     /// Get out of the way of full-screen windows, and come back afterwards.
@@ -193,6 +266,13 @@ public final class ShellController {
                 border.orderOut(nil)
             } else {
                 border.orderFrontRegardless()
+            }
+        }
+        for panel in visualisers {
+            if fullscreenDisplays.contains(FullscreenWatch.displayID(panel.visualiserScreen) ?? 0) {
+                panel.dismiss()
+            } else {
+                panel.present()
             }
         }
         if !fullscreenDisplays.isEmpty {
@@ -258,6 +338,7 @@ public final class ShellController {
         MusicDownloads.shared.audioFormat = config.format
         MusicDownloads.shared.ytdlp = config.ytdlp
 
+        MusicPlayer.shared.libraryProvider = { [weak library] in library?.tracks ?? [] }
         if musicLauncher == nil {
             musicLauncher = MusicPanel(viewModel: viewModel, library: library, margin: panelMargin)
         }
@@ -274,7 +355,7 @@ public final class ShellController {
         mediaCenterAlign = media.align
         let wasVisible = mediaCenter?.visible ?? false
         mediaCenter?.hide(animated: false)
-        mediaCenter = MediaCenter(
+        mediaCenter = MediaIsland(
             viewModel: viewModel,
             monitor: .shared,
             align: media.align,
@@ -354,6 +435,7 @@ public final class ShellController {
         if manualHidden {
             for bar in bars { bar.setRevealed(false, animated: false) }
         }
+        rebuildVisualisers()
         updateAutoHide()
     }
 

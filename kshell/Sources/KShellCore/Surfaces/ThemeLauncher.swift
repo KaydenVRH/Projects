@@ -48,6 +48,16 @@ public enum ThemeApplier {
             }
         }
 
+        // A live wallpaper plays on top of the still image. Themes without one
+        // tear down whatever is running so the still image is what shows.
+        if let live = theme.liveWallpaper, !live.isEmpty,
+           FileManager.default.fileExists(atPath: KShellPaths.resolve(live).path) {
+            setWallpaper(KShellPaths.resolve(live))
+            result.changed.append("live wallpaper")
+        } else {
+            Shell.run("lwp stop")
+        }
+
         return result
     }
 
