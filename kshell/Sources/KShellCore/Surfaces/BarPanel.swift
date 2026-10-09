@@ -128,6 +128,9 @@ public final class BarPanel: NSPanel {
             backing: .buffered,
             defer: false
         )
+        // Light themes need a light appearance, or the material keeps the dark
+        // system blur under a light tint.
+        self.appearance = appearance.background.vibrancyAppearance
         configure(
             appearance: appearance,
             viewModel: viewModel,

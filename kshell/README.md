@@ -142,6 +142,12 @@ draws only content, masked to the same outline. With the frame off, a panel goes
 back to its own frosted material and convex corners (`SheetShape`), flush with the
 screen's edge.
 
+A surface's blur — and SwiftUI's adaptive text on top of it — follow the
+*window's appearance*, not the tint painted over it. So every window takes the
+appearance its theme's background implies (`RGBA.vibrancyAppearance`), which is
+what stops a light theme from keeping the dark system material under a light tint
+and reading muddy. The theme decides, not the system.
+
 Either way the morph is stepped frame by frame rather than handed to Core
 Animation, with the decelerating curve the media centre uses: the window server
 renders an effect view's blur from model geometry, so an animating view frame

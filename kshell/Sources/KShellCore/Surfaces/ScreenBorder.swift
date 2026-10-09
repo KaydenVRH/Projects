@@ -54,6 +54,10 @@ public final class ScreenBorderPanel: NSPanel {
         )
 
         isFloatingPanel = true
+        // A material's blur — and SwiftUI's adaptive text — follow the *appearance*,
+        // not the tint painted over it, so a light theme has to say so or its
+        // glass stays dark on a dark-mode system.
+        appearance = config.color.vibrancyAppearance
         // Same level as the bar used to be: above ordinary windows and the menu
         // bar, below the bar's content window and the launchers.
         level = .statusBar

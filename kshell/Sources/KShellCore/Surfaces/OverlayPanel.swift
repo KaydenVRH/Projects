@@ -123,6 +123,10 @@ public final class OverlayPanel: NSPanel {
             defer: false
         )
 
+        // Light themes need a light appearance, or their panels keep the dark
+        // system material under a light tint and the content's adaptive colours
+        // stay pale on a pale surface.
+        self.appearance = appearance.background.vibrancyAppearance
         // Above the surface holder and the bar's content window.
         level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
         isOpaque = false

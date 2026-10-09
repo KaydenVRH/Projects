@@ -65,6 +65,20 @@ public struct RGBA: Equatable {
         NSColor(srgbRed: r, green: g, blue: b, alpha: a)
     }
 
+    /// Whether this colour reads as light.
+    public var isLight: Bool {
+        0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5
+    }
+
+    /// The appearance a vibrancy view tinted with this colour should render in.
+    ///
+    /// A material's blur follows the *appearance*, not the tint painted over it:
+    /// on a dark-mode system every surface would keep a dark blur however light
+    /// its tint, which left light themes looking muddy. So the tint decides.
+    public var vibrancyAppearance: NSAppearance? {
+        NSAppearance(named: isLight ? .aqua : .darkAqua)
+    }
+
     public var color: Color {
         Color(.sRGB, red: r, green: g, blue: b, opacity: a)
     }
