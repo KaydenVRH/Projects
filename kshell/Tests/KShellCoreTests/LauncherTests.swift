@@ -7,8 +7,7 @@ final class LauncherTests: XCTestCase {
         AppItem(
             id: "/Applications/\(name).app",
             name: name,
-            url: URL(fileURLWithPath: "/Applications/\(name).app"),
-            icon: NSImage()
+            url: URL(fileURLWithPath: "/Applications/\(name).app")
         )
     }
 

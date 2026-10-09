@@ -2,11 +2,14 @@ import AppKit
 import SwiftUI
 
 /// One launchable application.
+///
+/// Deliberately carries no icon. Extracting and decoding an icon per app is the
+/// expensive half of a scan and it is only wanted for the dozen rows actually on
+/// screen, so `AppIconCache` resolves those on demand instead.
 public struct AppItem: Identifiable, Hashable {
     public let id: String
     public let name: String
     public let url: URL
-    public let icon: NSImage
 
     public static func == (lhs: AppItem, rhs: AppItem) -> Bool { lhs.id == rhs.id }
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
@@ -23,6 +26,28 @@ public enum AppCatalog {
         ]
     }
 
+    /// The scan, kept once. The shell rebuilds the launcher on every config
+    /// reload and border toggle, and re-reading four directories each time is
+    /// needless — the applications on disk do not change while the shell runs.
+    private static var cached: [AppItem]?
+    private static let lock = NSLock()
+
+    public static func items() -> [AppItem] {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached { return cached }
+        let loaded = load()
+        cached = loaded
+        return loaded
+    }
+
+    /// Drop the cache, so the next `items()` sees a freshly installed app.
+    public static func invalidate() {
+        lock.lock()
+        cached = nil
+        lock.unlock()
+    }
+
     public static func load() -> [AppItem] {
         var seenNames = Set<String>()
         var items: [AppItem] = []
@@ -34,12 +59,7 @@ public enum AppCatalog {
                 let name = FileManager.default.displayName(atPath: path)
                     .replacingOccurrences(of: ".app", with: "")
                 guard seenNames.insert(name).inserted else { continue }
-                items.append(AppItem(
-                    id: path,
-                    name: name,
-                    url: URL(fileURLWithPath: path),
-                    icon: NSWorkspace.shared.icon(forFile: path)
-                ))
+                items.append(AppItem(id: path, name: name, url: URL(fileURLWithPath: path)))
             }
         }
         return items.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -52,13 +72,14 @@ public enum AppCatalog {
     }
 }
 
-/// The app launcher overlay (search + grid of applications).
+/// The app launcher overlay: a search field over a list of applications.
 public final class AppLauncher {
     private let overlay: OverlayLauncher
 
     public init(viewModel: BarViewModel, margin: CGFloat = 0) {
-        let items = AppCatalog.load().map {
-            LauncherItem(id: $0.url.path, name: $0.name, appIcon: $0.icon)
+        // Built once here rather than scanned per open: names only, no icons.
+        let items = AppCatalog.items().map {
+            LauncherItem(id: $0.url.path, name: $0.name, iconPath: $0.url.path)
         }
         overlay = OverlayLauncher(
             viewModel: viewModel,
@@ -66,14 +87,14 @@ public final class AppLauncher {
             size: { screen in
                 NSSize(
                     width: min(screen.frame.width * 0.7, 900),
-                    height: min(screen.frame.height * 0.55, 460)
+                    height: min(screen.frame.height * 0.72, 620)
                 )
             },
             content: { onClose in
                 AnyView(LauncherView(
                     viewModel: viewModel,
                     placeholder: "Search apps…",
-                    minItemWidth: 104,
+                    style: .list,
                     items: items,
                     onSelect: { item in
                         NSWorkspace.shared.open(URL(fileURLWithPath: item.id))

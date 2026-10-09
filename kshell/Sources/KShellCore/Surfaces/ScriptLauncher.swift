@@ -58,7 +58,7 @@ public final class ScriptLauncher {
                 return AnyView(LauncherView(
                     viewModel: viewModel,
                     placeholder: "Search scripts…",
-                    minItemWidth: 150,
+                    style: .grid,
                     items: items,
                     onSelect: { item in
                         Shell.runScript(item.id)
