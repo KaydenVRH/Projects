@@ -242,6 +242,13 @@ itself, and the desktop wallpaper.
   Omarchy's light themes, and rose-pine's `*-dawn` illustrations — and their
   kitty themes swap the ANSI 0/7 slots so a light background is "white" and the
   ink is "black", the other way round from the dark set.
+
+  Their kitty themes also switch on a **cursor trail** (`cursor_trail`, kitty
+  0.37+): a soft ghost that follows big cursor jumps, tinted with the cursor's
+  own colour. The trigger is a dwell time in milliseconds — the cursor has to
+  have rested that long for the trail to start — and `cursor_trail_decay` sets
+  the fastest and slowest fade, in seconds. `cursor_trail_color` overrides the
+  tint if you want something other than the theme's accent.
   **Synthwave**, **Glow**, **Night Lagoon** and **Sunset** also have a
   `live_wallpaper` video that plays over their still image.
 
