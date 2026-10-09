@@ -243,12 +243,11 @@ itself, and the desktop wallpaper.
   kitty themes swap the ANSI 0/7 slots so a light background is "white" and the
   ink is "black", the other way round from the dark set.
 
-  Their kitty themes also switch on a **cursor trail** (`cursor_trail`, kitty
-  0.37+): a soft ghost that follows big cursor jumps, tinted with the cursor's
-  own colour. The trigger is a dwell time in milliseconds — the cursor has to
-  have rested that long for the trail to start — and `cursor_trail_decay` sets
-  the fastest and slowest fade, in seconds. `cursor_trail_color` overrides the
-  tint if you want something other than the theme's accent.
+  None of the theme files set `cursor_trail` (or any other kitty behaviour like
+  it): a theme carries colours and the cursor's glass, and anything the user sets
+  in `kitty.conf` for themselves survives switching themes. The include sits at
+  the top of that file, so a theme's settings would silently win — a theme should
+  not have an opinion about a trail.
   **Synthwave**, **Glow**, **Night Lagoon** and **Sunset** also have a
   `live_wallpaper` video that plays over their still image.
 
