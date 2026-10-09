@@ -225,11 +225,17 @@ itself, and the desktop wallpaper.
   **Amethyst Lagoon**, **Blue Lagoon**, **Cherry Blossom**, **Glow**,
   **Night Lagoon**, **Sunset** and the community set **Ristretto**,
   **Osaka Jade**, **Ethereal**, **Lumon**, **Matte Black**, **Hackerman**,
-  **Last Horizon**, **Vantablack** — each with a kitty theme
-  (`~/.config/kitty/<name>.conf`), an nvim colorscheme
+  **Last Horizon**, **Vantablack**, and the light set **Catppuccin Latte**,
+  **Rose Pine Dawn**, **Flexoki Light**, **Lupine**, **Monochrome Light** — each
+  with a kitty theme (`~/.config/kitty/<name>.conf`), an nvim colorscheme
   (`~/.config/nvim/colors/<name>.lua`) and a wallpaper in
   `~/dotfiles/wallpapers/`. Adding another is just another
   `[[theme_launcher.themes]]` block plus those three files.
+
+  The light themes get their light wallpapers from the same places as the rest —
+  Omarchy's light themes, and rose-pine's `*-dawn` illustrations — and their
+  kitty themes swap the ANSI 0/7 slots so a light background is "white" and the
+  ink is "black", the other way round from the dark set.
   **Synthwave**, **Glow**, **Night Lagoon** and **Sunset** also have a
   `live_wallpaper` video that plays over their still image.
 
