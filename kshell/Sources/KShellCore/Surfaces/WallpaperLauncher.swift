@@ -158,8 +158,9 @@ struct WallpaperLauncherView: View {
         .focusable()
         .focusEffectDisabled()
         .focused($focused)
-        .onKeyPress(.upArrow) { move(-1); return .handled }
-        .onKeyPress(.downArrow) { move(1); return .handled }
+        .modifier(VimListKeys(move: vimMove, jump: jump))
+        .onKeyPress(.upArrow) { vimMove(-1) }
+        .onKeyPress(.downArrow) { vimMove(1) }
         .onKeyPress(.return) { applySelected(); return .handled }
         .onKeyPress(.escape) { onClose(); return .handled }
         .onExitCommand { onClose() }
@@ -293,6 +294,17 @@ struct WallpaperLauncherView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(30)
+    }
+
+    private func vimMove(_ delta: Int) -> KeyPress.Result {
+        move(delta)
+        return .handled
+    }
+
+    private func jump(_ edge: VimEdge) -> KeyPress.Result {
+        guard !items.isEmpty else { return .ignored }
+        selectedIndex = edge == .first ? 0 : items.count - 1
+        return .handled
     }
 
     private func move(_ delta: Int) {

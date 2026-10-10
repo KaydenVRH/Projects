@@ -297,8 +297,8 @@ end.
   `media_previous`.
 
 **Music panel** — the shell's own music player: a bottom panel with a **Search**
-tab (YouTube Music, or paste a link), a **Library** tab, and a player bar. It
-replaces an external player rather than driving one.
+tab (YouTube Music, or paste a link), a **Library** tab, a **Queue** tab, and a
+player bar. It replaces an external player rather than driving one.
 
 - Searching runs `yt-dlp` and lists results with thumbnails and durations.
   Downloading extracts audio (`m4a` by default), embeds the cover and tags, and
@@ -311,13 +311,22 @@ replaces an external player rather than driving one.
   shell-script widget sees it.)
 - Playing is AVFoundation's business, so codecs it cannot open (opus, webm) are
   skipped rather than listed — hence m4a as the download format.
-- Enter searches, ⏎ in the field runs it, `Esc` closes. Tabs are clickable;
-  the library row under the pointer can be played, and trashed.
+- **Queue** is yours to build: `a` on a library track lines it up (or the `+`
+  on the row), `x` takes it back out, `J`/`K` slide it up and down the order, and
+  ⏎ plays the queue from the armed song. It is kept in
+  `~/Library/Caches/kshell/queue.json`, so a mood survives a restart, and
+  anything deleted since is dropped when it loads. Playing it hands the list to
+  the player, which then walks it with next/previous as usual.
 - Keyboard, like the other pickers: **↑/↓** arm a row, **⏎** acts on it — play a
-  library track, or download a search result — and **Esc** closes. **Space**
-  plays or pauses. Holding **⌘** turns the arrows into transport: ⌘↑/⌘↓ volume,
-  ⌘←/⌘→ seek ±5s. The arrows keep working while the search field has the
-  keyboard; space does not, so it stays a space.
+  library track, play the queue, or download a search result — and **Esc**
+  closes. **Space** plays or pauses. Holding **⌘** turns the arrows into
+  transport: ⌘↑/⌘↓ volume, ⌘←/⌘→ seek ±5s. The arrows keep working while the
+  search field has the keyboard; space does not, so it stays a space.
+- Vim movement everywhere a list is armed: **j**/**k** step, **g**/**G** jump to
+  the ends, **h**/**l** walk the tabs, and **/** puts the keyboard back in the
+  search field. All of them stand down while a text field has the keyboard —
+  `j` has to stay a `j` in a search box. The same keys drive the app, script,
+  theme and wallpaper pickers.
 - The player also registers as the system's now-playing app, so the **media
   keys**, Control Centre and headphone controls drive it. macOS routes those to
   whichever app is currently playing, though, so the explicit bindings are the

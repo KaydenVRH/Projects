@@ -85,6 +85,12 @@ struct LauncherView: View {
         .onExitCommand { onClose() }
         .onKeyPress(.downArrow) { step(1) }
         .onKeyPress(.upArrow) { step(-1) }
+        .modifier(VimListKeys(
+            move: step,
+            jump: jump,
+            search: { focused = true; return .handled },
+            fieldFocused: focused
+        ))
         .onChange(of: query) { _, _ in selected = 0 }
         .onAppear { refocus() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
@@ -145,8 +151,13 @@ struct LauncherView: View {
     private var grid: some View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 14)], spacing: 18) {
-                ForEach(results) { item in
-                    LauncherItemView(item: item, theme: theme, font: bar.fontFamily) {
+                ForEach(Array(results.enumerated()), id: \.element.id) { index, item in
+                    LauncherItemView(
+                        item: item,
+                        theme: theme,
+                        font: bar.fontFamily,
+                        selected: index == selected
+                    ) {
                         onSelect(item)
                     }
                 }
@@ -165,6 +176,13 @@ struct LauncherView: View {
                 .foregroundColor(foreground.opacity(0.6))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// `g`/`G` — the ends of the list.
+    private func jump(_ edge: VimEdge) -> KeyPress.Result {
+        guard !results.isEmpty else { return .ignored }
+        selected = edge == .first ? 0 : results.count - 1
+        return .handled
     }
 
     /// Move the armed row, clamped to the results.
@@ -267,6 +285,7 @@ private struct LauncherItemView: View {
     let item: LauncherItem
     let theme: Theme
     let font: String
+    let selected: Bool
     let action: () -> Void
 
     @State private var hovered = false
@@ -285,7 +304,12 @@ private struct LauncherItemView: View {
             .padding(8)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(hovered ? (theme.accent?.color ?? .white).opacity(0.18) : .clear)
+                    .fill(selected ? (theme.accent?.color ?? .white).opacity(0.20)
+                                   : (hovered ? (theme.accent?.color ?? .white).opacity(0.12) : .clear))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke((theme.accent?.color ?? .white).opacity(selected ? 0.55 : 0), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)

@@ -6,11 +6,13 @@ import SwiftUI
 public final class MusicPanel {
     private let viewModel: BarViewModel
     private let library: MusicLibrary
+    private let queue: MusicQueue
     private let overlay: OverlayLauncher
 
-    public init(viewModel: BarViewModel, library: MusicLibrary, margin: CGFloat = 0) {
+    public init(viewModel: BarViewModel, library: MusicLibrary, queue: MusicQueue, margin: CGFloat = 0) {
         self.viewModel = viewModel
         self.library = library
+        self.queue = queue
         overlay = OverlayLauncher(
             viewModel: viewModel,
             edge: .bottom,
@@ -26,6 +28,7 @@ public final class MusicPanel {
                 AnyView(MusicPanelView(
                     viewModel: viewModel,
                     library: library,
+                    queue: queue,
                     downloads: .shared,
                     player: .shared,
                     onClose: onClose
@@ -46,6 +49,7 @@ public final class MusicPanel {
 struct MusicPanelView: View {
     @ObservedObject var viewModel: BarViewModel
     @ObservedObject var library: MusicLibrary
+    @ObservedObject var queue: MusicQueue
     @ObservedObject var downloads: MusicDownloads
     @ObservedObject var player: MusicPlayer
     let onClose: () -> Void
@@ -53,8 +57,15 @@ struct MusicPanelView: View {
     enum Tab: String, CaseIterable, Identifiable {
         case search = "Search"
         case library = "Library"
+        case queue = "Queue"
         var id: String { rawValue }
-        var icon: String { self == .search ? "magnifyingglass" : "music.note.list" }
+        var icon: String {
+            switch self {
+            case .search: return "magnifyingglass"
+            case .library: return "music.note.list"
+            case .queue: return "list.bullet"
+            }
+        }
     }
 
     @State private var tab: Tab = .library
@@ -62,6 +73,7 @@ struct MusicPanelView: View {
     /// An armed row per tab, moved with the arrow keys like the theme picker.
     @State private var librarySelection = 0
     @State private var resultSelection = 0
+    @State private var queueSelection = 0
     @FocusState private var focusedField: Bool
     @FocusState private var panelFocused: Bool
     @Namespace private var pill
@@ -87,6 +99,19 @@ struct MusicPanelView: View {
             volume: { delta in player.volume = min(1, max(0, player.volume + delta)) },
             fieldFocused: focusedField
         ))
+        .modifier(VimListKeys(
+            move: move,
+            jump: jump,
+            search: focusSearch,
+            fieldFocused: focusedField
+        ))
+        .modifier(MusicLetterKeys(
+            shiftTab: shiftTab,
+            addToQueue: addArmedToQueue,
+            removeFromQueue: removeArmedFromQueue,
+            moveInQueue: shiftArmedInQueue,
+            fieldFocused: focusedField
+        ))
         .onExitCommand { onClose() }
         .onAppear {
             library.refresh()
@@ -103,6 +128,9 @@ struct MusicPanelView: View {
         }
         .onChange(of: downloads.results) { _, results in
             resultSelection = min(resultSelection, max(results.count - 1, 0))
+        }
+        .onChange(of: queue.tracks) { _, tracks in
+            queueSelection = min(queueSelection, max(tracks.count - 1, 0))
         }
         .onChange(of: tab) { _, new in tabChanged(to: new) }
     }
@@ -137,15 +165,35 @@ struct MusicPanelView: View {
 
     /// The index the arrow keys are moving, per tab.
     private var selection: Int {
-        tab == .library ? librarySelection : resultSelection
+        switch tab {
+        case .search: return resultSelection
+        case .library: return librarySelection
+        case .queue: return queueSelection
+        }
     }
 
     private var selectionCount: Int {
-        tab == .library ? library.tracks.count : downloads.results.count
+        switch tab {
+        case .search: return downloads.results.count
+        case .library: return library.tracks.count
+        case .queue: return queue.tracks.count
+        }
     }
 
     private func setSelection(_ value: Int) {
-        if tab == .library { librarySelection = value } else { resultSelection = value }
+        switch tab {
+        case .search: resultSelection = value
+        case .library: librarySelection = value
+        case .queue: queueSelection = value
+        }
+    }
+
+    /// `g`/`G`: the ends of whichever list is armed.
+    private func jump(_ edge: VimEdge) -> KeyPress.Result {
+        let count = selectionCount
+        guard count > 0 else { return .ignored }
+        setSelection(edge == .first ? 0 : count - 1)
+        return .handled
     }
 
     private func move(_ delta: Int) -> KeyPress.Result {
@@ -166,6 +214,9 @@ struct MusicPanelView: View {
         case .search:
             guard downloads.results.indices.contains(resultSelection) else { return .ignored }
             downloads.download(downloads.results[resultSelection])
+        case .queue:
+            guard queue.tracks.indices.contains(queueSelection) else { return .ignored }
+            player.play(queue.tracks, startAt: queueSelection)
         }
         return .handled
     }
@@ -281,6 +332,7 @@ struct MusicPanelView: View {
         switch tab {
         case .search: searchTab
         case .library: libraryTab
+        case .queue: queueTab
         }
     }
 
@@ -368,21 +420,7 @@ struct MusicPanelView: View {
                     ScrollView {
                     LazyVStack(spacing: 4) {
                         ForEach(Array(library.tracks.enumerated()), id: \.element.id) { index, track in
-                            LibraryRow(
-                                track: track,
-                                index: index,
-                                selected: index == librarySelection,
-                                playing: player.current == track,
-                                isPlaying: player.isPlaying,
-                                accent: accent, dim: dim, foreground: foreground,
-                                font: bar.fontFamily,
-                                onPlay: { player.play(library.tracks, startAt: index) },
-                                onRemove: {
-                                    library.remove(track)
-                                    player.remove(track)
-                                }
-                            )
-                            .id(track.id)
+                            libraryRow(index: index, track: track).id(track.id)
                         }
                     }
                     .padding(.horizontal, 12)
@@ -401,6 +439,166 @@ struct MusicPanelView: View {
             insertion: .move(edge: .trailing).combined(with: .opacity),
             removal: .opacity
         ))
+    }
+
+    /// The library row as its own function: the `ForEach` closure above was
+    /// heavy enough that the type-checker gave up on the surrounding `Group`.
+    private func libraryRow(index: Int, track: MusicTrack) -> LibraryRow {
+        LibraryRow(
+            track: track,
+            index: index,
+            selected: index == librarySelection,
+            playing: player.current == track,
+            isPlaying: player.isPlaying,
+            queued: queue.contains(track),
+            onQueue: { _ = queue.add(track) },
+            accent: accent,
+            dim: dim,
+            foreground: foreground,
+            font: bar.fontFamily,
+            onPlay: { player.play(library.tracks, startAt: index) },
+            onRemove: {
+                library.remove(track)
+                player.remove(track)
+                queue.remove(track)
+            }
+        )
+    }
+
+    private var queueTab: some View {
+        Group {
+            if queue.tracks.isEmpty {
+                emptyState(
+                    icon: "list.bullet",
+                    title: "Queue is empty",
+                    subtitle: "Press a on a library track to line it up for later."
+                )
+            } else {
+                queueList
+            }
+        }
+        .transition(.asymmetric(
+            insertion: .move(edge: .trailing).combined(with: .opacity),
+            removal: .opacity
+        ))
+    }
+
+    private var queueList: some View {
+        VStack(spacing: 0) {
+            queueHeader
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 4) { queueRows }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                }
+                .onChange(of: queueSelection) { _, new in
+                    guard queue.tracks.indices.contains(new) else { return }
+                    withAnimation(.snappy(duration: 0.25, extraBounce: 0.1)) {
+                        proxy.scrollTo(queue.tracks[new].id, anchor: .center)
+                    }
+                }
+            }
+        }
+    }
+
+    private var queueHeader: some View {
+        HStack(spacing: 10) {
+            Text("\(queue.count) queued")
+                .font(.custom(bar.fontFamily, size: 11))
+                .foregroundColor(dim)
+            Spacer(minLength: 0)
+            Button(action: playQueue) {
+                HStack(spacing: 5) {
+                    Image(systemName: "play.fill").font(.system(size: 9))
+                    Text("Play queue").font(.custom(bar.fontFamily, size: 11))
+                }
+                .foregroundColor(accent)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+    }
+
+    @ViewBuilder
+    private var queueRows: some View {
+        ForEach(Array(queue.tracks.enumerated()), id: \.element.id) { index, track in
+            QueueRow(
+                track: track,
+                index: index,
+                selected: index == queueSelection,
+                playing: player.current == track,
+                accent: accent,
+                dim: dim,
+                foreground: foreground,
+                font: bar.fontFamily,
+                onPlay: { player.play(queue.tracks, startAt: index) },
+                onRemove: { removeFromQueue(track) },
+                onMove: { delta in shiftQueue(index, by: delta) }
+            )
+            .id(track.id)
+        }
+    }
+
+    // MARK: queue
+
+    private func playQueue() {
+        guard !queue.tracks.isEmpty else { return }
+        player.play(queue.tracks, startAt: min(queueSelection, queue.tracks.count - 1))
+    }
+
+    private func removeFromQueue(_ track: MusicTrack) {
+        queue.remove(track)
+        queueSelection = min(queueSelection, max(queue.count - 1, 0))
+    }
+
+    private func shiftQueue(_ index: Int, by delta: Int) {
+        guard queue.tracks.indices.contains(index) else { return }
+        queue.move(index, by: delta)
+        queueSelection = min(max(index + delta, 0), max(queue.count - 1, 0))
+    }
+
+    /// `a` — line the armed library track up for later.
+    private func addArmedToQueue() -> KeyPress.Result {
+        guard tab == .library, library.tracks.indices.contains(librarySelection) else { return .ignored }
+        queue.add(library.tracks[librarySelection])
+        return .handled
+    }
+
+    /// `x` — take the armed song back out.
+    private func removeArmedFromQueue() -> KeyPress.Result {
+        guard tab == .queue, queue.tracks.indices.contains(queueSelection) else { return .ignored }
+        removeFromQueue(queue.tracks[queueSelection])
+        return .handled
+    }
+
+    /// `J`/`K` — slide the armed song down or up the queue.
+    private func shiftArmedInQueue(_ delta: Int) -> KeyPress.Result {
+        guard tab == .queue, queue.tracks.indices.contains(queueSelection) else { return .ignored }
+        shiftQueue(queueSelection, by: delta)
+        return .handled
+    }
+
+    /// `h`/`l` — walk the tabs.
+    private func shiftTab(_ delta: Int) -> KeyPress.Result {
+        let all = Tab.allCases
+        guard let current = all.firstIndex(of: tab) else { return .ignored }
+        let next = min(max(current + delta, 0), all.count - 1)
+        guard next != current else { return .handled }
+        withAnimation(.snappy(duration: 0.28, extraBounce: 0.16)) { tab = all[next] }
+        return .handled
+    }
+
+    /// `/` — hand the keyboard to the search field, opening that tab if needed.
+    private func focusSearch() -> KeyPress.Result {
+        if tab != .search {
+            withAnimation(.snappy(duration: 0.28, extraBounce: 0.16)) { tab = .search }
+            focusedField = true
+        } else {
+            tabChanged(to: .search)
+        }
+        return .handled
     }
 
     private func emptyState(icon: String, title: String, subtitle: String) -> some View {
@@ -537,6 +735,8 @@ private struct LibraryRow: View {
     let selected: Bool
     let playing: Bool
     let isPlaying: Bool
+    let queued: Bool
+    let onQueue: () -> Void
     let accent: Color
     let dim: Color
     let foreground: Color
@@ -585,6 +785,13 @@ private struct LibraryRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
+            Button(action: onQueue) {
+                Image(systemName: queued ? "checkmark.circle.fill" : "plus.circle")
+                    .font(.system(size: 12))
+                    .foregroundColor(queued ? accent : dim)
+            }
+            .buttonStyle(.plain)
+            .opacity(hovering || queued ? 1 : 0)
             if hovering {
                 Button(action: onRemove) {
                     Image(systemName: "trash")
@@ -623,6 +830,100 @@ private struct LibraryRow: View {
         .onHover { hovering = $0 }
         .animation(.snappy(duration: 0.22, extraBounce: 0.15), value: hovering)
         .animation(.snappy(duration: 0.22), value: playing)
+    }
+}
+
+/// A queued song: the same shape as a library row, with the controls a running
+/// order wants — nudge it up or down, or take it out.
+private struct QueueRow: View {
+    let track: MusicTrack
+    let index: Int
+    let selected: Bool
+    let playing: Bool
+    let accent: Color
+    let dim: Color
+    let foreground: Color
+    let font: String
+    let onPlay: () -> Void
+    let onRemove: () -> Void
+    let onMove: (Int) -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                if let path = track.artworkPath, let image = NSImage(contentsOfFile: path) {
+                    Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+                } else {
+                    Rectangle().fill(Color.white.opacity(0.06))
+                    Image(systemName: "music.note")
+                        .font(.system(size: 12))
+                        .foregroundColor(dim.opacity(0.7))
+                }
+            }
+            .frame(width: 34, height: 34)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            Text("\(index + 1)")
+                .font(.custom(font, size: 10))
+                .foregroundColor(dim.opacity(0.7))
+                .monospacedDigit()
+                .frame(width: 18, alignment: .trailing)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(track.displayTitle)
+                    .font(.custom(font, size: 12))
+                    .foregroundColor(playing ? accent : foreground)
+                    .lineLimit(1)
+                Text(track.displayArtist)
+                    .font(.custom(font, size: 10))
+                    .foregroundColor(dim)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+
+            if hovering {
+                HStack(spacing: 8) {
+                    control("chevron.up") { onMove(-1) }
+                    control("chevron.down") { onMove(1) }
+                    control("xmark") { onRemove() }
+                }
+                .transition(.opacity)
+            }
+            Text(MusicTrack.clock(track.duration))
+                .font(.custom(font, size: 10))
+                .foregroundColor(dim)
+                .monospacedDigit()
+        }
+        .padding(.vertical, 5)
+        .padding(.horizontal, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 9)
+                .fill(Color.white.opacity(playing ? 0.08 : (selected ? 0.09 : (hovering ? 0.06 : 0.02))))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 9)
+                .stroke(accent.opacity(selected ? 0.9 : 0), lineWidth: selected ? 1.5 : 1)
+        )
+        .overlay(alignment: .leading) {
+            if playing {
+                Capsule().fill(accent).frame(width: 2).padding(.vertical, 6)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onPlay)
+        .onHover { hovering = $0 }
+        .animation(.snappy(duration: 0.22, extraBounce: 0.15), value: hovering)
+    }
+
+    private func control(_ symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(dim)
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -847,5 +1148,30 @@ private struct MusicKeys: ViewModifier {
                 togglePlay()
                 return .handled
             }
+    }
+}
+
+/// The letters the music panel adds on top of plain movement: the tabs on
+/// `h`/`l`, and the queue on `a`/`x`/`J`/`K`. All of them stand down while the
+/// search field has the keyboard, where they are just letters.
+private struct MusicLetterKeys: ViewModifier {
+    let shiftTab: (Int) -> KeyPress.Result
+    let addToQueue: () -> KeyPress.Result
+    let removeFromQueue: () -> KeyPress.Result
+    let moveInQueue: (Int) -> KeyPress.Result
+    let fieldFocused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .onKeyPress("h", phases: .down) { _ in typed { shiftTab(-1) } }
+            .onKeyPress("l", phases: .down) { _ in typed { shiftTab(1) } }
+            .onKeyPress("a", phases: .down) { _ in typed(addToQueue) }
+            .onKeyPress("x", phases: .down) { _ in typed(removeFromQueue) }
+            .onKeyPress("J", phases: .down) { _ in typed { moveInQueue(1) } }
+            .onKeyPress("K", phases: .down) { _ in typed { moveInQueue(-1) } }
+    }
+
+    private func typed(_ action: () -> KeyPress.Result) -> KeyPress.Result {
+        fieldFocused ? .ignored : action()
     }
 }

@@ -14,6 +14,7 @@ public final class ShellController {
     private var mediaCenter: MediaIsland?
     private var musicLauncher: MusicPanel?
     private var musicLibrary: MusicLibrary?
+    private var musicQueue: MusicQueue?
     private var mediaCenterAlign: OverlayAlign?
     private lazy var autoHide = BarAutoHide(
         bars: { [weak self] in self?.bars ?? [] },
@@ -338,9 +339,18 @@ public final class ShellController {
         MusicDownloads.shared.audioFormat = config.format
         MusicDownloads.shared.ytdlp = config.ytdlp
 
+        // The queue outlives the panel and is kept between runs, like the library.
+        let queue: MusicQueue
+        if let existing = musicQueue {
+            queue = existing
+        } else {
+            queue = MusicQueue()
+            musicQueue = queue
+        }
+
         MusicPlayer.shared.libraryProvider = { [weak library] in library?.tracks ?? [] }
         if musicLauncher == nil {
-            musicLauncher = MusicPanel(viewModel: viewModel, library: library, margin: panelMargin)
+            musicLauncher = MusicPanel(viewModel: viewModel, library: library, queue: queue, margin: panelMargin)
         }
         library.refresh()
     }
