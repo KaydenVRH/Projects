@@ -89,6 +89,8 @@ public final class MusicLibrary: ObservableObject {
     private let queue = DispatchQueue(label: "kshell.music.library", qos: .utility)
     private var cache: [String: CacheEntry] = [:]
     private var cacheLoaded = false
+    /// Bumped by every refresh, so a stale scan cannot overwrite a newer one.
+    private var scanGeneration = 0
 
     static let audioExtensions: Set<String> = ["mp3", "m4a", "aac", "flac", "wav", "aiff", "aif"]
 
@@ -104,15 +106,30 @@ public final class MusicLibrary: ObservableObject {
 
     /// Rescan the folder on a background queue, using and updating the cache.
     public func refresh() {
-        guard !isScanning else { return }
+        // A newer scan supersedes an older one rather than being dropped: a scan
+        // that somehow never finished used to leave a flag set that silently
+        // swallowed every later refresh, and the library stayed empty until the
+        // shell was restarted.
+        scanGeneration += 1
+        let generation = scanGeneration
         isScanning = true
         let folder = directory
         queue.async { [weak self] in
             guard let self else { return }
             self.loadCacheIfNeeded()
-            let found = self.scan(folder)
+            // Show what is already known before the slow half runs — probing and
+            // cover extraction over a big library takes a while, and the list
+            // should not look empty in the meantime.
+            let known = self.cache.values.map(\.track).sorted { $0.path < $1.path }
+            if !known.isEmpty {
+                self.publish(known, generation: generation, onlyIfEmpty: true)
+            }
+            let found = self.scan(folder) { partial in
+                self.publish(partial, generation: generation, onlyIfEmpty: false)
+            }
+            self.publish(found, generation: generation, onlyIfEmpty: false)
             DispatchQueue.main.async {
-                self.tracks = found
+                guard generation == self.scanGeneration else { return }
                 self.isScanning = false
                 self.lastError = nil
             }
@@ -132,7 +149,17 @@ public final class MusicLibrary: ObservableObject {
 
     // MARK: - scanning
 
-    private func scan(_ folder: URL) -> [MusicTrack] {
+    /// Hand a list to the main thread, unless a newer scan has taken over.
+    private func publish(_ list: [MusicTrack], generation: Int, onlyIfEmpty: Bool) {
+        guard !list.isEmpty else { return }
+        DispatchQueue.main.async {
+            guard generation == self.scanGeneration else { return }
+            if onlyIfEmpty, !self.tracks.isEmpty { return }
+            self.tracks = list
+        }
+    }
+
+    private func scan(_ folder: URL, onPartial: ([MusicTrack]) -> Void = { _ in }) -> [MusicTrack] {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         // Recursive: a library of album folders should work, and the folder can
         // be pointed at an existing collection as well as the downloads folder.
@@ -150,12 +177,16 @@ public final class MusicLibrary: ObservableObject {
             let stamp = MusicLibrary.stamp(of: path)
             if let cached = cache[path], cached.size == stamp.size, cached.modified == stamp.modified {
                 result.append(cached.track)
+                if result.count % 3 == 0 { onPartial(result) }
                 continue
             }
             var track = MusicLibrary.probe(path: path)
             track.artworkPath = MusicLibrary.extractArtwork(path: path)
             cache[path] = CacheEntry(track: track, size: stamp.size, modified: stamp.modified)
             result.append(track)
+            // A first run probes and pulls cover art out of every file, which is
+            // slow enough to look like an empty library; let the list fill in.
+            if result.count % 3 == 0 { onPartial(result) }
         }
         // Drop cache entries for files that are gone.
         let live = Set(result.map(\.path))
@@ -215,10 +246,24 @@ public final class MusicLibrary: ObservableObject {
         )
     }
 
+    /// A stable name for a track's extracted cover.
+    ///
+    /// `String.hashValue` is seeded per process, so using it meant a different
+    /// file name every run: the cache never hit, every launch re-ran ffmpeg over
+    /// the whole library, and the cache directory filled with orphans. FNV-1a
+    /// over the path is the same today as it will be tomorrow.
+    static func artworkName(for path: String) -> String {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in path.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        return "artwork-\(String(hash, radix: 16)).jpg"
+    }
+
     /// Pull the embedded cover out into the cache once.
     static func extractArtwork(path: String) -> String? {
-        let hash = abs(path.hashValue)
-        let target = KShellPaths.cacheDirectory.appendingPathComponent("artwork-\(hash).jpg")
+        let target = KShellPaths.cacheDirectory.appendingPathComponent(artworkName(for: path))
         if FileManager.default.fileExists(atPath: target.path) { return target.path }
 
         // Transcoded rather than copied: the embedded cover is often a PNG, and
@@ -251,6 +296,8 @@ public final class MusicLibrary: ObservableObject {
 
     private func saveCache() {
         guard let data = try? JSONEncoder().encode(Array(cache.values)) else { return }
-        try? data.write(to: cacheURL)
+        // Atomic: a truncated cache fails to decode, and a cache that fails to
+        // decode means silently re-probing the whole library on the next run.
+        try? data.write(to: cacheURL, options: .atomic)
     }
 }

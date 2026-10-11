@@ -25,21 +25,42 @@ public final class ProcessRunner {
 
     /// Run a command and return its stdout. Blocking — call it off the main
     /// queue.
-    public static func capture(_ command: String) -> String {
+    /// Run a command and return its stdout.
+    ///
+    /// Bounded: a probe that hangs — a malformed file, a codec that never
+    /// finishes — is killed rather than wedging its caller for ever. The pipe is
+    /// drained off this thread so a child that fills it cannot deadlock before
+    /// the timeout can fire.
+    public static func capture(_ command: String, timeout: TimeInterval = 20) -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         process.arguments = ["-lc", command]
         let stdout = Pipe()
         process.standardOutput = stdout
         process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-        } catch {
-            return ""
+
+        guard (try? process.run()) != nil else { return "" }
+
+        let lock = NSLock()
+        var output = Data()
+        let drained = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .utility).async {
+            let data = stdout.fileHandleForReading.readDataToEndOfFile()
+            lock.lock()
+            output = data
+            lock.unlock()
+            drained.signal()
         }
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+
+        if drained.wait(timeout: .now() + timeout) == .timedOut {
+            process.terminate()
+            _ = drained.wait(timeout: .now() + 2)
+        }
         process.waitUntilExit()
-        return String(data: data, encoding: .utf8) ?? ""
+
+        lock.lock()
+        defer { lock.unlock() }
+        return String(data: output, encoding: .utf8) ?? ""
     }
 
     public func runOnce(command: String, onOutput: @escaping (String) -> Void) {
