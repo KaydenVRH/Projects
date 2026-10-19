@@ -172,7 +172,7 @@ public final class MediaIslandPanel: NSPanel {
         glass = makeGlass?(targetScreen)
         apply(progress: 0)
 
-        NSApp.activate(ignoringOtherApps: true)
+        Frontmost.claim()
         makeKeyAndOrderFront(nil)
 
         guard animated else {
@@ -207,6 +207,7 @@ public final class MediaIslandPanel: NSPanel {
         glass?.park()
         glass = nil
         orderOut(nil)
+        Frontmost.handBack()
     }
 
     /// Step the island between the pill and the full centre.

@@ -199,7 +199,7 @@ public final class OverlayPanel: NSPanel {
         glass = makeGlass?(targetScreen)
         apply(progress: 0)
 
-        NSApp.activate(ignoringOtherApps: true)
+        Frontmost.claim()
         makeKeyAndOrderFront(nil)
         makeKey()
 
@@ -240,6 +240,8 @@ public final class OverlayPanel: NSPanel {
         glass?.park()
         glass = nil
         orderOut(nil)
+        // The keyboard came with us; give it back now the panel is gone.
+        Frontmost.handBack()
     }
 
     /// Step the panel from where it is to `progress` (0 = the pill, 1 = open).

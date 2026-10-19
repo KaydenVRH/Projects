@@ -97,6 +97,10 @@ public final class AppLauncher {
                     style: .list,
                     items: items,
                     onSelect: { item in
+                        // The app being launched takes the front by itself; the
+                        // shell should not pull it back to whatever was active
+                        // before the launcher opened.
+                        Frontmost.forget()
                         NSWorkspace.shared.open(URL(fileURLWithPath: item.id))
                         onClose()
                     },
