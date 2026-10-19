@@ -20,6 +20,7 @@ import AppKit
 final class FullscreenWatch {
     private let runner = ProcessRunner()
     private var flagged: Set<Int> = []
+    private var activation: NSObjectProtocol?
     private var covered: Set<CGDirectDisplayID> = []
     private let handler: (Set<CGDirectDisplayID>) -> Void
 
@@ -29,16 +30,34 @@ final class FullscreenWatch {
 
     func start() {
         runner.run(command: Self.command, interval: 0.5) { [weak self] output in
-            guard let self else { return }
-            self.flagged = Self.parse(output)
-            self.evaluate()
+            self?.apply(output)
         }
+        // The poll is the baseline; these are the moments that actually change,
+        // and they cost nothing. Without them a wedged or stale poll could leave
+        // the shell hidden — bar and all — with no way back.
+        activation = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in self?.refresh() }
     }
 
     func stop() {
         runner.stop()
+        if let activation { NSWorkspace.shared.notificationCenter.removeObserver(activation) }
+        activation = nil
         flagged = []
         covered = []
+    }
+
+    /// Ask again now, without waiting for the next poll.
+    func refresh() {
+        runner.runOnce(command: Self.command) { [weak self] output in self?.apply(output) }
+    }
+
+    private func apply(_ output: String) {
+        flagged = Self.parse(output)
+        evaluate()
     }
 
     /// Re-check now: geometry from the window server, plus whatever the window

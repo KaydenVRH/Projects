@@ -5,8 +5,16 @@ import Foundation
 public final class ProcessRunner {
     private var timer: DispatchSourceTimer?
     private let queue = DispatchQueue(label: "kshell.process", qos: .utility)
+    private var inFlight = false
+    private let lock = NSLock()
 
     public init() {}
+
+    /// How long a command may run before it is killed. A polled command that
+    /// never returns would otherwise wedge this runner for the life of the
+    /// shell — and the fullscreen watch, which polls every half second, wedging
+    /// leaves the shell hidden and deaf to input for ever.
+    static let timeout: TimeInterval = 10
 
     public func run(
         command: String,
@@ -17,7 +25,23 @@ public final class ProcessRunner {
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: max(interval, 0.2))
         timer.setEventHandler { [weak self] in
-            self?.execute(command: command, onOutput: onOutput)
+            guard let self else { return }
+            // One at a time: a command slower than its own interval should skip
+            // ticks rather than queue up behind itself.
+            self.lock.lock()
+            if self.inFlight {
+                self.lock.unlock()
+                return
+            }
+            self.inFlight = true
+            self.lock.unlock()
+
+            let output = ProcessRunner.runBounded(command: command, timeout: ProcessRunner.timeout)
+
+            self.lock.lock()
+            self.inFlight = false
+            self.lock.unlock()
+            DispatchQueue.main.async { onOutput(output) }
         }
         timer.resume()
         self.timer = timer
@@ -32,6 +56,15 @@ public final class ProcessRunner {
     /// drained off this thread so a child that fills it cannot deadlock before
     /// the timeout can fire.
     public static func capture(_ command: String, timeout: TimeInterval = 20) -> String {
+        runBounded(command: command, timeout: timeout)
+    }
+
+    /// The one place a child process is run.
+    ///
+    /// Bounded — a command that hangs is killed rather than wedging its caller
+    /// for ever — and the pipe is drained off the calling thread, so a child that
+    /// fills it cannot deadlock the caller before the timeout can fire.
+    static func runBounded(command: String, timeout: TimeInterval) -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         process.arguments = ["-lc", command]
@@ -64,8 +97,9 @@ public final class ProcessRunner {
     }
 
     public func runOnce(command: String, onOutput: @escaping (String) -> Void) {
-        queue.async { [weak self] in
-            self?.execute(command: command, onOutput: onOutput)
+        queue.async {
+            let output = ProcessRunner.runBounded(command: command, timeout: ProcessRunner.timeout)
+            DispatchQueue.main.async { onOutput(output) }
         }
     }
 
@@ -75,27 +109,4 @@ public final class ProcessRunner {
     }
 
     deinit { stop() }
-
-    private func execute(command: String, onOutput: @escaping (String) -> Void) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lc", command]
-
-        let stdout = Pipe()
-        process.standardOutput = stdout
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-        } catch {
-            DispatchQueue.main.async { onOutput("") }
-            return
-        }
-
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let output = String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        DispatchQueue.main.async { onOutput(output) }
-    }
 }
