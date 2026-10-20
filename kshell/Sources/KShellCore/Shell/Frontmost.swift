@@ -21,11 +21,11 @@ enum Frontmost {
         if previous == nil {
             previous = NSWorkspace.shared.frontmostApplication
         }
-        if #available(macOS 14.0, *) {
-            NSApp.activate()
-        } else {
-            NSApp.activate(ignoringOtherApps: true)
-        }
+        // Deliberately the forcible activation. The polite `activate()` lets a
+        // frontmost terminal keep the keyboard, so the panel appears but never
+        // becomes key: typing, Enter and Escape all go to the other app, which
+        // looks exactly like the overlay ignoring input.
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     /// Give the front back, if the shell still has it. If something else took it
