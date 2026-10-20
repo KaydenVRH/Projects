@@ -166,7 +166,11 @@ glass lag the content and snap into place at the end of the animation. Five pane
   [script_launcher]
   directory = "~/dotfiles/scripts"
   ```
-- A selection runs `bash <script>`.
+- A selection runs `bash <script>` **detached**: it outlives the panel — and the
+  shell — and its output is appended to `~/Library/Logs/kshell/scripts.log`
+  (rotated at 2 MB). Running it as a plain child is what used to kill scripts the
+  moment the overlay closed: the `Process` went away, taking the pipes nobody had
+  read with it, and the script's next write took it down.
 
 **Wallpaper launcher** — a left sidebar of preview rows that grows out of the
 left edge (rounded right corners).
