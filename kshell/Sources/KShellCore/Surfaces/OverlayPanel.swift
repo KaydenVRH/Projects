@@ -128,7 +128,7 @@ public final class OverlayPanel: NSPanel {
         // stay pale on a pale surface.
         self.appearance = appearance.background.vibrancyAppearance
         // Above the surface holder and the bar's content window.
-        level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
+        level = WindowLevel.overlay
         isOpaque = false
         backgroundColor = .clear
         // The media centre has no shadow, and these should read as the same

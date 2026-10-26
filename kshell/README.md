@@ -526,7 +526,8 @@ Sources/KShellCore/
   App/AppController.swift        NSApplication lifecycle (.accessory)
   Shell/ShellController.swift    one bar per screen; config + display changes
   Shell/BarViewModel.swift       appearance + widget runtimes (observable)
-  Surfaces/BarPanel.swift        NSPanel: borderless, non-activating, .statusBar
+  Surfaces/BarPanel.swift        NSPanel: borderless, non-activating
+  Surfaces/WindowLevel.swift     levels 17–20: above windows, under notifications
   Surfaces/BarView.swift         SwiftUI left/center/right widget rows
   Surfaces/VisualiserPanel.swift cava-style bars on the desktop (Canvas, tap-fed)
   Music/AudioSpectrum.swift      mixer tap -> FFT -> smoothed log-spaced bands

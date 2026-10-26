@@ -24,7 +24,7 @@ public final class VisualiserPanel: NSPanel {
     private static func level(for config: VisualiserConfig) -> NSWindow.Level {
         config.layer == "background"
             ? NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
-            : NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue - 1)
+            : WindowLevel.visualiser
     }
 
     /// Where the strip sits: the screen's width inside the frame's opening, at

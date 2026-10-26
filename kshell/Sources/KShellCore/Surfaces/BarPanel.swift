@@ -179,7 +179,7 @@ public final class BarPanel: NSPanel {
         isFloatingPanel = true
         // One above the surface holder (the glass and the frame), one below the
         // launchers.
-        level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+        level = WindowLevel.bar
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false

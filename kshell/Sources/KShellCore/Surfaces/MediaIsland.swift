@@ -119,7 +119,7 @@ public final class MediaIslandPanel: NSPanel {
         )
 
         // Above the frame's surface, alongside the launchers.
-        level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
+        level = WindowLevel.overlay
         // Light themes need a light appearance, or the material keeps the dark
         // system blur under a light tint.
         appearance = viewModel.appearance.background.vibrancyAppearance

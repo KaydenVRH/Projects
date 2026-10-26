@@ -58,9 +58,9 @@ public final class ScreenBorderPanel: NSPanel {
         // not the tint painted over it, so a light theme has to say so or its
         // glass stays dark on a dark-mode system.
         appearance = config.color.vibrancyAppearance
-        // Same level as the bar used to be: above ordinary windows and the menu
-        // bar, below the bar's content window and the launchers.
-        level = .statusBar
+        // Above ordinary windows; below Notification Center, so banners stay
+        // on top (see WindowLevel).
+        level = WindowLevel.surface
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
