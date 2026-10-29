@@ -1,0 +1,121 @@
+# ked — example configuration
+#
+# Copy to ~/.config/ked/config.toml.  Every key is optional:
+# anything omitted keeps the default shown here.  The active
+# values below are the defaults, so this file changes nothing
+# until you edit something.
+#
+# Re-generate with:  ked --print-config > ~/.config/ked/config.toml
+# Live keymap:       ked --print-keys   (or `:keys` in ked)
+
+# ── appearance ──────────────────────────────────────────
+# theme: default, mono, monokai, solarized, nord, gruvbox, bi,
+# blue-lagoon, catppuccin, tokyonight, amber, dracula, onedark,
+# everforest, rosepine, oxocarbon, ayu, kanagawa, palenight,
+# darkplus, moonlight, osaka-jade, last-horizon, latte, gruvbox-light, one-light,
+# github-light, tokyonight-day, rosepine-dawn, everforest-light
+theme          = "oxocarbon"
+transparent    = false      # let the terminal background show through
+animations     = true       # tab shimmer, rainbow dashes, splash
+bar_stats      = true       # language/buffers/clock context bar
+status_bar_top = false      # status bar above the buffer bar
+fx_mode        = 0          # 0 off, 1 gentle, 2 breathing, 3 warm
+opacity        = 1.0        # UI chrome opacity, 0.0–1.0
+alt_scroll     = 5          # cells per Alt/Cmd+arrow jump
+
+# ── buffers & tools ─────────────────────────────────────
+filetree_width = 30         # file-tree panel width in columns
+music_dir      = "~/Music"  # where Ctrl+M scans for .mp3 files
+inline_images  = true       # render ![alt](path) in .md buffers
+
+# ── memories / reminders / journal ──────────────────────
+[memories]
+# dir = "~/notes/memories"  # default: $XDG_DATA_HOME/ked/memories
+notify      = true          # macOS notification when a reminder is due
+sound       = true          # play a sound alongside it
+week_start  = "monday"      # planner: "monday" or "sunday"
+# quiet_hours = "22:00-08:00"  # no alerts in this window (empty = never)
+
+# ── keybindings ───────────────────────────────────────────
+# Every action and its built-in key.  Uncomment a line and
+# change the key to override it; the old key becomes unbound.
+# Actions shared by normal/visual move in both modes.
+# Run `:keys` in ked (or `ked --print-keys`) to see the live map.
+#
+# Examples:
+#   save        = "f2"
+#   finder      = "alt+p"
+#   quit        = "ctrl+q"
+#   left        = "a"          # normal + visual
+#   delete_line = "D"
+#   search      = "/"
+[keys]
+
+# ── global (any mode) ──
+# finder               = "ctrl+p"
+# run                  = "ctrl+e"
+# save                 = "ctrl+s"
+# quit                 = "ctrl+c"
+# preview              = "ctrl+v"
+# help                 = "ctrl+k"
+# command              = "ctrl+l"
+# paste_image          = "ctrl+shift+v"
+# music                = "ctrl+m"
+# theme                = "ctrl+t"
+# shell                = "ctrl+j"
+# filetree             = "ctrl+f"
+# memories             = "ctrl+shift+m"
+# quick_note           = "ctrl+shift+n"
+# planner              = "ctrl+shift+a"
+
+# ── normal + visual ──
+# left                 = "h"
+# down                 = "j"
+# up                   = "k"
+# right                = "l"
+# word_next            = "w"
+# word_prev            = "b"
+# line_start           = "0"
+# line_end             = "$"
+# half_page_up         = "ctrl+u"
+# half_page_down       = "ctrl+d"
+# insert_before        = "i"
+# insert_after         = "a"
+# insert_line_start    = "I"
+# insert_line_end      = "A"
+
+# ── normal mode ──
+# page_up              = "pageup"
+# page_down            = "pagedown"
+# goto_first           = "g"
+# goto_last            = "G"
+# visual               = "v"
+# open_below           = "o"
+# open_above           = "O"
+# delete_char          = "x"
+# delete_line          = "d"
+# yank_line            = "y"
+# paste_after          = "p"
+# paste_before         = "P"
+# undo                 = "u"
+# redo                 = "ctrl+r"
+# command_mode         = ":"
+# search               = "/"
+# search_next          = "n"
+# search_prev          = "N"
+# buffer_next          = "tab"
+# buffer_prev          = "shift+tab"
+
+# ── visual mode only ──
+# visual_exit          = "esc"            # built-in also: v
+# visual_yank          = "y"              # built-in also: c
+# visual_delete        = "d"
+
+# ── insert mode ──
+# escape               = "esc"
+# paste_text           = "ctrl+a"
+
+# ── tips ─────────────────────────────────────────────────
+# • `:theme <name>` switches without editing this file.
+# • `:mem call mom @tomorrow 9am #family !2` captures a reminder.
+# • `ked --install-agent` makes reminders fire while ked is closed.

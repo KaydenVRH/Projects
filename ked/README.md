@@ -11,7 +11,7 @@
 
 ked is a personal vim‑like text editor that runs entirely in your
 terminal. It's a single Rust binary: modal editing, hand‑rolled syntax
-highlighting, 21 themes, animated colour effects, a fuzzy finder, a
+highlighting, 30 themes, animated colour effects, a fuzzy finder, a
 file tree, a real PTY shell, a music player, and a system dashboard —
 all in the alternate screen.
 
@@ -55,8 +55,10 @@ all in the alternate screen.
 
 ### Tools & toys
 
-- **Shell** — `Ctrl+J` pops up a real PTY running `$SHELL`, with ANSI
-  colours rendered in your current theme; type `exit` to close
+- **Shell** — `Ctrl+J` (or `:shell`) pops up a real PTY running `$SHELL`.
+  Full-screen programs work properly (htop, btop, vim, less, fzf, …):
+  a real terminal emulator handles cursor addressing, the alternate
+  screen, scrolling, colours and resizing.  Type `exit` to close
 - **Run code** — `Ctrl+E` runs the buffer: `.py` via `python3`,
   `.rs` via `rustc`, `.c`/`.h` via `cc`, `.go` via `go run`; output
   appears in an overlay
@@ -64,6 +66,18 @@ all in the alternate screen.
   a playlist through `mpv` with auto‑advance and looping
   (`Enter` play, `s` stop, `l` loop, `Esc` close while it keeps
   playing)
+- **Memories & reminders** — `Ctrl+Shift+N` captures a note/reminder in
+  one line (`call mom @tomorrow 9am #family !2`), `Ctrl+Shift+M` opens
+  a dashboard grouped into Overdue / Today / Upcoming / Recent, and
+  `:today` opens a daily journal.  Entries are plain markdown files
+  with TOML frontmatter; due reminders pop a macOS notification (and
+  optional sound) whether or not ked is open, via an installed
+  LaunchAgent
+- **Planner** — `Ctrl+Shift+A` (or `:cal`) opens a month calendar with
+  the selected day's agenda beside it.  Reminders show as `•`, notes as
+  `·`; move by day/week/month, `n` adds something on that date
+  (pre-filled), `Enter` opens an entry, `d`/`s` complete or snooze.
+  Repeating reminders appear on their future dates too
 - **Markdown preview** — `Ctrl+V` opens a live rendered preview pane
   next to the editor: styled headings, bullets, code blocks, quotes,
   and links, re-rendered as you type and following your cursor.
@@ -89,14 +103,18 @@ all in the alternate screen.
 
 ### Looks
 
-- **21 themes** — default, mono, monokai, solarized, nord, gruvbox, bi,
+- **30 themes** — 22 dark (default, mono, monokai, nord, gruvbox, bi,
   blue-lagoon, catppuccin, tokyonight, amber, dracula, onedark,
   everforest, rosepine, oxocarbon, ayu, kanagawa, palenight, darkplus,
-  moonlight. Palettes follow the canonical Neovim theme colours, with
-  distinct roles for keywords, functions, types, strings, constants,
-  and properties.  **mono** is pure grayscale: tokens are separated by
-  a lightness ramp plus bold/italic styling instead of hue (`:theme
-  mono`, or `grayscale`/`grey`)
+  moonlight, osaka-jade, last-horizon) and 8 light (solarized, latte,
+  gruvbox-light, one-light, github-light, tokyonight-day, rosepine-dawn,
+  everforest-light).
+  Palettes follow the canonical Neovim theme colours, with distinct
+  roles for keywords, functions, types, strings, constants, and
+  properties.  **mono** is pure grayscale: tokens are separated by a
+  lightness ramp plus bold/italic styling instead of hue.  Light
+  themes pair dark accents with automatic contrast-aware status/selection
+  text.  Try `:theme latte` for Catppuccin Latte
 - **Theme selector** — `Ctrl+T` list with live preview, Enter applies
 - **Colour FX** — animated theme modes from the config: gentle hue
   drift, breathing lightness, or a warm amber-purple wander. Only the
@@ -157,6 +175,10 @@ The finder and file tree scan the directory you launched ked from, so
 
 ## Keybinds
 
+Every binding below is just a **default** — override any of them in the
+`[keys]` config table (see [Custom keybindings](#custom-keybindings)).
+Run `:keys` inside ked to see the effective map.
+
 ### Global
 
 | Key | Action |
@@ -169,9 +191,28 @@ The finder and file tree scan the directory you launched ked from, so
 | `Ctrl+T` | theme selector |
 | `Ctrl+K` | keybinds manual |
 | `Ctrl+V` | markdown preview (`.md` files) |
+| `Ctrl+Shift+N` | remember something (quick capture) |
+| `Ctrl+Shift+M` | memories / reminders dashboard |
+| `Ctrl+Shift+A` | planner / month calendar |
 | `Ctrl+S` | save |
 | `Ctrl+C` | quit — or, from insert/visual mode, step back to normal mode first |
 | `Ctrl+Shift+V` | paste the clipboard image into the buffer as `![](img-….png)` |
+
+### Prompt editing
+
+The `:` / `/` / `Remember:` lines are fully editable with a visible
+cursor (and a blinking bar):
+
+| Key | Action |
+|-----|--------|
+| `←` / `→`, `Home` / `End` | move the cursor |
+| `Ctrl+A` / `Ctrl+E` | start / end of line |
+| `Backspace` / `Delete` | delete before / at the cursor |
+| `Ctrl+W` | delete the word before the cursor |
+| `Ctrl+U` | clear the line |
+| `Esc` / `Enter` | cancel / submit |
+
+Long input scrolls under the fixed prompt prefix.
 
 ### Normal mode
 
@@ -239,6 +280,12 @@ The finder and file tree scan the directory you launched ked from, so
 | `:<line>` | jump to line |
 | `:theme <name>` | switch theme by name |
 | `:sys` | system dashboard |
+| `:shell` | pop-up terminal (`$SHELL`) |
+| `:keys` | show the effective (and customised) keybindings |
+| `:mem [text]` | remember text (no text → open the dashboard) |
+| `:memories` | reminders / notes dashboard |
+| `:cal` / `:planner` | month calendar + day agenda |
+| `:today` | open (or create) today's journal entry |
 | `:img` | paste the clipboard image into the buffer as `![](img-….png)` |
 
 ## Config
@@ -247,20 +294,213 @@ The finder and file tree scan the directory you launched ked from, so
 files fall back to defaults.
 
 ```toml
-theme         = "oxocarbon"   # any of the 21 theme names
-music_dir     = "~/Music"     # where Ctrl+M scans
-filetree_width = 30           # file-tree panel width in columns
-status_bar_top = false        # put the status bar above the buffer bar
-transparent   = false         # let the terminal background show through
-animations    = true          # tab shimmer, rainbow dashes, splash, …
-bar_stats     = true          # context bar: language, buffers, lines,
-                              # now-playing music, clock
-fx_mode       = 0             # colour FX at startup: 0 off, 1 gentle,
-                              # 2 breathing, 3 warm
-opacity       = 1.0           # UI chrome opacity (0.0 – 1.0)
-alt_scroll    = 5             # chars per ⌥/⌘-arrow jump
-inline_images = true          # render ![alt](path) in .md buffers
+# ── appearance ──
+theme          = "oxocarbon"   # any of the 30 theme names
+transparent    = false         # let the terminal background show through
+animations     = true          # tab shimmer, rainbow dashes, splash, fx
+bar_stats      = true          # context bar: language, buffers, clock
+status_bar_top = false         # status bar above the buffer bar
+fx_mode        = 0             # 0 off, 1 gentle, 2 breathing, 3 warm
+opacity        = 1.0           # UI chrome opacity, 0.0–1.0
+alt_scroll     = 5             # cells per ⌥/⌘-arrow jump
+
+# ── buffers & tools ──
+filetree_width = 30            # file-tree panel width in columns
+music_dir      = "~/Music"     # where Ctrl+M scans for .mp3 files
+inline_images  = true          # render ![alt](path) in .md buffers
+
+# ── memories / reminders / journal ──
+[memories]
+# dir = "~/notes/memories"     # default: $XDG_DATA_HOME/ked/memories
+notify      = true             # macOS notification when a reminder is due
+sound       = true             # play a sound alongside it
+week_start  = "monday"         # planner: "monday" or "sunday"
+# quiet_hours = "22:00-08:00"  # no alerts in this window (empty = never)
+
+# ── keybindings (defaults — uncomment to override) ──
+[keys]
+# save        = "f2"
+# finder      = "alt+p"
+# quit        = "ctrl+q"
+# left        = "a"            # normal + visual mode
+# delete_line = "D"
+# search      = "/"
+# theme       = "ctrl+t"
+# memories    = "ctrl+shift+m"
+# quick_note  = "ctrl+shift+n"
+# escape      = "ctrl+["       # insert mode
 ```
+
+The complete generated reference — every option plus **every action and
+its current key, commented out so the defaults stay in effect** — lives
+in [`config.example.toml`](config.example.toml).  Print it any time
+with:
+
+```sh
+ked --print-config      # full config template
+ked --print-keys        # just the [keys] block
+```
+
+Copy it to `~/.config/ked/config.toml` and uncomment what you want to
+change.
+
+## Memories, reminders & journal
+
+`Ctrl+Shift+N` (or `:mem <text>`) captures anything you want to
+remember.  One line is enough:
+
+```
+call mom @tomorrow 9am #family !2
+```
+
+- `@…` sets when: `@today`, `@tomorrow`, `@fri`, `@2026-11-02`,
+  `@9am`, `@14:30`, `@+2h`, `@daily`, `@weekly`, `@every:3d`
+- `#tag` adds tags, `!1`–`!3` sets priority
+- `@here` attaches the current file as context
+- no `@` → a plain note
+
+`Ctrl+Shift+M` opens the dashboard: **Overdue / Today / Upcoming /
+Recent**.  `Enter` opens the entry as a markdown buffer, `n` adds a new
+one, `d` marks it done (or advances a repeating reminder), `s` snoozes
+an hour, `r` rescans the folder.  `:today` opens (or creates) today's
+journal note.
+
+### Planner / calendar
+
+`Ctrl+Shift+A` (or `:cal`) opens a month calendar with the selected
+day's agenda beside it (it stacks on narrow terminals).
+
+```
+ October 2026                    Monday 26 October 2026
+ Mo Tu We Th Fr Sa Su           ───────────────────────
+           1  2  3  4            09:30  team standup  #work
+  5  6  7  8• 9 10 11           10:00  morning meds  #health
+ 12 13 14 15 16 17 18           16:00  tea
+ 19 20 21 22 23 24 25           ·      a plain note
+ 26[27]28 29 30 31
+```
+
+`•` marks a day with reminders, `·` a day with only notes; `[27]` is the
+selected day and today is underlined.  Repeating reminders are
+projected onto their future dates.
+
+| Key | Action |
+|---|---|
+| `←` `→` / `h` `l` | previous / next day |
+| `↑` `↓` / `k` `j` | previous / next week |
+| `PgUp` / `PgDn` | previous / next month |
+| `t` | jump to today |
+| `Enter` | focus the day's agenda (press again to open an entry) |
+| `n` | new entry on the selected date (date pre-filled) |
+| `Tab` | switch between calendar and agenda |
+| `d` / `s` | done / snooze the selected agenda entry |
+| `Esc` | back to the calendar, then close |
+
+Set the first day of the week with `week_start = "sunday"` (default is
+`"monday"`) under `[memories]`.
+
+Entries live as plain markdown + TOML frontmatter, one file each, so
+you can edit them in ked, `grep` them, or put the folder in git:
+
+```markdown
++++
+created = "2026-10-26T09:14"
+due = "2026-10-27T09:00"
+repeat = "daily"
+tags = ["health"]
+priority = 2
++++
+
+Call the dentist.
+```
+
+The status bar shows `⏰ N due · HH:MM` when reminders are waiting.
+
+### Reminders when ked is closed
+
+Install the bundled macOS LaunchAgent once:
+
+```sh
+ked --install-agent     # runs `ked --remind` every 60s via launchd
+ked --uninstall-agent   # remove it again
+```
+
+A notification and sound fire when an entry comes due (outside
+`quiet_hours`), and a `fired` timestamp is written so the editor and the
+agent never notify twice.  Without the agent, reminders only fire while
+ked is open.
+
+### Command line
+
+```sh
+ked --version            # ked 0.1.0
+ked --help               # every option
+ked --remember "renew passport @2026-12-01 #admin"
+ked --due                # overdue + today's reminders
+ked --due-count          # just the number (for a shell prompt)
+ked --next-due           # just the next time, e.g. 14:30
+ked --remind             # one reminder pass (what launchd runs)
+ked --install-agent      # reminders while ked is closed (macOS)
+ked --uninstall-agent
+ked --print-config       # full commented config template
+ked --print-keys         # just the [keys] template
+```
+
+`--due-count` and `--next-due` print nothing extra, so they work in a
+starship/tmux segment:
+
+```toml
+# ~/.config/starship.toml
+[.custom.ked]
+command = "ked --due-count"
+when = true
+format = "[⏰ $output ]($style)"
+```
+
+Unknown options and bad paths are rejected **before** the terminal is
+touched, so a typo can't leave your shell in raw mode or the alternate
+screen.  `ked some-new-file` opens an empty buffer (saved with `:w`),
+like vim.
+
+### Custom keybindings
+
+Actions are named; assign a key spec to override the built-in binding
+for that action. The old key is unbound, so it can be reused.
+
+```toml
+[keys]
+save        = "f2"
+finder      = "alt+p"
+quit        = "ctrl+q"
+left        = "a"            # applies in normal *and* visual mode
+delete_line = "D"
+search      = "/"
+```
+
+Key specs are `[modifiers+]<key>`:
+
+- modifiers: `ctrl`, `alt`/`opt`, `shift`, `super`/`cmd`
+- named keys: `tab`, `backtab`, `enter`, `esc`, `space`, `backspace`,
+  `delete`, `insert`, `home`, `end`, `pageup`, `pagedown`, `left`,
+  `right`, `up`, `down`, `f1`…`f12`
+- case is significant: `G` means shift+g (so `goto_last = "G"`)
+
+Multi-key sequences aren't supported (ked's built-ins are single keys).
+An unknown action, an unparseable key, or two actions claiming the same
+key produces a startup warning; `:keys` lists every warning and the
+resulting map.
+
+| Layer | Action names |
+|-------|--------------|
+| global | `finder` `run` `save` `quit` `preview` `help` `command` `paste_image` `music` `theme` `shell` `filetree` `memories` `quick_note` `planner` |
+| motion (normal+visual) | `left` `down` `up` `right` `word_next` `word_prev` `line_start` `line_end` `half_page_up` `half_page_down` |
+| normal | `page_up` `page_down` `goto_first` `goto_last` `visual` `insert_before` `insert_after` `insert_line_start` `insert_line_end` `open_below` `open_above` `delete_char` `delete_line` `yank_line` `paste_after` `paste_before` `undo` `redo` `command_mode` `search` `search_next` `search_prev` `buffer_next` `buffer_prev` |
+| insert | `escape` `paste_text` |
+| visual | `visual_exit` `visual_yank` `visual_delete` (plus the shared motion + insert actions) |
+
+`insert_before`/`insert_after`/`insert_line_start`/`insert_line_end`
+are shared by normal and visual mode. `⌥`/`⌘`+arrows stay hard-wired
+unless you bind that exact key.
 
 ## How it works
 
@@ -304,12 +544,13 @@ src/
   main.rs       entry point: terminal setup, event loop, kitty protocol
   editor.rs     editor core: modes, key handling, render, undo, scrolling
   highlight.rs  tree-sitter highlighting + language detection
-  theme.rs      21 themes + HSL hue rotation for colour FX
+  theme.rs      30 themes + HSL hue rotation for colour FX
   config.rs     ~/.config/ked/config.toml loading
   finder.rs     fuzzy file finder (Ctrl+P)
   filetree.rs   file-tree panel with Nerd Font icons (Ctrl+F)
   music.rs      mpv-backed music player with auto-advance (Ctrl+M)
-  shell.rs      PTY shell with ANSI SGR rendering (Ctrl+J)
+  memory.rs     notes / reminders / journal store + planner + LaunchAgent (Ctrl+Shift+N/M/A)
+  shell.rs      real PTY + vt100 terminal emulator (Ctrl+J)
 ```
 
 ## Dependencies

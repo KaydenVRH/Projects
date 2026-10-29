@@ -65,6 +65,16 @@ pub enum ThemeKind {
     Palenight,
     DarkPlus,
     Moonlight,
+    OsakaJade,
+    LastHorizon,
+    // ── light-mode variants ──
+    Latte,
+    GruvboxLight,
+    OneLight,
+    GithubLight,
+    TokyoNightDay,
+    RosePineDawn,
+    EverforestLight,
 }
 
 impl ThemeKind {
@@ -92,6 +102,15 @@ impl ThemeKind {
             ThemeKind::Palenight  => palenight(),
             ThemeKind::DarkPlus   => dark_plus(),
             ThemeKind::Moonlight  => moonlight(),
+            ThemeKind::OsakaJade  => osaka_jade(),
+            ThemeKind::LastHorizon=> last_horizon(),
+            ThemeKind::Latte          => latte(),
+            ThemeKind::GruvboxLight   => gruvbox_light(),
+            ThemeKind::OneLight       => one_light(),
+            ThemeKind::GithubLight    => github_light(),
+            ThemeKind::TokyoNightDay  => tokyo_night_day(),
+            ThemeKind::RosePineDawn   => rose_pine_dawn(),
+            ThemeKind::EverforestLight=> everforest_light(),
         }
     }
 
@@ -119,6 +138,15 @@ impl ThemeKind {
             ThemeKind::Palenight  => "palenight",
             ThemeKind::DarkPlus   => "darkplus",
             ThemeKind::Moonlight  => "moonlight",
+            ThemeKind::OsakaJade  => "osaka-jade",
+            ThemeKind::LastHorizon=> "last-horizon",
+            ThemeKind::Latte          => "latte",
+            ThemeKind::GruvboxLight   => "gruvbox-light",
+            ThemeKind::OneLight       => "one-light",
+            ThemeKind::GithubLight    => "github-light",
+            ThemeKind::TokyoNightDay  => "tokyonight-day",
+            ThemeKind::RosePineDawn   => "rosepine-dawn",
+            ThemeKind::EverforestLight=> "everforest-light",
         }
     }
 
@@ -146,6 +174,15 @@ impl ThemeKind {
             ThemeKind::Palenight,
             ThemeKind::DarkPlus,
             ThemeKind::Moonlight,
+            ThemeKind::OsakaJade,
+            ThemeKind::LastHorizon,
+            ThemeKind::Latte,
+            ThemeKind::GruvboxLight,
+            ThemeKind::OneLight,
+            ThemeKind::GithubLight,
+            ThemeKind::TokyoNightDay,
+            ThemeKind::RosePineDawn,
+            ThemeKind::EverforestLight,
         ]
     }
 
@@ -174,6 +211,24 @@ impl ThemeKind {
             "palenight"  => Some(ThemeKind::Palenight),
             "darkplus"   => Some(ThemeKind::DarkPlus),
             "moonlight"  => Some(ThemeKind::Moonlight),
+            "osaka-jade" | "osakajade" | "osaka_jade" | "osaka" | "jade" =>
+                Some(ThemeKind::OsakaJade),
+            "last-horizon" | "lasthorizon" | "last_horizon" =>
+                Some(ThemeKind::LastHorizon),
+            "latte" | "catppuccin-latte" | "catppuccinlatte" =>
+                Some(ThemeKind::Latte),
+            "gruvbox-light" | "gruvboxlight" | "gruvbox_light" =>
+                Some(ThemeKind::GruvboxLight),
+            "one-light" | "onelight" | "one_light" =>
+                Some(ThemeKind::OneLight),
+            "github-light" | "githublight" | "github_light" =>
+                Some(ThemeKind::GithubLight),
+            "tokyonight-day" | "tokyonightday" | "tokyonight-light" =>
+                Some(ThemeKind::TokyoNightDay),
+            "rosepine-dawn" | "rosepinedawn" | "rose-pine-dawn" | "dawn" =>
+                Some(ThemeKind::RosePineDawn),
+            "everforest-light" | "everforestlight" | "everforest_light" =>
+                Some(ThemeKind::EverforestLight),
             _            => None,
         }
     }
@@ -779,6 +834,316 @@ fn moonlight() -> Theme {
     }
 }
 
+// ── osaka jade ───────────────────────────────────────────────────
+//
+// Canonical palette from Omarchy's osaka-jade theme (and the
+// st-eez/osaka-jade.nvim port): jade/teal accents on near-black,
+// warm paper text, muted green comments.
+
+fn osaka_jade() -> Theme {
+    // Named palette from the upstream theme, for reference:
+    // bg #111C18 · fg #C1C497 · black #23372B · red #FF5345
+    // green #549E6A · dark-green #459451 · jade #509475
+    // magenta #D2689C · cyan #2DD5B7 · white #F6F5DD
+    // bright_*: #53685B #DB9F9C #63B07A #E5C736 #ACD4CF #75BBB3
+    //           #8CD3CB #9EEBB3 · bg1 #1A2520 · bg3 #2A3530
+    Theme {
+        fg:            Color::Rgb(0xc1, 0xc4, 0x97),  // paper
+        bg:            Color::Rgb(0x11, 0x1c, 0x18),
+        selection_bg:  Color::Rgb(0x23, 0x37, 0x2b),  // selection
+        line_number:   Style::new().fg(Color::Rgb(0x53, 0x68, 0x5b)),
+        tilde:         Style::new().fg(Color::Rgb(0x23, 0x37, 0x2b)),
+        status_bg:     Color::Rgb(0x1a, 0x25, 0x20),  // bg1
+        status_fg:     Color::Rgb(0xc1, 0xc4, 0x97),
+        border:        Color::Rgb(0x53, 0x68, 0x5b),
+        keyword:       fg(Color::Rgb(0x2d, 0xd5, 0xb7)),  // cyan
+        builtin:       fg(Color::Rgb(0x2d, 0xd5, 0xb7)),  // builtin fns
+        rstype:        fg(Color::Rgb(0xe5, 0xc7, 0x36)),  // bright yellow
+        function:      fg(Color::Rgb(0x50, 0x94, 0x75)),  // jade
+        lifetime:      fg(Color::Rgb(0xac, 0xd4, 0xcf)),  // bright blue
+        string:        fg(Color::Rgb(0x54, 0x9e, 0x6a)),  // green
+        fstring_prefix:fg_bold(Color::Rgb(0x54, 0x9e, 0x6a)),
+        comment:       fg_italic(Color::Rgb(0x53, 0x68, 0x5b)),
+        number:        fg(Color::Rgb(0xd2, 0x68, 0x9c)),  // magenta
+        constant:      fg(Color::Rgb(0x75, 0xbb, 0xb3)),  // bright magenta
+        decorator:     fg(Color::Rgb(0x8c, 0xd3, 0xcb)),  // bright cyan
+        property:      fg(Color::Rgb(0x8c, 0xd3, 0xcb)),
+        operator:      fg(Color::Rgb(0x2d, 0xd5, 0xb7)),  // cyan
+        punctuation:   fg(Color::Rgb(0xc1, 0xc4, 0x97)),  // paper
+    }
+}
+
+// ── last horizon ─────────────────────────────────────────────────
+//
+// Omarchy's "Last Horizon" theme (HANCORE-linux/omarchy-lasthorizon-theme),
+// a warm twilight palette: crimson, gold and sand on deep dusk.
+
+fn last_horizon() -> Theme {
+    // Canonical base00–base0F from the theme's aether.nvim config:
+    // 00 #1F211B  01 #3A3C35  02 #2B2E27  03 #7A7C72
+    // 04 #EBD9C6  05 #FFFFFF  06 #FDF8F3  07 #F5E8D8
+    // 08 #D8746B  09 #EBAA93  0A #F5C89C  0B #F7D8B2
+    // 0C #F3BE8D  0D #D89B90  0E #C8AFA8  0F #F4E6DC
+    // Terminal ANSI: red #d75450 · green #F7D1AB · yellow #F5C498
+    //   blue #d7857f · magenta #c6a49f · cyan #F3B788 · white #FADFC1
+    Theme {
+        fg:            Color::Rgb(0xff, 0xff, 0xff),  // base05
+        bg:            Color::Rgb(0x1f, 0x21, 0x1b),  // base00
+        selection_bg:  Color::Rgb(0x3a, 0x3c, 0x35),  // base01
+        line_number:   Style::new().fg(Color::Rgb(0x52, 0x55, 0x4d)),
+        tilde:         Style::new().fg(Color::Rgb(0x3a, 0x3c, 0x35)),
+        status_bg:     Color::Rgb(0x2b, 0x2e, 0x27),  // base02
+        status_fg:     Color::Rgb(0xff, 0xff, 0xff),
+        border:        Color::Rgb(0x7a, 0x7c, 0x72),  // base03
+        keyword:       fg(Color::Rgb(0xc8, 0xaf, 0xa8)),  // mauve
+        builtin:       fg(Color::Rgb(0xf3, 0xbe, 0x8d)),  // peach
+        rstype:        fg(Color::Rgb(0xf5, 0xc8, 0x9c)),  // amber
+        function:      fg(Color::Rgb(0xd8, 0x9b, 0x90)),  // faded rose
+        lifetime:      fg(Color::Rgb(0xf4, 0xe6, 0xdc)),  // cream
+        string:        fg(Color::Rgb(0xf7, 0xd8, 0xb2)),  // calm sand
+        fstring_prefix:fg_bold(Color::Rgb(0xf7, 0xd8, 0xb2)),
+        comment:       fg_italic(Color::Rgb(0x7a, 0x7c, 0x72)),
+        number:        fg(Color::Rgb(0xeb, 0xaa, 0x93)),  // coral
+        constant:      fg(Color::Rgb(0xeb, 0xaa, 0x93)),
+        decorator:     fg(Color::Rgb(0xf3, 0xbe, 0x8d)),  // peach
+        property:      fg(Color::Rgb(0xd8, 0x74, 0x6b)),  // gentle red
+        operator:      fg(Color::Rgb(0xff, 0xff, 0xff)),
+        punctuation:   fg(Color::Rgb(0xff, 0xff, 0xff)),
+    }
+}
+
+// ── light themes ─────────────────────────────────────────────────
+//
+// Light backgrounds, dark text.  Accents use the "deep" end of each
+// palette so token colours keep enough contrast on a bright bg.  The
+// status bar / mode block pick their text colour via `contrast_fg`,
+// so these read correctly without per-theme tweaks.
+
+fn latte() -> Theme {
+    // Catppuccin Latte: soft pastels on a pale lavender-white base
+    Theme {
+        fg:            Color::Rgb(0x4c, 0x4f, 0x69),  // text
+        bg:            Color::Rgb(0xef, 0xf1, 0xf5),  // base
+        selection_bg:  Color::Rgb(0xcc, 0xd0, 0xda),  // surface0
+        line_number:   Style::new().fg(Color::Rgb(0xbc, 0xc0, 0xcc)),  // surface1
+        tilde:         Style::new().fg(Color::Rgb(0xcc, 0xd0, 0xda)),
+        status_bg:     Color::Rgb(0xe6, 0xe9, 0xef),  // mantle
+        status_fg:     Color::Rgb(0x4c, 0x4f, 0x69),
+        border:        Color::Rgb(0x9c, 0xa0, 0xb0),  // overlay0
+        keyword:       fg(Color::Rgb(0x88, 0x39, 0xef)),  // mauve
+        builtin:       fg(Color::Rgb(0x1e, 0x66, 0xf5)),  // blue
+        rstype:        fg(Color::Rgb(0xdf, 0x8e, 0x1d)),  // yellow
+        function:      fg(Color::Rgb(0x1e, 0x66, 0xf5)),  // blue
+        lifetime:      fg(Color::Rgb(0x17, 0x92, 0x99)),  // teal
+        string:        fg(Color::Rgb(0x40, 0xa0, 0x2b)),  // green
+        fstring_prefix:fg_bold(Color::Rgb(0x40, 0xa0, 0x2b)),
+        comment:       fg(Color::Rgb(0x8c, 0x8f, 0xa1)),  // overlay1
+        number:        fg(Color::Rgb(0xfe, 0x64, 0x0b)),  // peach
+        constant:      fg(Color::Rgb(0xfe, 0x64, 0x0b)),
+        decorator:     fg(Color::Rgb(0xd2, 0x0f, 0x39)),  // red
+        property:      fg(Color::Rgb(0x72, 0x87, 0xfd)),  // lavender
+        operator:      fg(Color::Rgb(0x04, 0xa5, 0xe5)),  // sky
+        punctuation:   fg(Color::Rgb(0x7c, 0x7f, 0x93)),  // overlay2
+    }
+}
+
+fn gruvbox_light() -> Theme {
+    // Gruvbox Light: warm cream bg, retro earth tones
+    Theme {
+        fg:            Color::Rgb(0x3c, 0x38, 0x36),
+        bg:            Color::Rgb(0xfb, 0xf1, 0xc7),
+        selection_bg:  Color::Rgb(0xeb, 0xdb, 0xb2),
+        line_number:   Style::new().fg(Color::Rgb(0xa8, 0x99, 0x84)),
+        tilde:         Style::new().fg(Color::Rgb(0xd5, 0xc4, 0xa1)),
+        status_bg:     Color::Rgb(0xeb, 0xdb, 0xb2),
+        status_fg:     Color::Rgb(0x3c, 0x38, 0x36),
+        border:        Color::Rgb(0xa8, 0x99, 0x84),
+        keyword:       fg(Color::Rgb(0x9d, 0x00, 0x06)),  // red
+        builtin:       fg(Color::Rgb(0x42, 0x7b, 0x58)),  // aqua
+        rstype:        fg(Color::Rgb(0xb5, 0x76, 0x14)),  // yellow
+        function:      fg(Color::Rgb(0x79, 0x74, 0x0e)),  // green
+        lifetime:      fg(Color::Rgb(0x42, 0x7b, 0x58)),  // aqua
+        string:        fg(Color::Rgb(0x79, 0x74, 0x0e)),  // green
+        fstring_prefix:fg_bold(Color::Rgb(0x79, 0x74, 0x0e)),
+        comment:       fg(Color::Rgb(0x92, 0x83, 0x74)),
+        number:        fg(Color::Rgb(0x8f, 0x3f, 0x71)),  // purple
+        constant:      fg(Color::Rgb(0x8f, 0x3f, 0x71)),
+        decorator:     fg(Color::Rgb(0xaf, 0x3a, 0x03)),  // orange
+        property:      fg(Color::Rgb(0x07, 0x66, 0x78)),  // blue
+        operator:      fg(Color::Rgb(0xaf, 0x3a, 0x03)),  // orange
+        punctuation:   fg(Color::Rgb(0x3c, 0x38, 0x36)),
+    }
+}
+
+fn one_light() -> Theme {
+    // Atom One Light: crisp near-white bg, saturated accents
+    Theme {
+        fg:            Color::Rgb(0x38, 0x3a, 0x42),
+        bg:            Color::Rgb(0xfa, 0xfa, 0xfa),
+        selection_bg:  Color::Rgb(0xe5, 0xe5, 0xe6),
+        line_number:   Style::new().fg(Color::Rgb(0x9d, 0x9d, 0x9f)),
+        tilde:         Style::new().fg(Color::Rgb(0xd4, 0xd4, 0xd5)),
+        status_bg:     Color::Rgb(0xea, 0xea, 0xeb),
+        status_fg:     Color::Rgb(0x38, 0x3a, 0x42),
+        border:        Color::Rgb(0xc2, 0xc2, 0xc3),
+        keyword:       fg(Color::Rgb(0xa6, 0x26, 0xa4)),  // purple
+        builtin:       fg(Color::Rgb(0xc1, 0x84, 0x01)),  // yellow
+        rstype:        fg(Color::Rgb(0xc1, 0x84, 0x01)),  // yellow
+        function:      fg(Color::Rgb(0x40, 0x78, 0xf2)),  // blue
+        lifetime:      fg(Color::Rgb(0x01, 0x84, 0xbc)),  // cyan
+        string:        fg(Color::Rgb(0x50, 0xa1, 0x4f)),  // green
+        fstring_prefix:fg_bold(Color::Rgb(0x50, 0xa1, 0x4f)),
+        comment:       fg(Color::Rgb(0xa0, 0xa1, 0xa7)),
+        number:        fg(Color::Rgb(0x98, 0x68, 0x01)),  // brown/orange
+        constant:      fg(Color::Rgb(0x98, 0x68, 0x01)),
+        decorator:     fg(Color::Rgb(0xa6, 0x26, 0xa4)),  // purple
+        property:      fg(Color::Rgb(0xe4, 0x56, 0x49)),  // red
+        operator:      fg(Color::Rgb(0x01, 0x84, 0xbc)),  // cyan
+        punctuation:   fg(Color::Rgb(0x38, 0x3a, 0x42)),
+    }
+}
+
+fn github_light() -> Theme {
+    // GitHub Light (default): high-contrast, mostly warm accents
+    Theme {
+        fg:            Color::Rgb(0x24, 0x29, 0x2f),
+        bg:            Color::Rgb(0xff, 0xff, 0xff),
+        selection_bg:  Color::Rgb(0xd0, 0xd7, 0xde),
+        line_number:   Style::new().fg(Color::Rgb(0x8c, 0x95, 0x9f)),
+        tilde:         Style::new().fg(Color::Rgb(0xd8, 0xde, 0xe4)),
+        status_bg:     Color::Rgb(0xf6, 0xf8, 0xfa),
+        status_fg:     Color::Rgb(0x24, 0x29, 0x2f),
+        border:        Color::Rgb(0xd0, 0xd7, 0xde),
+        keyword:       fg(Color::Rgb(0xcf, 0x22, 0x2e)),  // red
+        builtin:       fg(Color::Rgb(0x05, 0x50, 0xae)),  // blue
+        rstype:        fg(Color::Rgb(0x95, 0x38, 0x00)),  // orange
+        function:      fg(Color::Rgb(0x82, 0x50, 0xdf)),  // purple
+        lifetime:      fg(Color::Rgb(0x05, 0x50, 0xae)),  // blue
+        string:        fg(Color::Rgb(0x0a, 0x30, 0x69)),  // navy
+        fstring_prefix:fg_bold(Color::Rgb(0x0a, 0x30, 0x69)),
+        comment:       fg(Color::Rgb(0x6e, 0x77, 0x81)),
+        number:        fg(Color::Rgb(0x05, 0x50, 0xae)),  // blue
+        constant:      fg(Color::Rgb(0x05, 0x50, 0xae)),
+        decorator:     fg(Color::Rgb(0x82, 0x50, 0xdf)),  // purple
+        property:      fg(Color::Rgb(0x95, 0x38, 0x00)),  // orange
+        operator:      fg(Color::Rgb(0xcf, 0x22, 0x2e)),  // red
+        punctuation:   fg(Color::Rgb(0x24, 0x29, 0x2f)),
+    }
+}
+
+fn tokyo_night_day() -> Theme {
+    // Tokyo Night "Day": cool blue-grey bg, blue-forward accents
+    Theme {
+        fg:            Color::Rgb(0x37, 0x60, 0xbf),
+        bg:            Color::Rgb(0xe1, 0xe2, 0xe7),
+        selection_bg:  Color::Rgb(0xc4, 0xc8, 0xda),
+        line_number:   Style::new().fg(Color::Rgb(0x99, 0xa4, 0xc5)),
+        tilde:         Style::new().fg(Color::Rgb(0xc4, 0xc8, 0xda)),
+        status_bg:     Color::Rgb(0xd0, 0xd5, 0xe3),
+        status_fg:     Color::Rgb(0x37, 0x60, 0xbf),
+        border:        Color::Rgb(0xa8, 0xb3, 0xd0),
+        keyword:       fg(Color::Rgb(0x98, 0x54, 0xf1)),  // purple
+        builtin:       fg(Color::Rgb(0x2e, 0x7d, 0xe9)),  // blue
+        rstype:        fg(Color::Rgb(0xb1, 0x5c, 0x00)),  // orange
+        function:      fg(Color::Rgb(0x2e, 0x7d, 0xe9)),  // blue
+        lifetime:      fg(Color::Rgb(0x00, 0x71, 0x97)),  // teal
+        string:        fg(Color::Rgb(0x58, 0x75, 0x39)),  // green
+        fstring_prefix:fg_bold(Color::Rgb(0x58, 0x75, 0x39)),
+        comment:       fg(Color::Rgb(0x84, 0x8c, 0xb5)),
+        number:        fg(Color::Rgb(0x96, 0x50, 0x27)),  // burnt orange
+        constant:      fg(Color::Rgb(0x96, 0x50, 0x27)),
+        decorator:     fg(Color::Rgb(0x98, 0x54, 0xf1)),  // purple
+        property:      fg(Color::Rgb(0x00, 0x71, 0x97)),  // teal
+        operator:      fg(Color::Rgb(0x2e, 0x7d, 0xe9)),  // blue
+        punctuation:   fg(Color::Rgb(0x37, 0x60, 0xbf)),
+    }
+}
+
+fn rose_pine_dawn() -> Theme {
+    // Rosé Pine Dawn: warm rosy paper, muted jewel tones
+    Theme {
+        fg:            Color::Rgb(0x57, 0x52, 0x79),  // text
+        bg:            Color::Rgb(0xfa, 0xf4, 0xed),  // base
+        selection_bg:  Color::Rgb(0xdf, 0xda, 0xd9),  // highlight med
+        line_number:   Style::new().fg(Color::Rgb(0x98, 0x93, 0xa5)),  // subtle
+        tilde:         Style::new().fg(Color::Rgb(0xce, 0xca, 0xcd)),
+        status_bg:     Color::Rgb(0xf2, 0xe9, 0xe1),  // highlight low
+        status_fg:     Color::Rgb(0x57, 0x52, 0x79),
+        border:        Color::Rgb(0xce, 0xca, 0xcd),
+        keyword:       fg(Color::Rgb(0x28, 0x69, 0x83)),  // pine
+        builtin:       fg(Color::Rgb(0x90, 0x7a, 0xa9)),  // iris
+        rstype:        fg(Color::Rgb(0x56, 0x94, 0x9f)),  // foam
+        function:      fg(Color::Rgb(0xd7, 0x82, 0x7e)),  // rose
+        lifetime:      fg(Color::Rgb(0xea, 0x9d, 0x34)),  // gold
+        string:        fg(Color::Rgb(0xea, 0x9d, 0x34)),  // gold
+        fstring_prefix:fg_bold(Color::Rgb(0xea, 0x9d, 0x34)),
+        comment:       fg(Color::Rgb(0x98, 0x93, 0xa5)),  // subtle
+        number:        fg(Color::Rgb(0xb4, 0x63, 0x7a)),  // love
+        constant:      fg(Color::Rgb(0xb4, 0x63, 0x7a)),  // love
+        decorator:     fg(Color::Rgb(0x90, 0x7a, 0xa9)),  // iris
+        property:      fg(Color::Rgb(0x56, 0x94, 0x9f)),  // foam
+        operator:      fg(Color::Rgb(0x28, 0x69, 0x83)),  // pine
+        punctuation:   fg(Color::Rgb(0x57, 0x52, 0x79)),
+    }
+}
+
+fn everforest_light() -> Theme {
+    // Everforest Light (medium): soft beige paper, forest greens
+    Theme {
+        fg:            Color::Rgb(0x5c, 0x6a, 0x72),  // fg
+        bg:            Color::Rgb(0xfd, 0xf6, 0xe3),  // bg0
+        selection_bg:  Color::Rgb(0xef, 0xeb, 0xd4),  // bg2
+        line_number:   Style::new().fg(Color::Rgb(0xa6, 0xb0, 0xa0)),  // gray0
+        tilde:         Style::new().fg(Color::Rgb(0xe0, 0xdc, 0xc7)),  // bg4
+        status_bg:     Color::Rgb(0xf4, 0xf0, 0xd9),  // bg1
+        status_fg:     Color::Rgb(0x5c, 0x6a, 0x72),
+        border:        Color::Rgb(0xa6, 0xb0, 0xa0),  // gray0
+        keyword:       fg(Color::Rgb(0xf8, 0x55, 0x52)),  // red
+        builtin:       fg(Color::Rgb(0x35, 0xa7, 0x7c)),  // aqua
+        rstype:        fg(Color::Rgb(0xdf, 0x69, 0xba)),  // purple
+        function:      fg(Color::Rgb(0x8d, 0xa1, 0x01)),  // green
+        lifetime:      fg(Color::Rgb(0x3a, 0x94, 0xc5)),  // blue
+        string:        fg(Color::Rgb(0x8d, 0xa1, 0x01)),  // green
+        fstring_prefix:fg_bold(Color::Rgb(0x8d, 0xa1, 0x01)),
+        comment:       fg(Color::Rgb(0x93, 0x9f, 0x91)),  // gray1
+        number:        fg(Color::Rgb(0xdf, 0xa0, 0x00)),  // yellow
+        constant:      fg(Color::Rgb(0xdf, 0xa0, 0x00)),  // yellow
+        decorator:     fg(Color::Rgb(0xf5, 0x7d, 0x26)),  // orange
+        property:      fg(Color::Rgb(0x5c, 0x6a, 0x72)),
+        operator:      fg(Color::Rgb(0xf5, 0x7d, 0x26)),  // orange
+        punctuation:   fg(Color::Rgb(0x5c, 0x6a, 0x72)),
+    }
+}
+
+/// Pick a readable foreground (near-black or near-white) for text
+/// drawn on top of `bg`.  Used by the status-bar mode block and the
+/// selected-row highlight, which paint text onto a theme accent — so
+/// light themes get dark-on-accent or light-on-accent automatically.
+pub fn contrast_fg(bg: Color) -> Color {
+    let lum = match bg {
+        Color::Rgb(r, g, b) => relative_luminance(r, g, b),
+        _ => 0.0,
+    };
+    // 0.179 is the luminance where black and white are equally readable.
+    if lum > 0.179 {
+        Color::Rgb(0x1a, 0x1a, 0x1a)
+    } else {
+        Color::Rgb(0xf5, 0xf5, 0xf5)
+    }
+}
+
+fn relative_luminance(r: u8, g: u8, b: u8) -> f64 {
+    fn channel(c: u8) -> f64 {
+        let c = c as f64 / 255.0;
+        if c <= 0.03928 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    }
+    0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+}
+
 /// Convert HSL to RGB, each 0‑255.  `h` in degrees, `s`/`l` in 0..1.
 pub fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
     let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
@@ -851,7 +1216,7 @@ mod tests {
 
     #[test]
     fn every_theme_is_constructible_and_named() {
-        assert_eq!(ThemeKind::all().len(), 21);
+        assert_eq!(ThemeKind::all().len(), 30);
         for k in ThemeKind::all() {
             let _ = k.theme();
             assert_eq!(ThemeKind::from_str(k.name()), Some(*k), "{}", k.name());
@@ -896,5 +1261,40 @@ mod tests {
                 assert!(diff.abs() > 60, "{}: weak fg/bg contrast", k.name());
             }
         }
+    }
+
+    #[test]
+    fn light_themes_really_are_light() {
+        for k in [
+            ThemeKind::Solarized,
+            ThemeKind::Latte,
+            ThemeKind::GruvboxLight,
+            ThemeKind::OneLight,
+            ThemeKind::GithubLight,
+            ThemeKind::TokyoNightDay,
+            ThemeKind::RosePineDawn,
+            ThemeKind::EverforestLight,
+        ] {
+            let t = k.theme();
+            if let Color::Rgb(r, g, b) = t.bg {
+                assert!(
+                    relative_luminance(r, g, b) > 0.5,
+                    "{} should have a light background",
+                    k.name()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn contrast_fg_picks_readable_text() {
+        let dark = Color::Rgb(0x1a, 0x1a, 0x1a);
+        let light = Color::Rgb(0xf5, 0xf5, 0xf5);
+        assert_eq!(contrast_fg(Color::Rgb(0xff, 0xff, 0xff)), dark);
+        assert_eq!(contrast_fg(Color::Rgb(0x00, 0x00, 0x00)), light);
+        // Catppuccin Latte mauve (dark accent) -> light text.
+        assert_eq!(contrast_fg(Color::Rgb(0x88, 0x39, 0xef)), light);
+        // Solarized olive (mid-light accent) -> dark text.
+        assert_eq!(contrast_fg(Color::Rgb(0x85, 0x99, 0x00)), dark);
     }
 }

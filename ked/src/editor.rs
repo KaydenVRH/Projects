@@ -30,10 +30,11 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
     process::Command as ProcCmd,
-    time::{Instant, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 
 use anyhow::{Context, Result};
+use chrono::{Datelike, NaiveDate};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crossterm::cursor::SetCursorStyle;
 use ratatui::{
@@ -49,6 +50,8 @@ use crate::shell::ShellProcess;
 use crate::config::Config;
 use crate::theme::{Theme, ThemeKind};
 use crate::finder::Finder;
+use crate::keymap::{Keymap, Layer, Outcome};
+use crate::memory::{self, MemoryStore};
 use crate::music::MusicPlayer;
 use crate::filetree::{FileTree, file_icon as ft_icon};
 
@@ -76,6 +79,9 @@ pub enum State {
     FileTree,// file tree panel (Ctrl+F)
     SysInfo, // system dashboard (:sys)
     Help,    // keybind manual (Ctrl+K)
+    Memories,// reminders / notes dashboard
+    Memo,    // typing a quick "remember" line
+    Planner, // month calendar + day agenda
 }
 
 // ── Buffer ───────────────────────────────────────────────────────
@@ -156,6 +162,23 @@ impl Buffer {
 
 // ── Editor ───────────────────────────────────────────────────────
 
+/// One row of the memories dashboard: a section header or an entry.
+#[derive(Debug, Clone, Copy)]
+pub enum MemRow {
+    Header(&'static str),
+    Entry(usize),
+}
+
+/// One cell of the planner month grid.
+#[derive(Debug, Clone, Copy)]
+pub struct DayCell {
+    pub date: NaiveDate,
+    pub in_month: bool,
+    pub reminders: usize,
+    pub notes: usize,
+    pub is_today: bool,
+}
+
 /// All editor state.
 pub struct Editor {
     // ── buffer (shortcuts – kept in sync via sync_to/from_buffer) ──
@@ -175,6 +198,9 @@ pub struct Editor {
 
     // ── command bar ──
     pub cmd_buf: String,
+    /// Byte cursor inside the active prompt (command / search /
+    /// remember).  Shared because only one prompt is open at a time.
+    pub prompt_cursor: usize,
 
     // ── search ──
     pub search_query: String,
@@ -198,6 +224,26 @@ pub struct Editor {
 
     // ── fuzzy finder ──
     pub finder: Finder,
+    /// User-configurable key bindings.
+    pub keymap: Keymap,
+
+    // ── memories / reminders / journal ──
+    pub memory: crate::memory::MemoryStore,
+    pub mem_cfg: crate::config::MemoryConfig,
+    pub mem_rows: Vec<MemRow>,
+    pub mem_selected: usize,
+    pub mem_scroll: usize,
+    pub memo_buf: String,
+    memo_origin: State,
+    mem_last_check: Instant,
+    /// Planner: displayed month (first day), selected day, grid cells,
+    /// the selected day's entries, and which pane has focus.
+    pub planner_month: NaiveDate,
+    pub planner_day: NaiveDate,
+    pub planner_days: Vec<DayCell>,
+    pub planner_entries: Vec<usize>,
+    pub planner_sel: usize,
+    pub planner_list_focus: bool,
     pub finder_query: String,
     pub finder_selection: usize,
     pub finder_scroll: usize,
@@ -221,6 +267,8 @@ pub struct Editor {
 
     // ── run output ──
     pub run_output: String,
+    /// Lines scrolled up from the bottom of the run overlay.
+    pub run_scroll: usize,
 
     // ── music player (Ctrl+M) ──
     pub music_player: MusicPlayer,
@@ -304,25 +352,53 @@ impl Editor {
     /// (like vim's empty buffer).
     pub fn new(filename: Option<&str>, cfg: &Config) -> Result<Self> {
         let (lines, filename, last_mtime) = if let Some(path) = filename {
-            let content =
-                fs::read_to_string(path).with_context(|| format!("can't read {path}"))?;
-            // Split into lines.  If the file ends with `\n`, push an
-            // extra empty line so the cursor can sit on the "virtual"
-            // line below the last content line (vim behaviour).
-            let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
-            if content.ends_with('\n') {
-                lines.push(String::new());
+            match fs::read_to_string(path) {
+                Ok(content) => {
+                    // Split into lines.  If the file ends with `\n`, push an
+                    // extra empty line so the cursor can sit on the "virtual"
+                    // line below the last content line (vim behaviour).
+                    let mut lines: Vec<String> =
+                        content.lines().map(|l| l.to_string()).collect();
+                    if content.ends_with('\n') {
+                        lines.push(String::new());
+                    }
+                    if lines.is_empty() {
+                        lines.push(String::new());
+                    }
+                    let mtime =
+                        fs::metadata(path).ok().and_then(|m| m.modified().ok());
+                    (lines, Some(path.to_string()), mtime)
+                }
+                // Like vim: a path that doesn't exist yet starts as an
+                // empty buffer and is created on `:w`.
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                    (vec![String::new()], Some(path.to_string()), None)
+                }
+                Err(e) => return Err(e).with_context(|| format!("can't read {path}")),
             }
-            if lines.is_empty() {
-                lines.push(String::new());
-            }
-            let mtime = fs::metadata(path).ok().and_then(|m| m.modified().ok());
-            (lines, Some(path.to_string()), mtime)
         } else {
             (vec![String::new()], None, None)
         };
 
         let theme = ThemeKind::from_str(&cfg.theme).unwrap_or(ThemeKind::Oxocarbon);
+        let keymap = Keymap::from_config(cfg);
+        let startup_flash = match keymap.warnings() {
+            [] => None,
+            [one] => Some(one.clone()),
+            many => Some(format!(
+                "{} keybind warnings — run :keys for details",
+                many.len()
+            )),
+        };
+        let mem_cfg = cfg.memories.clone();
+        let memory = MemoryStore::load(memory::dir_for(&mem_cfg));
+        let planner_day = memory::now().date();
+        let planner_month = NaiveDate::from_ymd_opt(
+            planner_day.year(),
+            planner_day.month(),
+            1,
+        )
+        .unwrap_or(planner_day);
 
         let initial_buf = Buffer::new(lines.clone(), filename.clone(), last_mtime);
 
@@ -337,6 +413,7 @@ impl Editor {
             mode: Mode::Normal,
             state: State::Normal,
             cmd_buf: String::new(),
+            prompt_cursor: 0,
             search_query: String::new(),
             last_search: None,
             line_changes: None,
@@ -346,6 +423,21 @@ impl Editor {
             glow_available: None,
             highlight: None,
             finder: Finder::new(),
+            keymap,
+            memory,
+            mem_cfg,
+            mem_rows: Vec::new(),
+            mem_selected: 0,
+            mem_scroll: 0,
+            memo_buf: String::new(),
+            memo_origin: State::Normal,
+            mem_last_check: Instant::now(),
+            planner_month,
+            planner_day,
+            planner_days: Vec::new(),
+            planner_entries: Vec::new(),
+            planner_sel: 0,
+            planner_list_focus: false,
             finder_query: String::new(),
             finder_selection: 0,
             finder_scroll: 0,
@@ -357,6 +449,7 @@ impl Editor {
             graphics_out: Vec::new(),
             cursor_screen: None,
             run_output: String::new(),
+            run_scroll: 0,
             music_player: MusicPlayer::new(),
             filename,
             last_mtime,
@@ -369,7 +462,7 @@ impl Editor {
             theme,
             theme_selected: ThemeKind::all().iter().position(|t| *t == theme).unwrap_or(0),
             theme_scroll: 0,
-            flash: None,
+            flash: startup_flash,
             cache_w: 80,
             cache_h: 24,
             shell: None,
@@ -471,7 +564,7 @@ impl Editor {
     // ═══════════════════════════════════════════════════════════════
 
     /// Handle a key press.  Returns `true` to keep running, `false` to quit.
-    pub fn handle_key(&mut self, key: KeyEvent) -> bool {
+    pub fn handle_key(&mut self, mut key: KeyEvent) -> bool {
         // If the shell overlay is active, forward every key to the
         // shell (including Ctrl+J, Ctrl+C, etc.).  The only way out
         // is to type `exit` in the shell.
@@ -481,6 +574,16 @@ impl Editor {
 
         // Clear any flash message on the next keypress.
         self.flash = None;
+
+        // Apply user keybinding overrides.  Typed text (plain characters
+        // in insert mode or an overlay) is left alone so a global binding
+        // on a letter can't hijack typing.
+        if !self.typing_context(&key) {
+            match self.translate(Layer::Global, key) {
+                Some(k) => key = k,
+                None => return true,
+            }
+        }
 
         // Ctrl+M = music player (opens from any state).  This only
         // works on terminals with kitty keyboard protocol support
@@ -515,32 +618,7 @@ impl Editor {
 
         // Ctrl+J = pop-up shell (opens from any state *except* shell).
         if key.code == KeyCode::Char('j') && key.modifiers == KeyModifiers::CONTROL {
-            if self.state == State::Shell {
-                // Already in the shell — forward Ctrl+J (0x0A, line feed)
-                // so it works as a regular key inside the shell.
-                if let Some(ref s) = self.shell {
-                    s.force_raw_mode();
-                    s.write(&[0x0a]);
-                }
-                return true;
-            }
-            match ShellProcess::spawn() {
-                Ok((shell, reader)) => {
-                    shell.force_raw_mode();
-                    self.shell = Some(shell);
-                    self.shell_reader = Some(reader);
-                    self.state = State::Shell;
-                    // Set initial terminal size for the shell.
-                    if let Some(ref s) = self.shell {
-                        // pick a reasonable default — will be
-                        // updated on first render.
-                        s.resize(40, 100);
-                    }
-                }
-                Err(e) => {
-                    self.flash = Some(format!("shell failed: {e}"));
-                }
-            }
+            self.open_shell();
             return true;
         }
 
@@ -557,6 +635,9 @@ impl Editor {
             State::FileTree => return self.handle_filetree_state(key),
             State::SysInfo => return self.handle_sysinfo_state(key),
             State::Help => return self.handle_help_state(key),
+            State::Memories => return self.handle_memories_state(key),
+            State::Memo => return self.handle_memo_state(key),
+            State::Planner => return self.handle_planner_state(key),
             State::Normal => {}
             State::Shell => {}
             State::Visual => {}
@@ -568,10 +649,26 @@ impl Editor {
         // Ctrl+Shift+V = paste the clipboard image as markdown.
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && key.modifiers.contains(KeyModifiers::SHIFT)
-            && matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V'))
         {
-            let _ = self.paste_clipboard_image();
-            return true;
+            match key.code {
+                KeyCode::Char('v') | KeyCode::Char('V') => {
+                    let _ = self.paste_clipboard_image();
+                    return true;
+                }
+                KeyCode::Char('m') | KeyCode::Char('M') => {
+                    self.open_memories();
+                    return true;
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') => {
+                    self.start_quick_note(State::Normal);
+                    return true;
+                }
+                KeyCode::Char('a') | KeyCode::Char('A') => {
+                    self.open_planner();
+                    return true;
+                }
+                _ => {}
+            }
         }
         if key.modifiers == KeyModifiers::CONTROL {
             match key.code {
@@ -594,6 +691,7 @@ impl Editor {
                         self.run_output =
                             "No filename set.  Use :w <file> first.".to_string();
                     }
+                    self.run_scroll = 0;
                     self.state = State::Run;
                     return true;
                 }
@@ -652,6 +750,7 @@ impl Editor {
                 KeyCode::Char('l') => {
                     self.state = State::Command;
                     self.cmd_buf.clear();
+                    self.prompt_cursor = 0;
                     return true;
                 }
                 _ => {}
@@ -659,8 +758,19 @@ impl Editor {
         }
 
         // Cmd/Option+arrows / Cmd/Option+hjkl: jump cursor (works in any mode).
+        // A user binding in the current mode takes precedence.
+        let mode_layer = if self.state == State::Visual {
+            Layer::Visual
+        } else {
+            match self.mode {
+                Mode::Normal => Layer::Normal,
+                Mode::Insert => Layer::Insert,
+            }
+        };
         let mods = key.modifiers;
-        if mods.intersects(KeyModifiers::SUPER) || mods.intersects(KeyModifiers::ALT) {
+        if (mods.intersects(KeyModifiers::SUPER) || mods.intersects(KeyModifiers::ALT))
+            && !self.keymap.bound_in_mode(mode_layer, &key)
+        {
             match key.code {
                 KeyCode::Left | KeyCode::Char('h') => {
                     for _ in 0..self.alt_scroll {
@@ -695,13 +805,63 @@ impl Editor {
             }
         }
 
-        // Dispatch by visual state or editing mode.
+        // Dispatch by visual state or editing mode, applying the
+        // configured bindings for that layer first.
+        let Some(key) = self.translate(mode_layer, key) else {
+            return true;
+        };
         if self.state == State::Visual {
             return self.handle_visual_mode(key);
         }
         match self.mode {
             Mode::Normal => self.handle_normal_mode(key),
             Mode::Insert => self.handle_insert_mode(key),
+        }
+    }
+
+    /// Translate a key through a keymap layer.
+    /// `None` means the key was a reassigned default and must be swallowed.
+    fn translate(&self, layer: Layer, key: KeyEvent) -> Option<KeyEvent> {
+        let outcome = match layer {
+            Layer::Global => self.keymap.global(&key),
+            Layer::Normal => self.keymap.normal(&key),
+            Layer::Visual => self.keymap.visual(&key),
+            Layer::Insert => self.keymap.insert(&key),
+        };
+        match outcome {
+            Outcome::Pass => Some(key),
+            Outcome::Replace(k) => Some(k),
+            Outcome::Swallow => None,
+        }
+    }
+
+    /// Is this key being typed as text (so global letter bindings must
+    /// not intercept it)?
+    fn typing_context(&self, key: &KeyEvent) -> bool {
+        let plain = !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+        if !plain {
+            return false;
+        }
+        let texty = matches!(
+            key.code,
+            KeyCode::Char(_) | KeyCode::Enter | KeyCode::Backspace
+                | KeyCode::Delete | KeyCode::Tab
+        );
+        if !texty {
+            return false;
+        }
+        match self.state {
+            State::Command
+            | State::Search
+            | State::Finder
+            | State::Run
+            | State::Theme
+            | State::FileTree
+            | State::Music
+            | State::Memo => true,
+            _ => self.mode == Mode::Insert,
         }
     }
 
@@ -893,12 +1053,14 @@ impl Editor {
             KeyCode::Char(':') => {
                 self.state = State::Command;
                 self.cmd_buf.clear();
+                self.prompt_cursor = 0;
             }
 
             // ── enter search mode ──
             KeyCode::Char('/') => {
                 self.state = State::Search;
                 self.search_query.clear();
+                self.prompt_cursor = 0;
             }
 
             // ── repeat last search ──
@@ -1233,24 +1395,21 @@ impl Editor {
             KeyCode::Esc => {
                 self.state = State::Normal;
                 self.search_query.clear();
+                self.prompt_cursor = 0;
             }
             // Enter: execute search.
             KeyCode::Enter => {
                 self.last_search = Some(self.search_query.clone());
                 self.search_query.clear();
+                self.prompt_cursor = 0;
                 self.state = State::Normal;
                 self.search_next();
                 self.clamp_scroll();
             }
-            // Backspace: remove last char.
-            KeyCode::Backspace => {
-                self.search_query.pop();
+            // Everything else edits the query (cursor-aware).
+            _ => {
+                edit_prompt(&mut self.search_query, &mut self.prompt_cursor, &key);
             }
-            // Regular char: append to query.
-            KeyCode::Char(ch) => {
-                self.search_query.push(ch);
-            }
-            _ => {}
         }
         true
     }
@@ -1353,25 +1512,20 @@ impl Editor {
             KeyCode::Esc => {
                 self.state = State::Normal;
                 self.cmd_buf.clear();
+                self.prompt_cursor = 0;
             }
             KeyCode::Enter => {
                 let cmd = self.cmd_buf.clone();
                 self.cmd_buf.clear();
+                self.prompt_cursor = 0;
                 self.state = State::Normal;
                 return self.exec_cmd(&cmd);
             }
 
-            // Backspace: remove last character.
-            KeyCode::Backspace => {
-                self.cmd_buf.pop();
+            // Everything else edits the line (cursor-aware).
+            _ => {
+                edit_prompt(&mut self.cmd_buf, &mut self.prompt_cursor, &key);
             }
-
-            // Regular char: append to command buffer.
-            KeyCode::Char(ch) => {
-                self.cmd_buf.push(ch);
-            }
-
-            _ => {}
         }
         true
     }
@@ -1457,10 +1611,28 @@ impl Editor {
     //  Run-state key handling (Ctrl+E overlay)
     // ═══════════════════════════════════════════════════════════════
 
-    fn handle_run_state(&mut self, _key: KeyEvent) -> bool {
-        // Any key dismisses the run output (Ctrl+C/D included — they
-        // shouldn't quit the whole editor while the overlay is open).
-        self.state = State::Normal;
+    fn handle_run_state(&mut self, key: KeyEvent) -> bool {
+        // Scroll long output; Esc/Enter/q (or any other key) dismisses.
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.run_scroll = self.run_scroll.saturating_add(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.run_scroll = self.run_scroll.saturating_sub(1);
+            }
+            KeyCode::PageUp => {
+                self.run_scroll = self.run_scroll.saturating_add(10);
+            }
+            KeyCode::PageDown => {
+                self.run_scroll = self.run_scroll.saturating_sub(10);
+            }
+            _ => {
+                // Any other key dismisses the overlay (Ctrl+C/D
+                // included — they shouldn't quit the editor here).
+                self.state = State::Normal;
+                self.run_scroll = 0;
+            }
+        }
         true
     }
 
@@ -1639,19 +1811,49 @@ impl Editor {
         true
     }
 
-    fn handle_shell_state(&mut self, key: KeyEvent) -> bool {
-        let shell = match self.shell.as_ref() {
-            Some(s) => s,
-            None => {
-                self.state = State::Normal;
-                return true;
+    /// Open the pop-up shell (Ctrl+J or `:shell`).
+    fn open_shell(&mut self) {
+        if self.shell.is_some() {
+            self.state = State::Shell;
+            return;
+        }
+        match ShellProcess::spawn() {
+            Ok((shell, reader)) => {
+                shell.force_raw_mode();
+                self.shell = Some(shell);
+                self.shell_reader = Some(reader);
+                self.state = State::Shell;
+                // Size the PTY to the popup right away so the first
+                // prompt is already at the right width (the render
+                // pass refines it to the exact inner rect).
+                let rows = ((self.cache_h as f32 * 0.85) as u16)
+                    .saturating_sub(2)
+                    .max(1);
+                let cols = ((self.cache_w as f32 * 0.92) as u16)
+                    .saturating_sub(2)
+                    .max(1);
+                if let Some(ref mut s) = self.shell {
+                    s.resize(rows, cols);
+                }
             }
+            Err(e) => {
+                self.flash = Some(format!("shell failed: {e}"));
+            }
+        }
+    }
+
+    fn handle_shell_state(&mut self, key: KeyEvent) -> bool {
+        let Some(shell) = self.shell.as_ref() else {
+            self.state = State::Normal;
+            return true;
         };
         // Force raw mode on the slave side so the terminal driver
         // never echoes (even if the shell re-enabled it).
         shell.force_raw_mode();
-        let bytes = key_to_bytes(key);
-        shell.write(&bytes);
+        let bytes = key_to_bytes(key, shell.application_cursor());
+        if !bytes.is_empty() {
+            shell.write(&bytes);
+        }
         true
     }
 
@@ -1668,6 +1870,11 @@ impl Editor {
             // Results may have shrunk: keep the selection in range.
             let max = self.finder.results.len().saturating_sub(1);
             self.finder_selection = min(self.finder_selection, max);
+        }
+        // Reminders: check once a second (never blocks the UI).
+        if self.mem_last_check.elapsed() >= Duration::from_secs(1) {
+            self.mem_last_check = Instant::now();
+            self.check_reminders();
         }
         self.auto_reload();
         // Non-blocking system stats: poll completed task or spawn a
@@ -1896,6 +2103,41 @@ impl Editor {
                 // doesn't show zeros on first open.
                 if self.sys_task.is_none() {
                     self.sys_task = Some(std::thread::spawn(collect_sys_stats));
+                }
+            }
+            // :keys — show the effective (possibly customised) keymap
+            "keys" | "keybinds" | "keymaps" => {
+                self.run_output = self.keymap.describe();
+                // Show the top of the list (usize::MAX clamps in render).
+                self.run_scroll = usize::MAX;
+                self.state = State::Run;
+            }
+            // :mem [text] — remember something (or open the dashboard)
+            "mem" | "remember" => {
+                if parts.len() > 1 {
+                    let text = parts[1..].join(" ");
+                    let now = memory::now();
+                    let current = self.filename.clone();
+                    match self.memory.add(&text, now, current.as_deref()) {
+                        Ok(_) => self.flash = Some("Remembered".to_string()),
+                        Err(e) => self.flash = Some(format!("memory: {e}")),
+                    }
+                } else {
+                    self.open_memories();
+                }
+            }
+            // :memories — reminders / notes dashboard
+            "memories" | "notes" | "reminders" => self.open_memories(),
+            // :shell — pop-up terminal
+            "sh" | "shell" | "term" => self.open_shell(),
+            // :cal — month planner / calendar
+            "cal" | "planner" | "calendar" => self.open_planner(),
+            // :today — open (or create) today's journal entry
+            "today" | "journal" => {
+                let now = memory::now();
+                match self.memory.today_journal(now) {
+                    Ok(path) => self.open_path(&path),
+                    Err(e) => self.flash = Some(format!("journal: {e}")),
                 }
             }
             // :e <file> — open file
@@ -2420,6 +2662,19 @@ impl Editor {
     /// it pastes after the cursor like `p`.  Ignored while an overlay
     /// is open.
     pub fn paste_from_terminal(&mut self, raw: &str) {
+        // In the shell overlay, pastes belong to the shell.
+        if self.state == State::Shell {
+            if let Some(s) = self.shell.as_ref() {
+                if s.bracketed_paste() {
+                    s.write(b"\x1b[200~");
+                    s.write(raw.as_bytes());
+                    s.write(b"\x1b[201~");
+                } else {
+                    s.write(raw.as_bytes());
+                }
+            }
+            return;
+        }
         if self.state != State::Normal && self.state != State::Visual {
             return;
         }
@@ -2592,6 +2847,392 @@ impl Editor {
         self.clamp_scroll();
         self.flash = Some(format!("Pasted image as {name}"));
         Ok(())
+    }
+
+    // ── memories / reminders / journal ─────────────────────────
+
+    /// Open the memories dashboard with a fresh scan from disk.
+    fn open_memories(&mut self) {
+        self.memory.reload();
+        self.refresh_mem_rows();
+        self.mem_selected = 0;
+        self.mem_scroll = 0;
+        self.state = State::Memories;
+        if let Some(e) = &self.memory.error {
+            self.flash = Some(e.clone());
+        }
+    }
+
+    fn start_quick_note(&mut self, origin: State) {
+        self.memo_buf.clear();
+        self.prompt_cursor = 0;
+        self.memo_origin = origin;
+        self.state = State::Memo;
+    }
+
+    /// Rebuild the dashboard's flat row list from the store's sections.
+    fn refresh_mem_rows(&mut self) {
+        let now = memory::now();
+        let sec = self.memory.sections(now);
+        let mut rows = Vec::new();
+        for (label, idxs) in [
+            ("Overdue", &sec.overdue),
+            ("Today", &sec.today),
+            ("Upcoming", &sec.upcoming),
+            ("Recent", &sec.recent),
+        ] {
+            if idxs.is_empty() {
+                continue;
+            }
+            rows.push(MemRow::Header(label));
+            for i in idxs {
+                rows.push(MemRow::Entry(*i));
+            }
+        }
+        self.mem_rows = rows;
+        let n = self.mem_entry_count();
+        self.mem_selected = self.mem_selected.min(n.saturating_sub(1));
+    }
+
+    fn mem_entry_count(&self) -> usize {
+        self.mem_rows
+            .iter()
+            .filter(|r| matches!(r, MemRow::Entry(_)))
+            .count()
+    }
+
+    fn selected_mem_index(&self) -> Option<usize> {
+        let mut n = 0;
+        for r in &self.mem_rows {
+            if let MemRow::Entry(i) = r {
+                if n == self.mem_selected {
+                    return Some(*i);
+                }
+                n += 1;
+            }
+        }
+        None
+    }
+
+    fn handle_memories_state(&mut self, key: KeyEvent) -> bool {
+        let n = self.mem_entry_count();
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.state = State::Normal;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if n > 0 {
+                    self.mem_selected = (self.mem_selected + 1).min(n - 1);
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.mem_selected = self.mem_selected.saturating_sub(1);
+            }
+            KeyCode::Char('g') | KeyCode::Home => self.mem_selected = 0,
+            KeyCode::Char('G') | KeyCode::End => {
+                if n > 0 {
+                    self.mem_selected = n - 1;
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(i) = self.selected_mem_index() {
+                    let path = self.memory.entries[i].path.clone();
+                    self.open_path(&path);
+                    self.state = State::Normal;
+                }
+            }
+            KeyCode::Char('n') => self.start_quick_note(State::Memories),
+            KeyCode::Char('d') => {
+                if let Some(i) = self.selected_mem_index() {
+                    let now = memory::now();
+                    match self.memory.mark_done(i, now) {
+                        Ok(()) => {
+                            self.flash = Some("Done".to_string());
+                            self.refresh_mem_rows();
+                        }
+                        Err(e) => self.flash = Some(e),
+                    }
+                }
+            }
+            KeyCode::Char('s') => {
+                if let Some(i) = self.selected_mem_index() {
+                    let now = memory::now();
+                    match self.memory.snooze(i, now, chrono::Duration::hours(1)) {
+                        Ok(()) => {
+                            self.flash = Some("Snoozed 1h".to_string());
+                            self.refresh_mem_rows();
+                        }
+                        Err(e) => self.flash = Some(e),
+                    }
+                }
+            }
+            KeyCode::Char('r') => {
+                self.memory.reload();
+                self.refresh_mem_rows();
+            }
+            _ => {}
+        }
+        true
+    }
+
+    fn handle_memo_state(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc => {
+                self.memo_buf.clear();
+                self.prompt_cursor = 0;
+                self.state = self.memo_origin;
+            }
+            KeyCode::Enter => {
+                let text = std::mem::take(&mut self.memo_buf);
+                let now = memory::now();
+                let current = self.filename.clone();
+                match self.memory.add(&text, now, current.as_deref()) {
+                    Ok(path) => {
+                        let name = path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("saved")
+                            .to_string();
+                        self.flash = Some(format!("Remembered → {name}"));
+                        if self.memo_origin == State::Memories {
+                            self.memory.reload();
+                            self.refresh_mem_rows();
+                        }
+                        if self.memo_origin == State::Planner {
+                            self.memory.reload();
+                            self.planner_refresh();
+                        }
+                    }
+                    Err(e) => self.flash = Some(format!("memory: {e}")),
+                }
+                self.prompt_cursor = 0;
+                self.state = self.memo_origin;
+            }
+            _ => {
+                edit_prompt(&mut self.memo_buf, &mut self.prompt_cursor, &key);
+            }
+        }
+        true
+    }
+
+    // ── planner / calendar ──────────────────────────────────────
+
+    /// Rebuild the month grid and the selected day's agenda.
+    fn planner_refresh(&mut self) {
+        let today = memory::now().date();
+        let y = self.planner_month.year();
+        let m = self.planner_month.month();
+        let start = self.planner_week_start();
+        let dates = memory::month_grid(y, m, start);
+        self.planner_days = dates
+            .into_iter()
+            .map(|date| {
+                let (reminders, notes) = self.memory.counts_on(date);
+                DayCell {
+                    date,
+                    in_month: date.year() == y && date.month() == m,
+                    reminders,
+                    notes,
+                    is_today: date == today,
+                }
+            })
+            .collect();
+        self.planner_entries = self.memory.entries_on(self.planner_day);
+        let n = self.planner_entries.len();
+        self.planner_sel = self.planner_sel.min(n.saturating_sub(1));
+    }
+
+    fn planner_week_start(&self) -> u32 {
+        if self.mem_cfg.week_start.eq_ignore_ascii_case("sunday") {
+            6
+        } else {
+            0
+        }
+    }
+
+    fn open_planner(&mut self) {
+        self.memory.reload();
+        let today = memory::now().date();
+        self.planner_day = today;
+        self.planner_month = month_first(today);
+        self.planner_sel = 0;
+        self.planner_list_focus = false;
+        self.planner_refresh();
+        self.state = State::Planner;
+    }
+
+    fn planner_set_day(&mut self, date: NaiveDate) {
+        self.planner_day = date;
+        self.planner_month = month_first(date);
+        self.planner_sel = 0;
+        self.planner_refresh();
+    }
+
+    fn planner_shift_day(&mut self, days: i64) {
+        self.planner_set_day(self.planner_day + chrono::Duration::days(days));
+    }
+
+    fn planner_shift_month(&mut self, months: i32) {
+        let mut y = self.planner_month.year();
+        let mut m = self.planner_month.month() as i32 + months;
+        while m < 1 {
+            m += 12;
+            y -= 1;
+        }
+        while m > 12 {
+            m -= 12;
+            y += 1;
+        }
+        let m = m as u32;
+        let dim = memory::days_in_month(y, m);
+        let day = self.planner_day.day().min(dim);
+        self.planner_month =
+            NaiveDate::from_ymd_opt(y, m, 1).unwrap_or(self.planner_month);
+        self.planner_day = NaiveDate::from_ymd_opt(y, m, day).unwrap_or(self.planner_day);
+        self.planner_sel = 0;
+        self.planner_refresh();
+    }
+
+    fn handle_planner_state(&mut self, key: KeyEvent) -> bool {
+        let n = self.planner_entries.len();
+        match key.code {
+            KeyCode::Esc => {
+                if self.planner_list_focus {
+                    self.planner_list_focus = false;
+                } else {
+                    self.state = State::Normal;
+                }
+            }
+            KeyCode::Char('q') => self.state = State::Normal,
+            KeyCode::Tab | KeyCode::BackTab => {
+                self.planner_list_focus = !self.planner_list_focus;
+            }
+            KeyCode::Char('t') => {
+                let today = memory::now().date();
+                self.planner_set_day(today);
+            }
+            KeyCode::PageUp => self.planner_shift_month(-1),
+            KeyCode::PageDown => self.planner_shift_month(1),
+            KeyCode::Char('h') | KeyCode::Left => self.planner_shift_day(-1),
+            KeyCode::Char('l') | KeyCode::Right => self.planner_shift_day(1),
+            KeyCode::Char('j') | KeyCode::Down => {
+                if self.planner_list_focus {
+                    if n > 0 {
+                        self.planner_sel = (self.planner_sel + 1).min(n - 1);
+                    }
+                } else {
+                    self.planner_shift_day(7);
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if self.planner_list_focus {
+                    self.planner_sel = self.planner_sel.saturating_sub(1);
+                } else {
+                    self.planner_shift_day(-7);
+                }
+            }
+            KeyCode::Char('n') => {
+                self.start_quick_note_for(self.planner_day, State::Planner);
+            }
+            KeyCode::Enter => {
+                if self.planner_list_focus {
+                    if let Some(i) = self.planner_entries.get(self.planner_sel) {
+                        let path = self.memory.entries[*i].path.clone();
+                        self.open_path(&path);
+                        self.state = State::Normal;
+                    }
+                } else if n > 0 {
+                    self.planner_list_focus = true;
+                }
+            }
+            KeyCode::Char('d') if self.planner_list_focus => {
+                if let Some(i) = self.planner_entries.get(self.planner_sel).copied() {
+                    let now = memory::now();
+                    match self.memory.mark_done(i, now) {
+                        Ok(()) => {
+                            self.flash = Some("Done".to_string());
+                            self.planner_refresh();
+                        }
+                        Err(e) => self.flash = Some(e),
+                    }
+                }
+            }
+            KeyCode::Char('s') if self.planner_list_focus => {
+                if let Some(i) = self.planner_entries.get(self.planner_sel).copied() {
+                    let now = memory::now();
+                    match self.memory.snooze(i, now, chrono::Duration::hours(1)) {
+                        Ok(()) => {
+                            self.flash = Some("Snoozed 1h".to_string());
+                            self.planner_refresh();
+                        }
+                        Err(e) => self.flash = Some(e),
+                    }
+                }
+            }
+            KeyCode::Char('r') => {
+                self.memory.reload();
+                self.planner_refresh();
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// Start a quick note with the date pre-filled (`@YYYY-MM-DD `).
+    fn start_quick_note_for(&mut self, date: NaiveDate, origin: State) {
+        self.memo_buf = format!("@{} ", date.format("%Y-%m-%d"));
+        self.prompt_cursor = self.memo_buf.len();
+        self.memo_origin = origin;
+        self.state = State::Memo;
+    }
+
+    /// Fire any reminders that have come due, once each.
+    fn check_reminders(&mut self) {
+        let now = memory::now();
+        if memory::in_quiet_hours(&self.mem_cfg, now) || !self.mem_cfg.notify {
+            return;
+        }
+        let alerts = self.memory.take_due(now);
+        for a in &alerts {
+            let mut body = a.body.clone();
+            if a.priority > 0 {
+                body = format!("{}{}", "!".repeat(a.priority as usize), body);
+            }
+            memory::notify(&body, &self.mem_cfg);
+        }
+        if let Some(first) = alerts.first() {
+            self.flash = Some(format!(
+                "⏰ {} · {}",
+                first.due.format("%H:%M"),
+                first.body
+            ));
+        }
+    }
+
+    /// Open a file from disk in a new buffer (used by the memories UI).
+    fn open_path(&mut self, path: &Path) {
+        match fs::read_to_string(path) {
+            Ok(content) => {
+                let mut lines: Vec<String> =
+                    content.lines().map(|l| l.to_string()).collect();
+                if content.ends_with('\n') {
+                    lines.push(String::new());
+                }
+                if lines.is_empty() {
+                    lines.push(String::new());
+                }
+                let fname = path.to_string_lossy().to_string();
+                let mtime = fs::metadata(path).ok().and_then(|m| m.modified().ok());
+                self.sync_to_buffer();
+                self.buffers
+                    .push(Buffer::new(lines, Some(fname), mtime));
+                self.current = self.buffers.len() - 1;
+                self.sync_from_buffer(self.current);
+            }
+            Err(e) => {
+                self.flash = Some(format!("can't open {}: {e}", path.display()));
+            }
+        }
     }
 
     // ── visual mode helpers ─────────────────────────────────────
@@ -3025,7 +3666,25 @@ impl Editor {
         self.render_status(f, status_area, width, &theme);
 
         // ── 4. cursor position ───────────────────────────────────
-        if is_splash {
+        let prompt: Option<(&str, &str)> = match self.state {
+            State::Command => Some((":", self.cmd_buf.as_str())),
+            State::Search => Some(("/", self.search_query.as_str())),
+            State::Memo => Some(("Remember: ", self.memo_buf.as_str())),
+            _ => None,
+        };
+        if let Some((prefix, buf)) = prompt {
+            let pw = col_width(prefix) as u16;
+            let buf_width = status_area.width.saturating_sub(pw).max(1);
+            let (_, off) = prompt_view(buf, self.prompt_cursor, buf_width);
+            let x = (status_area.x + pw + off)
+                .min(status_area.x + status_area.width.saturating_sub(1));
+            self.cursor_screen = Some((x, status_area.y));
+            f.set_cursor_position(Position::new(x, status_area.y));
+        } else if self.state == State::Shell {
+            // The shell overlay sets (or hides) the cursor itself; don't
+            // also park the buffer cursor behind the popup.
+            self.cursor_screen = None;
+        } else if is_splash {
             self.cursor_screen = Some((0, 0));
             f.set_cursor_position(Position::new(0, 0));
         } else if let Some(gutter) = self.gutter_width().checked_add(1) {
@@ -3070,14 +3729,25 @@ impl Editor {
             }
             State::SysInfo => self.render_sysinfo(f, area, &theme),
             State::Help => self.render_help(f, area, &theme),
+            State::Memories => self.render_memories(f, area, &theme),
+            State::Memo => {}
+            State::Planner => self.render_planner(f, area, &theme),
             _ => {}
         }
 
         // Cursor shape per mode (applied in main.rs after draw)
-        self.cursor_style = match self.mode {
-            Mode::Insert => SetCursorStyle::BlinkingBar,
-            Mode::Normal if self.state == State::Visual => SetCursorStyle::SteadyUnderScore,
-            _ => SetCursorStyle::SteadyBlock,
+        let prompt_active =
+            matches!(self.state, State::Command | State::Search | State::Memo);
+        self.cursor_style = if prompt_active {
+            SetCursorStyle::BlinkingBar
+        } else {
+            match self.mode {
+                Mode::Insert => SetCursorStyle::BlinkingBar,
+                Mode::Normal if self.state == State::Visual => {
+                    SetCursorStyle::SteadyUnderScore
+                }
+                _ => SetCursorStyle::SteadyBlock,
+            }
         };
     }
 
@@ -3227,19 +3897,27 @@ impl Editor {
             f.render_widget(bar, area);
             return;
         }
-        if self.state == State::Command {
-            let bar = Paragraph::new(Line::from(Span::styled(
-                format!(":{0}", self.cmd_buf),
-                Style::new().fg(theme.fg),
-            )));
-            f.render_widget(bar, area);
-            return;
-        }
-        if self.state == State::Search {
-            let bar = Paragraph::new(Line::from(Span::styled(
-                format!("/{0}", self.search_query),
-                Style::new().fg(theme.fg),
-            )));
+        // Active prompt (command / search / remember): fixed accent
+        // prefix + horizontally scrolled editable text.
+        let prompt: Option<(&str, &str)> = match self.state {
+            State::Command => Some((":", self.cmd_buf.as_str())),
+            State::Search => Some(("/", self.search_query.as_str())),
+            State::Memo => Some(("Remember: ", self.memo_buf.as_str())),
+            _ => None,
+        };
+        if let Some((prefix, buf)) = prompt {
+            let pw = col_width(prefix) as u16;
+            let buf_width = area.width.saturating_sub(pw).max(1);
+            let (visible, _) = prompt_view(buf, self.prompt_cursor, buf_width);
+            let bar = Paragraph::new(Line::from(vec![
+                Span::styled(
+                    prefix.to_string(),
+                    Style::new()
+                        .fg(theme.keyword.fg.unwrap_or(theme.fg))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(visible, Style::new().fg(theme.fg)),
+            ]));
             f.render_widget(bar, area);
             return;
         }
@@ -3258,33 +3936,63 @@ impl Editor {
         let block = Span::styled(
             mode_text,
             Style::new()
-                .fg(Color::Rgb(0x1a, 0x1a, 0x1a))
+                .fg(crate::theme::contrast_fg(accent))
                 .bg(accent)
                 .add_modifier(Modifier::BOLD),
         );
 
-        // ── left: filename (bright, lualine section "b") ──
+        // ── right: reminders + theme + location (dim) ──
+        let dim = Style::new().fg(theme.comment.fg.unwrap_or(theme.fg));
+        let location = format!("{}:{}", self.cy + 1, self.cx + 1);
+        let now = memory::now();
+        let due = self.memory.due_count(now);
+        let next = self.memory.next_due(now);
+        let mut right_spans = Vec::new();
+        if due > 0 || next.is_some() {
+            let txt = match (due, next) {
+                (d, Some(n)) if d > 0 => {
+                    format!("⏰ {d} due · {}", n.format("%H:%M"))
+                }
+                (d, None) if d > 0 => format!("⏰ {d} due"),
+                (_, Some(n)) => format!("⏰ {}", n.format("%H:%M")),
+                _ => String::new(),
+            };
+            if !txt.is_empty() {
+                right_spans.push(Span::styled(
+                    txt,
+                    Style::new().fg(theme.keyword.fg.unwrap_or(theme.fg)),
+                ));
+                right_spans.push(Span::styled("  ─  ", dim));
+            }
+        }
+        right_spans.push(Span::styled(self.theme.name().to_string(), dim));
+        right_spans.push(Span::styled("  ─  ", dim));
+        right_spans.push(Span::styled(location, dim));
+        right_spans.push(Span::styled(" ", dim));
+        let right = Line::from(right_spans);
+
+        // Give the right section only the width it needs, so a long
+        // filename gets the rest of the bar instead of being clipped
+        // at the halfway point.  Always keep room for the mode block.
+        let max_right = area.width.saturating_sub(10);
+        let right_w = (right.width() as u16).min(max_right);
+        let left_w = area.width.saturating_sub(right_w);
+
+        // ── left: mode block + filename (elided from the left) ──
         let bright = Style::new().fg(theme.fg);
         let fname = self.filename.as_deref().unwrap_or("[No Name]");
         let mod_str = if self.modified { " +" } else { "" };
+        let mode_w = col_width(block.content.as_ref());
+        let avail = (left_w as usize).saturating_sub(mode_w + 2 + mod_str.len());
+        let shown = elide_left(fname, avail);
         let left = Line::from(vec![
             block,
-            Span::styled(format!("  {fname}{mod_str}"), bright),
-        ]);
-
-        // ── right: theme + location (dim, lualine section "c") ──
-        let dim = Style::new().fg(theme.comment.fg.unwrap_or(theme.fg));
-        let location = format!("{}:{}", self.cy + 1, self.cx + 1);
-        let right = Line::from(vec![
-            Span::styled(self.theme.name().to_string(), dim),
-            Span::styled("  ─  ", dim),
-            Span::styled(location, dim),
-            Span::styled(" ", dim),
+            Span::styled(format!("  {shown}{mod_str}"), bright),
         ]);
 
         let [left_area, right_area] = Layout::horizontal([
             Constraint::Min(1),
-            Constraint::Min(1),
+            Constraint::Length(right_w),
         ])
         .areas(area);
         f.render_widget(Paragraph::new(left), left_area);
@@ -3728,29 +4436,318 @@ impl Editor {
         let inner = block.inner(popup);
         f.render_widget(block, popup);
 
+        let k = |a: &str| self.keymap.key(a);
         let help_text = vec![
             Line::from(Span::styled("Movement & Editing", theme.keyword)),
-            Line::from("  h/j/k/l move   w/b word   0/$ ends   g/G first/last"),
-            Line::from("  i/a/I/A insert   o/O open line   x/dd delete"),
-            Line::from("  yy yank   p/P paste   u undo   Ctrl+R redo"),
-            Line::from("  v visual   Ctrl+D/U half page   Ctrl+C exit to normal"),
+            Line::from(format!(
+                "  {}/{}/{}/{} move   {}/{} word   {}/{} ends   {}/{} first/last",
+                k("left"), k("down"), k("up"), k("right"),
+                k("word_next"), k("word_prev"),
+                k("line_start"), k("line_end"),
+                k("goto_first"), k("goto_last"),
+            )),
+            Line::from(format!(
+                "  {}/{}/{}/{} insert   {}/{} open line   {} delete char   {} delete line",
+                k("insert_before"), k("insert_after"),
+                k("insert_line_start"), k("insert_line_end"),
+                k("open_below"), k("open_above"),
+                k("delete_char"), k("delete_line"),
+            )),
+            Line::from(format!(
+                "  {} yank   {}/{} paste   {} undo   {} redo",
+                k("yank_line"), k("paste_after"), k("paste_before"),
+                k("undo"), k("redo"),
+            )),
+            Line::from(format!(
+                "  {} visual   {}/{} half page   {} exit to normal",
+                k("visual"), k("half_page_down"), k("half_page_up"), k("quit"),
+            )),
             Line::from(""),
             Line::from(Span::styled("Buffers & Files", theme.keyword)),
-            Line::from("  Tab/S-Tab switch buffer   :bn/:bp switch buffer"),
-            Line::from("  Ctrl+P find   Ctrl+F tree   Ctrl+S save   :e <f> open"),
+            Line::from(format!(
+                "  {}/{} switch buffer   :bn/:bp switch buffer",
+                k("buffer_next"), k("buffer_prev"),
+            )),
+            Line::from(format!(
+                "  {} find   {} tree   {} save   :e <file> open",
+                k("finder"), k("filetree"), k("save"),
+            )),
             Line::from(""),
             Line::from(Span::styled("Tools", theme.keyword)),
-            Line::from("  Ctrl+E run   Ctrl+M music   Ctrl+T theme   Ctrl+J shell"),
-            Line::from("  Ctrl+V md preview   :sys dashboard   :theme <n> theme"),
+            Line::from(format!(
+                "  {} run   {} music   {} theme   {} shell",
+                k("run"), k("music"), k("theme"), k("shell"),
+            )),
+            Line::from(format!(
+                "  {} md preview   {} paste image   :sys dashboard",
+                k("preview"), k("paste_image"),
+            )),
             Line::from(""),
             Line::from(Span::styled("Commands", theme.keyword)),
-            Line::from("  / search   n/N repeat   :w/:wq save   :q/:q! quit"),
+            Line::from(format!(
+                "  {} search   {}/{} repeat   :w/:wq save   :q/:q! quit",
+                k("search"), k("search_next"), k("search_prev"),
+            )),
+            Line::from("  :keys shows the full effective keymap   :theme <name> switch theme"),
+            Line::from(""),
+            Line::from(Span::styled("Memories", theme.keyword)),
+            Line::from(format!(
+                "  {} remember   {} dashboard   :mem <text>   :today journal",
+                k("quick_note"), k("memories"),
+            )),
+            Line::from(Span::styled("Planner", theme.keyword)),
+            Line::from(format!(
+                "  {} calendar   ←→ day · ↑↓ week · PgUp/PgDn month · t today",
+                k("planner"),
+            )),
         ];
 
         f.render_widget(
             Paragraph::new(Text::from(help_text))
                 .style(Style::new().fg(theme.fg).bg(theme.bg)),
             inner,
+        );
+    }
+
+    // ── memories dashboard ───────────────────────────────────────
+
+    fn render_memories(&mut self, f: &mut Frame, area: Rect, theme: &Theme) {
+        let popup = modal_rect(area, 0.84, 0.82);
+        f.render_widget(Clear, popup);
+        let block = overlay_block("Memories", self._frame, self.animations, theme);
+        let inner = block.inner(popup);
+        f.render_widget(block, popup);
+        if inner.height < 3 || inner.width < 10 {
+            return;
+        }
+        let [body_area, foot_area] = Layout::vertical([
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .areas(inner);
+
+        // Keep the selected entry visible.
+        let mut selected_row = 0usize;
+        let mut entry_n = 0usize;
+        for (ri, r) in self.mem_rows.iter().enumerate() {
+            if let MemRow::Entry(_) = r {
+                if entry_n == self.mem_selected {
+                    selected_row = ri;
+                    break;
+                }
+                entry_n += 1;
+            }
+        }
+        let h = body_area.height as usize;
+        if selected_row < self.mem_scroll {
+            self.mem_scroll = selected_row;
+        }
+        if h > 0 && selected_row >= self.mem_scroll + h {
+            self.mem_scroll = selected_row + 1 - h;
+        }
+
+        let now = memory::now();
+        let dim = Style::new().fg(theme.comment.fg.unwrap_or(theme.fg));
+        let mut lines: Vec<Line> = Vec::new();
+        if self.mem_rows.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  Nothing remembered yet.",
+                Style::new().fg(theme.fg),
+            )));
+            lines.push(Line::from(Span::styled(
+                "  Press n to add something, or use :mem <text> / :today.",
+                dim,
+            )));
+        } else {
+            let mut n = 0usize;
+            for r in &self.mem_rows {
+                match r {
+                    MemRow::Header(label) => lines.push(Line::from(Span::styled(
+                        format!(" {label}"),
+                        Style::new()
+                            .fg(theme.keyword.fg.unwrap_or(theme.fg))
+                            .add_modifier(Modifier::BOLD),
+                    ))),
+                    MemRow::Entry(i) => {
+                        let m = &self.memory.entries[*i];
+                        let selected = n == self.mem_selected;
+                        n += 1;
+                        if selected {
+                            lines.push(Line::from(Span::styled(
+                                format!("▸ {}", mem_plain_line(m, now)),
+                                selected_style(theme),
+                            )));
+                        } else {
+                            lines.push(Line::from(mem_colored_line(m, now, theme)));
+                        }
+                    }
+                }
+            }
+        }
+
+        f.render_widget(
+            Paragraph::new(Text::from(lines))
+                .scroll((self.mem_scroll as u16, 0))
+                .style(Style::new().fg(theme.fg).bg(theme.bg)),
+            body_area,
+        );
+
+        let footer = if let Some(e) = &self.memory.error {
+            format!(" {e}")
+        } else {
+            " n new · Enter open · d done · s snooze 1h · r refresh · Esc close"
+                .to_string()
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(footer, dim))),
+            foot_area,
+        );
+    }
+
+    // ── planner (month calendar + day agenda) ────────────────────
+
+    fn render_planner(&self, f: &mut Frame, area: Rect, theme: &Theme) {
+        let popup = modal_rect(area, 0.92, 0.85);
+        f.render_widget(Clear, popup);
+        let block = overlay_block("Planner", self._frame, self.animations, theme);
+        let inner = block.inner(popup);
+        f.render_widget(block, popup);
+        if inner.height < 6 || inner.width < 30 {
+            return;
+        }
+
+        let [body, foot] = Layout::vertical([
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .areas(inner);
+        let (cal_area, list_area) = if body.width >= 64 {
+            let [c, l] = Layout::horizontal([
+                Constraint::Length(30),
+                Constraint::Min(1),
+            ])
+            .areas(body);
+            (c, l)
+        } else {
+            let cal_h = ((2 + self.planner_days.len() / 7) as u16)
+                .min(body.height.saturating_sub(1));
+            let [c, l] = Layout::vertical([
+                Constraint::Length(cal_h),
+                Constraint::Min(1),
+            ])
+            .areas(body);
+            (c, l)
+        };
+
+        let accent = Style::new()
+            .fg(theme.keyword.fg.unwrap_or(theme.fg))
+            .add_modifier(Modifier::BOLD);
+        let dim = Style::new().fg(theme.comment.fg.unwrap_or(theme.fg));
+        let bold = Style::new().fg(theme.fg).add_modifier(Modifier::BOLD);
+
+        // ── month grid ──
+        let mut lines: Vec<Line> = Vec::new();
+        lines.push(Line::from(Span::styled(
+            format!(
+                " {} {}",
+                self.planner_month.format("%B"),
+                self.planner_month.year()
+            ),
+            if self.planner_list_focus { bold } else { accent },
+        )));
+        let labels = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+        let start = self.planner_week_start() as usize;
+        let mut header = String::from(" ");
+        for i in 0..7 {
+            header.push_str(&format!("{:<4}", labels[(i + start) % 7]));
+        }
+        lines.push(Line::from(Span::styled(header, dim)));
+
+        for week in self.planner_days.chunks(7) {
+            let mut spans = vec![Span::raw(" ")];
+            for cell in week {
+                let marker = if cell.reminders > 0 {
+                    "•"
+                } else if cell.notes > 0 {
+                    "·"
+                } else {
+                    " "
+                };
+                let text = format!("{:>2}{}", cell.date.day(), marker);
+                let style = if cell.date == self.planner_day {
+                    selected_style(theme)
+                } else {
+                    let mut s = if cell.in_month {
+                        Style::new().fg(theme.fg)
+                    } else {
+                        dim
+                    };
+                    if cell.is_today {
+                        s = s.add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+                    }
+                    if cell.reminders > 0 && cell.in_month {
+                        s = s.fg(theme.keyword.fg.unwrap_or(theme.fg));
+                    }
+                    s
+                };
+                spans.push(Span::styled(text, style));
+                spans.push(Span::raw(" "));
+            }
+            lines.push(Line::from(spans));
+        }
+        f.render_widget(
+            Paragraph::new(Text::from(lines)).style(Style::new().bg(theme.bg)),
+            cal_area,
+        );
+
+        // ── day agenda ──
+        let date = self.planner_day;
+        let date_header = format!(
+            "{} {} {}",
+            date.format("%A"),
+            date.day(),
+            date.format("%B %Y")
+        );
+        let mut alines: Vec<Line> = vec![
+            Line::from(Span::styled(
+                date_header,
+                if self.planner_list_focus { accent } else { bold },
+            )),
+            Line::from(Span::styled(
+                "─".repeat(list_area.width.saturating_sub(1) as usize),
+                dim,
+            )),
+        ];
+        if self.planner_entries.is_empty() {
+            alines.push(Line::from(Span::styled(" nothing on this day", dim)));
+            alines.push(Line::from(Span::styled(" press n to add something", dim)));
+        } else {
+            let now = memory::now();
+            for (n, &i) in self.planner_entries.iter().enumerate() {
+                let m = &self.memory.entries[i];
+                if self.planner_list_focus && n == self.planner_sel {
+                    alines.push(Line::from(Span::styled(
+                        format!("▸ {}", mem_plain_line(m, now)),
+                        selected_style(theme),
+                    )));
+                } else {
+                    alines.push(mem_colored_line(m, now, theme));
+                }
+            }
+        }
+        f.render_widget(
+            Paragraph::new(Text::from(alines)).style(Style::new().bg(theme.bg)),
+            list_area,
+        );
+
+        let hint = if self.planner_list_focus {
+            " ↑↓ select · Enter open · d done · s snooze · Tab calendar · Esc back"
+        } else {
+            " ←→ day · ↑↓ week · PgUp/PgDn month · t today · Enter agenda · n new · Esc close"
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(hint, dim))),
+            foot,
         );
     }
 
@@ -3764,10 +4761,15 @@ impl Editor {
         let block = overlay_block("Run Output", self._frame, self.animations, theme);
         let inner = block.inner(popup);
         f.render_widget(block, popup);
-        // Output text — show last inner_h lines.
+        // Output text — show a scrollable window, anchored at the
+        // bottom unless the user has scrolled up (`run_scroll`).
         let inner_h = inner.height as usize;
         let lines: Vec<&str> = self.run_output.split('\n').collect();
-        let visible = if lines.len() > inner_h { &lines[lines.len() - inner_h..] } else { &lines[..] };
+        let total = lines.len();
+        let max_scroll = total.saturating_sub(inner_h);
+        let scroll = max_scroll.saturating_sub(self.run_scroll.min(max_scroll));
+        let end = total.min(scroll + inner_h);
+        let visible = &lines[scroll..end];
         let text: String = visible.join("\n");
         f.render_widget(
             Paragraph::new(Text::from(text))
@@ -3792,42 +4794,34 @@ impl Editor {
         let inner = block.inner(popup);
         f.render_widget(block, popup);
 
-        // Tell the shell about the popup dimensions (for column width, etc.).
-        if let Some(ref s) = self.shell {
-            s.resize(inner.height, inner.width);
-        }
-
-        if inner.height < 1 {
+        if inner.height < 1 || inner.width < 1 {
             return;
         }
-        let max_rows = inner.height as usize;
 
-        let output_lines = self.shell.as_mut().map(|s| {
-            let default_style = Style::new().fg(theme.fg).bg(theme.bg);
-            let lines: &[Line] = s.output_styled(default_style);
-            let start = lines.len().saturating_sub(max_rows);
-            lines[start..].to_vec()
-        });
-        let mut styled_lines = output_lines.unwrap_or_default();
-        // Pad empty lines so the cursor stays in place visually.
-        while styled_lines.len() < max_rows {
-            styled_lines.push(Line::from(Span::styled(
-                "~",
-                Style::new().fg(theme.comment.fg.unwrap_or(theme.fg)).bg(theme.bg),
-            )));
-        }
+        // Resize the emulated screen and the kernel PTY to the popup.
+        let (lines, cursor) = match self.shell.as_mut() {
+            Some(shell) => {
+                shell.resize(inner.height, inner.width);
+                (
+                    shell.styled_lines(theme.fg, theme.bg),
+                    shell.cursor(),
+                )
+            }
+            None => (Vec::new(), None),
+        };
 
-        let paragraph = Paragraph::new(Text::from(styled_lines))
-            .style(Style::new().bg(theme.bg));
-        f.render_widget(paragraph, inner);
+        f.render_widget(
+            Paragraph::new(Text::from(lines)).style(Style::new().bg(theme.bg)),
+            inner,
+        );
 
-        // ── visible cursor ───────────────────────────────────────
-        let cur_row = self.shell.as_ref().map(|s| s.cursor_row).unwrap_or(0);
-        let cur_col = self.shell.as_ref().map(|s| s.cursor_col).unwrap_or(0);
-        if cur_row < max_rows {
-            let cy = inner.y + cur_row as u16;
-            let cx = inner.x + (cur_col as u16).min(inner.width.saturating_sub(1));
-            f.set_cursor_position(Position::new(cx, cy));
+        // Password prompts and full-screen apps can hide the cursor.
+        if let Some((row, col)) = cursor {
+            if row < inner.height && col < inner.width {
+                let pos = Position::new(inner.x + col, inner.y + row);
+                self.cursor_screen = Some((pos.x, pos.y));
+                f.set_cursor_position(pos);
+            }
         }
     }
 
@@ -4151,10 +5145,79 @@ fn overlay_block<'a>(title: &str, frame: u64, animated: bool, theme: &Theme) -> 
 /// dark text on the theme's accent, matching the status-bar mode
 /// block.
 fn selected_style(theme: &Theme) -> Style {
+    let accent = theme.keyword.fg.unwrap_or(theme.status_fg);
     Style::new()
-        .fg(Color::Rgb(0x1a, 0x1a, 0x1a))
-        .bg(theme.keyword.fg.unwrap_or(theme.status_fg))
+        .fg(crate::theme::contrast_fg(accent))
+        .bg(accent)
         .add_modifier(Modifier::BOLD)
+}
+
+// ── memories line formatting ─────────────────────────────────────
+
+fn month_first(d: NaiveDate) -> NaiveDate {
+    NaiveDate::from_ymd_opt(d.year(), d.month(), 1).unwrap_or(d)
+}
+
+/// When a memory is due (or when it was created).
+fn mem_when(m: &crate::memory::Memory, now: chrono::NaiveDateTime) -> String {
+    match m.due {
+        Some(d) if d.date() == now.date() => d.format("%H:%M").to_string(),
+        Some(d) => d.format("%m-%d %H:%M").to_string(),
+        None => m.created.format("%m-%d").to_string(),
+    }
+}
+
+fn mem_marker(m: &crate::memory::Memory, now: chrono::NaiveDateTime) -> &'static str {
+    if m.due.map(|d| d <= now).unwrap_or(false) {
+        "!"
+    } else if m.repeat.is_some() {
+        "↻"
+    } else {
+        " "
+    }
+}
+
+fn mem_tags(m: &crate::memory::Memory) -> String {
+    let mut s = String::new();
+    for t in &m.tags {
+        s.push_str(&format!(" #{t}"));
+    }
+    if m.priority > 0 {
+        s.push_str(&format!(" !{}", m.priority));
+    }
+    s
+}
+
+fn mem_plain_line(m: &crate::memory::Memory, now: chrono::NaiveDateTime) -> String {
+    format!(
+        "{} {:<11} {}{}",
+        mem_marker(m, now),
+        mem_when(m, now),
+        m.summary(64),
+        mem_tags(m)
+    )
+}
+
+fn mem_colored_line(
+    m: &crate::memory::Memory,
+    now: chrono::NaiveDateTime,
+    theme: &Theme,
+) -> Line<'static> {
+    let dim = Style::new().fg(theme.comment.fg.unwrap_or(theme.fg));
+    let overdue = m.due.map(|d| d <= now).unwrap_or(false);
+    let when_style = if overdue {
+        Style::new()
+            .fg(theme.rstype.fg.unwrap_or(theme.fg))
+            .add_modifier(Modifier::BOLD)
+    } else {
+        dim
+    };
+    Line::from(vec![
+        Span::styled(format!("{} ", mem_marker(m, now)), when_style),
+        Span::styled(format!("{:<11}", mem_when(m, now)), when_style),
+        Span::styled(m.summary(64), Style::new().fg(theme.fg)),
+        Span::styled(mem_tags(m), dim),
+    ])
 }
 
 /// Scrolling title bar text: pads with `═` and scrolls left based on
@@ -4345,6 +5408,158 @@ fn col_width(s: &str) -> usize {
         }
     }
     w
+}
+
+// ── single-line prompt editing ───────────────────────────────────
+
+/// Keep the tail of a path so the filename stays visible when space is
+/// tight: `…/src/editor.rs` rather than clipping the end.
+fn elide_left(s: &str, max: usize) -> String {
+    if max == 0 || col_width(s) <= max {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    let mut w = 0usize;
+    for c in s.chars().rev() {
+        let cw = char_width(c);
+        if w + cw > max.saturating_sub(1) {
+            break;
+        }
+        out.insert(0, c);
+        w += cw;
+    }
+    format!("…{out}")
+}
+
+fn prev_boundary(s: &str, mut i: usize) -> usize {
+    if i == 0 {
+        return 0;
+    }
+    i -= 1;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+fn next_boundary(s: &str, mut i: usize) -> usize {
+    if i >= s.len() {
+        return s.len();
+    }
+    i += 1;
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
+}
+
+/// Delete the word before the cursor (Ctrl+W).
+fn delete_word_before(buf: &mut String, cursor: &mut usize) {
+    let mut start = *cursor;
+    while start > 0 {
+        let p = prev_boundary(buf, start);
+        let c = buf[p..start].chars().next().unwrap_or(' ');
+        if c.is_whitespace() {
+            start = p;
+        } else {
+            break;
+        }
+    }
+    while start > 0 {
+        let p = prev_boundary(buf, start);
+        let c = buf[p..start].chars().next().unwrap_or(' ');
+        if c.is_whitespace() {
+            break;
+        }
+        start = p;
+    }
+    buf.replace_range(start..*cursor, "");
+    *cursor = start;
+}
+
+/// Apply a key to a single-line prompt.  Returns true when handled.
+fn edit_prompt(buf: &mut String, cursor: &mut usize, key: &KeyEvent) -> bool {
+    *cursor = (*cursor).min(buf.len());
+    while *cursor > 0 && !buf.is_char_boundary(*cursor) {
+        *cursor -= 1;
+    }
+    match key.code {
+        KeyCode::Char('a') if key.modifiers == KeyModifiers::CONTROL => *cursor = 0,
+        KeyCode::Char('e') if key.modifiers == KeyModifiers::CONTROL => *cursor = buf.len(),
+        KeyCode::Char('u') if key.modifiers == KeyModifiers::CONTROL => {
+            buf.clear();
+            *cursor = 0;
+        }
+        KeyCode::Char('w') if key.modifiers == KeyModifiers::CONTROL => {
+            delete_word_before(buf, cursor);
+        }
+        KeyCode::Char('h') if key.modifiers == KeyModifiers::CONTROL => {
+            *cursor = prev_boundary(buf, *cursor);
+        }
+        KeyCode::Left => *cursor = prev_boundary(buf, *cursor),
+        KeyCode::Right => *cursor = next_boundary(buf, *cursor),
+        KeyCode::Home => *cursor = 0,
+        KeyCode::End => *cursor = buf.len(),
+        KeyCode::Backspace => {
+            if *cursor > 0 {
+                let p = prev_boundary(buf, *cursor);
+                buf.replace_range(p..*cursor, "");
+                *cursor = p;
+            }
+        }
+        KeyCode::Delete => {
+            if *cursor < buf.len() {
+                let n = next_boundary(buf, *cursor);
+                buf.replace_range(*cursor..n, "");
+            }
+        }
+        KeyCode::Char(c)
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) =>
+        {
+            buf.insert(*cursor, c);
+            *cursor += c.len_utf8();
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// Visible slice of a prompt line, scrolled so the cursor stays on
+/// screen.  Returns (visible text, cursor cell offset within it).
+fn prompt_view(buf: &str, cursor: usize, width: u16) -> (String, u16) {
+    let width = width.max(1) as usize;
+    let cursor = cursor.min(buf.len());
+    let cursor_cell = col_width(&buf[..cursor]);
+    let start_cell = cursor_cell.saturating_sub(width - 1);
+    let mut out = String::new();
+    let mut cell = 0usize;
+    for c in buf.chars() {
+        let w = if c == '\t' {
+            (8 - cell % 8).max(1)
+        } else if c.is_control() {
+            0
+        } else {
+            char_width(c)
+        };
+        if cell + w <= start_cell {
+            cell += w;
+            continue;
+        }
+        if cell < start_cell {
+            out.push(' ');
+            cell = start_cell;
+            continue;
+        }
+        if cell >= start_cell + width {
+            break;
+        }
+        out.push(c);
+        cell += w;
+    }
+    let x = cursor_cell.saturating_sub(start_cell).min(width - 1) as u16;
+    (out, x)
 }
 
 /// Smallest char-boundary byte offset in `s` whose visual column is
@@ -5090,50 +6305,122 @@ fn diff_lines(old: &[String], new: &[String]) -> Vec<LineChange> {
     out
 }
 
-fn key_to_bytes(key: KeyEvent) -> Vec<u8> {
+/// Encode a key for the PTY application as the bytes a terminal would
+/// send.  `app_cursor` selects SS3 (`ESC O A`) instead of CSI
+/// (`ESC [ A`) for cursor keys, which full-screen apps request.
+fn key_to_bytes(key: KeyEvent, app_cursor: bool) -> Vec<u8> {
+    let mods = key.modifiers;
+    // Cmd/Super combinations belong to the editor, not the shell.
+    if mods.contains(KeyModifiers::SUPER) {
+        return Vec::new();
+    }
+    let ctrl = mods.contains(KeyModifiers::CONTROL);
+    let alt = mods.contains(KeyModifiers::ALT);
+    let shift = mods.contains(KeyModifiers::SHIFT);
+    // xterm modifier parameter: 1 + shift + 2*alt + 4*ctrl.
+    let modifier = 1 + (shift as u8) + 2 * (alt as u8) + 4 * (ctrl as u8);
+    let mut out = Vec::new();
+
     match key.code {
         KeyCode::Char(c) => {
-            if key.modifiers == KeyModifiers::CONTROL && c.is_ascii_lowercase() {
-                vec![(c as u8) - b'a' + 1] // Ctrl+A → 0x01, etc.
-            } else if key.modifiers == KeyModifiers::CONTROL && c.is_ascii_uppercase() {
-                // Ctrl+Shift+A → 0x01 as well (same byte)
-                vec![(c as u8) - b'A' + 1]
-            } else if key.modifiers == KeyModifiers::ALT {
-                let mut v = vec![0x1b]; // ESC prefix
-                v.extend(c.encode_utf8(&mut [0; 4]).as_bytes());
-                v
+            if ctrl && c.is_ascii_alphabetic() {
+                let b = (c.to_ascii_uppercase() as u8 - b'A') + 1;
+                if alt {
+                    out.push(0x1b);
+                }
+                out.push(b);
+            } else if ctrl {
+                match c {
+                    ' ' | '@' => out.push(0x00),
+                    '[' => out.push(0x1b),
+                    '\\' => out.push(0x1c),
+                    ']' => out.push(0x1d),
+                    '^' => out.push(0x1e),
+                    '_' => out.push(0x1f),
+                    _ => {
+                        if alt {
+                            out.push(0x1b);
+                        }
+                        let mut buf = [0u8; 4];
+                        out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+                    }
+                }
             } else {
-                c.to_string().into_bytes()
+                if alt {
+                    out.push(0x1b);
+                }
+                let mut buf = [0u8; 4];
+                out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
             }
         }
-        KeyCode::Enter => vec![b'\r'],
-        KeyCode::Backspace => vec![0x08],
-        KeyCode::Tab => vec![b'\t'],
-        KeyCode::Esc => vec![0x1b],
-        KeyCode::Left => vec![0x1b, b'[', b'D'],
-        KeyCode::Right => vec![0x1b, b'[', b'C'],
-        KeyCode::Up => vec![0x1b, b'[', b'A'],
-        KeyCode::Down => vec![0x1b, b'[', b'B'],
-        KeyCode::Home => vec![0x1b, b'[', b'H'],
-        KeyCode::End => vec![0x1b, b'[', b'F'],
-        KeyCode::Delete => vec![0x1b, b'[', b'3', b'~'],
-        KeyCode::PageUp => vec![0x1b, b'[', b'5', b'~'],
-        KeyCode::PageDown => vec![0x1b, b'[', b'6', b'~'],
-        KeyCode::Insert => vec![0x1b, b'[', b'2', b'~'],
-        KeyCode::F(1) => vec![0x1b, b'O', b'P'],
-        KeyCode::F(2) => vec![0x1b, b'O', b'Q'],
-        KeyCode::F(3) => vec![0x1b, b'O', b'R'],
-        KeyCode::F(4) => vec![0x1b, b'O', b'S'],
-        KeyCode::F(5) => vec![0x1b, b'[', b'1', b'5', b'~'],
-        KeyCode::F(6) => vec![0x1b, b'[', b'1', b'7', b'~'],
-        KeyCode::F(7) => vec![0x1b, b'[', b'1', b'8', b'~'],
-        KeyCode::F(8) => vec![0x1b, b'[', b'1', b'9', b'~'],
-        KeyCode::F(9) => vec![0x1b, b'[', b'2', b'0', b'~'],
-        KeyCode::F(10) => vec![0x1b, b'[', b'2', b'1', b'~'],
-        KeyCode::F(11) => vec![0x1b, b'[', b'2', b'3', b'~'],
-        KeyCode::F(12) => vec![0x1b, b'[', b'2', b'4', b'~'],
-        KeyCode::BackTab => vec![0x1b, b'[', b'Z'],
-        _ => vec![],
+        KeyCode::Enter => out.push(b'\r'),
+        KeyCode::Backspace => out.push(0x7f),
+        KeyCode::Tab => out.push(b'\t'),
+        KeyCode::BackTab => out.extend_from_slice(b"\x1b[Z"),
+        KeyCode::Esc => out.push(0x1b),
+        KeyCode::Left => csi_arrow(&mut out, b'D', modifier, app_cursor),
+        KeyCode::Right => csi_arrow(&mut out, b'C', modifier, app_cursor),
+        KeyCode::Up => csi_arrow(&mut out, b'A', modifier, app_cursor),
+        KeyCode::Down => csi_arrow(&mut out, b'B', modifier, app_cursor),
+        KeyCode::Home => csi_arrow(&mut out, b'H', modifier, app_cursor),
+        KeyCode::End => csi_arrow(&mut out, b'F', modifier, app_cursor),
+        KeyCode::Delete => csi_tilde(&mut out, 3, modifier),
+        KeyCode::Insert => csi_tilde(&mut out, 2, modifier),
+        KeyCode::PageUp => csi_tilde(&mut out, 5, modifier),
+        KeyCode::PageDown => csi_tilde(&mut out, 6, modifier),
+        KeyCode::F(n) => fkey_bytes(&mut out, n, modifier),
+        _ => {}
+    }
+    out
+}
+
+fn csi_arrow(out: &mut Vec<u8>, final_byte: u8, modifier: u8, app: bool) {
+    if modifier > 1 {
+        out.extend_from_slice(
+            format!("\x1b[1;{modifier}{}", final_byte as char).as_bytes(),
+        );
+    } else if app {
+        out.extend_from_slice(&[0x1b, b'O', final_byte]);
+    } else {
+        out.extend_from_slice(&[0x1b, b'[', final_byte]);
+    }
+}
+
+fn csi_tilde(out: &mut Vec<u8>, n: u8, modifier: u8) {
+    if modifier > 1 {
+        out.extend_from_slice(format!("\x1b[{n};{modifier}~").as_bytes());
+    } else {
+        out.extend_from_slice(format!("\x1b[{n}~").as_bytes());
+    }
+}
+
+fn fkey_bytes(out: &mut Vec<u8>, n: u8, modifier: u8) {
+    // F1-F4 use SS3 (or CSI 1;<m> when modified); F5+ use CSI <n>~.
+    let (code, ss3) = match n {
+        1 => ("P", true),
+        2 => ("Q", true),
+        3 => ("R", true),
+        4 => ("S", true),
+        5 => ("15", false),
+        6 => ("17", false),
+        7 => ("18", false),
+        8 => ("19", false),
+        9 => ("20", false),
+        10 => ("21", false),
+        11 => ("23", false),
+        12 => ("24", false),
+        _ => return,
+    };
+    if modifier > 1 {
+        if ss3 {
+            out.extend_from_slice(format!("\x1b[1;{modifier}{code}").as_bytes());
+        } else {
+            out.extend_from_slice(format!("\x1b[{code};{modifier}~").as_bytes());
+        }
+    } else if ss3 {
+        out.extend_from_slice(format!("\x1bO{code}").as_bytes());
+    } else {
+        out.extend_from_slice(format!("\x1b[{code}~").as_bytes());
     }
 }
 
@@ -5331,6 +6618,87 @@ fn run_go(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn prompt_edits_at_the_cursor() {
+        let mut buf = String::new();
+        let mut cur = 0;
+        for c in "hi x".chars() {
+            assert!(edit_prompt(&mut buf, &mut cur, &key(KeyCode::Char(c))));
+        }
+        assert_eq!(buf, "hi x");
+        assert_eq!(cur, 4);
+        // Left over the x, then delete the space.
+        edit_prompt(&mut buf, &mut cur, &key(KeyCode::Left));
+        edit_prompt(&mut buf, &mut cur, &key(KeyCode::Backspace));
+        assert_eq!(buf, "hix");
+        assert_eq!(cur, 2);
+        // Home, then insert at the front.
+        edit_prompt(&mut buf, &mut cur, &key(KeyCode::Home));
+        edit_prompt(&mut buf, &mut cur, &key(KeyCode::Char('>')));
+        assert_eq!(buf, ">hix");
+        assert_eq!(cur, 1);
+        // Delete removes forward.
+        edit_prompt(&mut buf, &mut cur, &key(KeyCode::Delete));
+        assert_eq!(buf, ">ix");
+    }
+
+    #[test]
+    fn prompt_word_delete_and_clear() {
+        let mut buf = "git commit -m".to_string();
+        let mut cur = buf.len();
+        edit_prompt(&mut buf, &mut cur, &ctrl('w'));
+        assert_eq!(buf, "git commit ");
+        assert_eq!(cur, 11);
+        edit_prompt(&mut buf, &mut cur, &ctrl('u'));
+        assert_eq!(buf, "");
+        assert_eq!(cur, 0);
+    }
+
+    #[test]
+    fn prompt_unicode_moves_by_char() {
+        let mut buf = "héllo".to_string();
+        let mut cur = buf.len();
+        edit_prompt(&mut buf, &mut cur, &key(KeyCode::Left));
+        assert_eq!(cur, 5); // before 'o', not mid-'é'
+        edit_prompt(&mut buf, &mut cur, &key(KeyCode::Home));
+        assert_eq!(cur, 0);
+        edit_prompt(&mut buf, &mut cur, &key(KeyCode::Right));
+        assert_eq!(cur, 1); // after 'h'
+        edit_prompt(&mut buf, &mut cur, &key(KeyCode::Right));
+        assert_eq!(cur, 3); // after the two-byte 'é'
+    }
+
+    #[test]
+    fn prompt_view_scrolls_to_keep_cursor_visible() {
+        assert_eq!(prompt_view("hello", 5, 10), ("hello".to_string(), 5));
+        let (text, x) = prompt_view("abcdefghijklmnop", 16, 10);
+        assert_eq!(text, "hijklmnop");
+        assert_eq!(x, 9);
+        // Spaces are preserved as cells.
+        let (text, x) = prompt_view("ab cd", 5, 10);
+        assert_eq!(text, "ab cd");
+        assert_eq!(x, 5);
+    }
+
+    #[test]
+    fn elide_left_keeps_the_filename_visible() {
+        assert_eq!(elide_left("short.rs", 20), "short.rs");
+        let s = "/Users/kayden/programs/projects/ked/src/editor.rs";
+        let out = elide_left(s, 20);
+        assert_eq!(col_width(&out), 20);
+        assert!(out.starts_with('…'));
+        assert!(out.ends_with("src/editor.rs"));
+        assert_eq!(elide_left("abc", 0), "abc");
+        assert_eq!(elide_left("abc", 1), "…");
+    }
 
     #[test]
     fn col_width_counts_cells_not_bytes() {
@@ -5620,7 +6988,45 @@ mod tests {
         assert_eq!(md_segs_col(&segs[1], 23), 11); // the space after
     }
 
-
-
-
+    #[test]
+    fn shell_key_encoding() {
+        let k = |code: KeyCode, mods: KeyModifiers| KeyEvent::new(code, mods);
+        assert_eq!(
+            key_to_bytes(k(KeyCode::Char('c'), KeyModifiers::CONTROL), false),
+            vec![3]
+        );
+        assert_eq!(
+            key_to_bytes(k(KeyCode::Char('x'), KeyModifiers::ALT), false),
+            vec![0x1b, b'x']
+        );
+        assert_eq!(
+            key_to_bytes(k(KeyCode::Left, KeyModifiers::NONE), false),
+            b"\x1b[D".to_vec()
+        );
+        assert_eq!(
+            key_to_bytes(k(KeyCode::Left, KeyModifiers::NONE), true),
+            b"\x1bOD".to_vec()
+        );
+        assert_eq!(
+            key_to_bytes(k(KeyCode::Up, KeyModifiers::CONTROL), false),
+            b"\x1b[1;5A".to_vec()
+        );
+        assert_eq!(
+            key_to_bytes(k(KeyCode::Backspace, KeyModifiers::NONE), false),
+            vec![0x7f]
+        );
+        assert_eq!(
+            key_to_bytes(k(KeyCode::F(5), KeyModifiers::NONE), false),
+            b"\x1b[15~".to_vec()
+        );
+        assert_eq!(
+            key_to_bytes(k(KeyCode::BackTab, KeyModifiers::NONE), false),
+            b"\x1b[Z".to_vec()
+        );
+        assert!(key_to_bytes(
+            k(KeyCode::Char('c'), KeyModifiers::SUPER),
+            false
+        )
+        .is_empty());
+    }
 }

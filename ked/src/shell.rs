@@ -1,33 +1,28 @@
 use std::io;
-use std::sync::mpsc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::editor::char_width;
+use vt100::{Color as VtColor, Parser};
 
+/// A real PTY-backed terminal.
+///
+/// The screen is parsed by [`vt100`], so full-screen programs (htop,
+/// vim, less, fzf, …) work: cursor addressing, erase/scroll regions,
+/// insert/delete line, the alternate screen, colours and attributes are
+/// all handled by the parser instead of the old line-oriented
+/// approximation.
 pub struct ShellProcess {
     fd: i32,
     slave_fd: i32,
     pid: i32,
     rx: mpsc::Receiver<Vec<u8>>,
     alive: bool,
-    output: Vec<u8>,
-
-    // Incremental-processing state so we don't re-process the
-    // entire buffer on every frame.
-    processed_up_to: usize,           // bytes of `output` already consumed
-    cache_lines: Vec<Vec<StyledChar>>,// row-indexed editable lines
-    cache_cur: Vec<StyledChar>,       // working buffer for current row
-    cache_cursor: usize,              // cursor position within cache_cur
-    cache_style: Style,               // current SGR style
-    cache_default: Style,             // default_style from last call
-    cache_out: Vec<Line<'static>>,    // flattened result for rendering
-
-    /// Cursor position in the logical output (row, col).
-    pub cursor_row: usize,
-    pub cursor_col: usize,
+    parser: Parser,
+    rows: u16,
+    cols: u16,
 }
 
 impl ShellProcess {
@@ -39,10 +34,13 @@ impl ShellProcess {
 
             // Use system-default terminal settings — don't inherit
             // the raw-mode termios from crossterm's STDIN.
-            let ret = libc::openpty(&mut master, &mut slave,
+            let ret = libc::openpty(
+                &mut master,
+                &mut slave,
                 slave_name.as_mut_ptr(),
                 std::ptr::null_mut(),
-                std::ptr::null_mut());
+                std::ptr::null_mut(),
+            );
             if ret != 0 {
                 return Err(io::Error::last_os_error());
             }
@@ -59,16 +57,19 @@ impl ShellProcess {
                 libc::close(master);
                 libc::setsid();
 
-                // TIOCSCTTY is c_ulong on macOS but c_int on Linux.
-                #[cfg(target_os = "macos")]
-                libc::ioctl(slave, libc::TIOCSCTTY as libc::c_ulong, std::ptr::null_mut::<libc::c_int>());
-                #[cfg(not(target_os = "macos"))]
-                libc::ioctl(slave, libc::TIOCSCTTY as libc::c_int, std::ptr::null_mut::<libc::c_int>());
+                // TIOCSCTTY is c_ulong on macOS, u64 on glibc Linux and
+                // c_int on some targets — let inference pick the ioctl
+                // request type.
+                libc::ioctl(
+                    slave,
+                    libc::TIOCSCTTY as _,
+                    std::ptr::null_mut::<libc::c_int>(),
+                );
 
                 let mut t: libc::termios = std::mem::zeroed();
                 libc::tcgetattr(slave, &mut t);
                 // Standard c_cc control characters so line editing works.
-                t.c_cc[libc::VERASE] = 0x08; // ^H (Backspace)
+                t.c_cc[libc::VERASE] = 0x7f; // DEL (xterm backspace)
                 t.c_cc[libc::VWERASE] = 0x17; // Ctrl+W
                 t.c_cc[libc::VKILL] = 0x15; // Ctrl+U
                 t.c_cc[libc::VEOF] = 0x04; // Ctrl+D
@@ -89,23 +90,24 @@ impl ShellProcess {
                 libc::dup2(slave, 0);
                 libc::dup2(slave, 1);
                 libc::dup2(slave, 2);
-                if slave > 2 { libc::close(slave); }
+                if slave > 2 {
+                    libc::close(slave);
+                }
 
-                // Set TERM so TUI programs can render properly.
-                let term = std::ffi::CString::new("xterm-256color").unwrap();
-                libc::setenv(
-                    std::ffi::CString::new("TERM").unwrap().as_ptr(),
-                    term.as_ptr(),
-                    1,
-                );
+                // TERM/COLORTERM let TUI programs pick the right
+                // capabilities (including 24-bit colour).
+                for (k, v) in [
+                    ("TERM", "xterm-256color"),
+                    ("COLORTERM", "truecolor"),
+                ] {
+                    let key = std::ffi::CString::new(k).unwrap();
+                    let val = std::ffi::CString::new(v).unwrap();
+                    libc::setenv(key.as_ptr(), val.as_ptr(), 1);
+                }
 
-                let shell = std::env::var("SHELL")
-                    .unwrap_or_else(|_| "bash".to_string());
+                let shell = std::env::var("SHELL").unwrap_or_else(|_| "bash".to_string());
                 let c_shell = std::ffi::CString::new(shell).unwrap();
-                let args: [*const libc::c_char; 2] = [
-                    c_shell.as_ptr(),
-                std::ptr::null_mut(),
-                ];
+                let args: [*const libc::c_char; 2] = [c_shell.as_ptr(), std::ptr::null_mut()];
                 libc::execvp(c_shell.as_ptr(), args.as_ptr());
                 libc::_exit(1);
             }
@@ -117,7 +119,7 @@ impl ShellProcess {
             let alive_clone = alive.clone();
 
             let reader = std::thread::spawn(move || {
-                let mut buf = [0u8; 4096];
+                let mut buf = [0u8; 8192];
                 loop {
                     // Poll instead of a blocking read so the thread
                     // can notice a closed master fd when the shell is
@@ -133,7 +135,7 @@ impl ShellProcess {
                         break;
                     }
                     if rc == 0 {
-                        continue; // timeout — poll again
+                        continue;
                     }
                     let n = libc::read(master, buf.as_mut_ptr() as *mut libc::c_void, buf.len());
                     if n <= 0 {
@@ -147,26 +149,24 @@ impl ShellProcess {
                 alive_clone.store(false, Ordering::SeqCst);
             });
 
-            Ok((ShellProcess {
-                fd: master,
-                slave_fd,
-                pid,
-                rx,
-                alive: true,
-                output: Vec::new(),
-                processed_up_to: 0,
-                cache_lines: Vec::new(),
-                cache_cur: Vec::new(),
-                cache_cursor: 0,
-                cache_style: Style::new(),
-                cache_default: Style::new(),
-                cache_out: Vec::new(),
-                cursor_row: 0,
-                cursor_col: 0,
-            }, reader))
+            Ok((
+                ShellProcess {
+                    fd: master,
+                    slave_fd,
+                    pid,
+                    rx,
+                    alive: true,
+                    parser: Parser::new(24, 80, 2000),
+                    rows: 24,
+                    cols: 80,
+                },
+                reader,
+            ))
         }
     }
 
+    /// Make sure the slave side doesn't echo characters twice (the
+    /// shell / readline echoes them itself).
     pub fn force_raw_mode(&self) {
         unsafe {
             let mut t: libc::termios = std::mem::zeroed();
@@ -193,10 +193,20 @@ impl ShellProcess {
         }
     }
 
-    pub fn resize(&self, rows: u16, cols: u16) {
+    /// Resize both the emulated screen and the kernel PTY.  Changing
+    /// `TIOCSWINSZ` also sends `SIGWINCH` to the child.
+    pub fn resize(&mut self, rows: u16, cols: u16) {
+        let rows = rows.max(1);
+        let cols = cols.max(1);
+        if rows == self.rows && cols == self.cols {
+            return;
+        }
+        self.rows = rows;
+        self.cols = cols;
+        self.parser.set_size(rows, cols);
         let ws = libc::winsize {
-            ws_row: rows as u16,
-            ws_col: cols as u16,
+            ws_row: rows,
+            ws_col: cols,
             ws_xpixel: 0,
             ws_ypixel: 0,
         };
@@ -209,29 +219,9 @@ impl ShellProcess {
         while let Ok(data) = self.rx.try_recv() {
             if data.is_empty() {
                 self.alive = false;
-                return;
+                break;
             }
-            self.output.extend_from_slice(&data);
-        }
-        // Cap the raw buffer so we don't accumulate indefinitely.
-        // Keep at most 128 KB — discard the oldest bytes past that.
-        const MAX_BYTES: usize = 128 * 1024;
-        if self.output.len() > MAX_BYTES {
-            let keep = MAX_BYTES / 2;
-            let split = self.output.len() - keep;
-            // Find a safe cut point: scan forward from `split` for \n.
-            let cut = self.output[split..]
-                .iter()
-                .position(|&b| b == b'\n')
-                .map(|pos| split + pos + 1)
-                .unwrap_or(split);
-            self.output.drain(..cut);
-            // Invalidate the full cache since we dropped raw bytes.
-            self.processed_up_to = 0;
-            self.cache_lines.clear();
-            self.cache_cur.clear();
-            self.cache_cursor = 0;
-            self.cache_style = Style::new();
+            self.parser.process(&data);
         }
     }
 
@@ -239,275 +229,107 @@ impl ShellProcess {
         self.alive
     }
 
-    /// Return the shell output as styled ratatui lines, using the
-    /// given `default_style` for uncoloured text (e.g. from the
-    /// current editor theme).
-    ///
-    /// ANSI SGR colour codes (`ESC[<params>m`) are parsed and
-    /// converted to ratatui styles.  All other escape sequences are
-    /// stripped as usual.
-    ///
-    /// Processing is incremental — only newly arrived bytes are
-    /// parsed each call, so this is cheap to call every frame.
-    pub fn output_styled(&mut self, default_style: Style) -> &[Line<'static>] {
-        let total = self.output.len();
-
-        // Cache hit: no new data and same default style.
-        if self.processed_up_to > 0
-            && self.processed_up_to == total
-            && self.cache_default == default_style
-        {
-            return &self.cache_out;
-        }
-
-        // Default style changed (e.g. theme switch) → reset everything
-        // so SGR codes are re-interpreted with the new defaults.
-        if self.cache_default != default_style {
-            self.processed_up_to = 0;
-            self.cache_lines.clear();
-            self.cache_cur.clear();
-            self.cache_cursor = 0;
-            self.cache_style = default_style;
-            self.cache_default = default_style;
-        }
-
-        // First call or after a cache invalidation.
-        if self.processed_up_to == 0 {
-            self.cache_lines.clear();
-            self.cache_cur.clear();
-            self.cache_cursor = 0;
-            self.cache_style = default_style;
-            self.cache_default = default_style;
-        }
-
-        // Process any new bytes.
-        if self.processed_up_to < total {
-            let new = self.output[self.processed_up_to..].to_vec();
-            self.processed_up_to = total;
-            self.process_bytes(&new, default_style);
-        }
-
-        // Flatten cache_lines into cache_out for rendering.
-        self.cache_out.clear();
-        // Soft-commit: copy cache_cur to cache_lines so it appears
-        // in the output, but don't lose the working buffer.
-        while self.cache_lines.len() <= self.cursor_row {
-            self.cache_lines.push(Vec::new());
-        }
-        if !self.cache_cur.is_empty() || self.cache_lines[self.cursor_row].is_empty() {
-            self.cache_lines[self.cursor_row] = self.cache_cur.clone();
-        }
-        for line in &self.cache_lines {
-            self.cache_out.push(collapse_styled(line.clone()));
-        }
-        &self.cache_out
-    }
-
-    /// Flush the current working line into cache_lines at cursor_row.
-    fn commit_line(&mut self) {
-        while self.cache_lines.len() <= self.cursor_row {
-            self.cache_lines.push(Vec::new());
-        }
-        self.cache_lines[self.cursor_row] = std::mem::take(&mut self.cache_cur);
-    }
-
-    /// Load cache_lines[row] into the working buffer (or start fresh).
-    fn load_line(&mut self, row: usize) {
-        self.cursor_row = row;
-        while self.cache_lines.len() <= row {
-            self.cache_lines.push(Vec::new());
-        }
-        self.cache_cur = std::mem::take(&mut self.cache_lines[row]);
-        self.cache_cursor = char_index_for_col(&self.cache_cur, self.cursor_col);
-    }
-
-    /// Track the logical cursor position for render_shell.
-    fn cursor_up(&mut self) {
-        self.commit_line();
-        let row = self.cursor_row.saturating_sub(1);
-        self.load_line(row);
-    }
-    fn cursor_down(&mut self) {
-        self.commit_line();
-        let row = self.cursor_row + 1;
-        self.load_line(row);
-    }
-    fn cursor_forward(&mut self) {
-        if self.cache_cursor < self.cache_cur.len() {
-            let w = char_width(self.cache_cur[self.cache_cursor].ch);
-            self.cache_cursor += 1;
-            self.cursor_col += w;
+    /// Cursor position + visibility from the application.
+    pub fn cursor(&self) -> Option<(u16, u16)> {
+        let screen = self.parser.screen();
+        if screen.hide_cursor() {
+            None
+        } else {
+            Some(screen.cursor_position())
         }
     }
-    fn cursor_back(&mut self) {
-        if self.cache_cursor > 0 {
-            self.cache_cursor -= 1;
-            let w = char_width(self.cache_cur[self.cache_cursor].ch);
-            self.cursor_col = self.cursor_col.saturating_sub(w);
-        }
-    }
-    fn cursor_goto(&mut self, row: usize, col: usize) {
-        self.commit_line();
-        self.cursor_col = col;
-        self.load_line(row);
+
+    /// Does the application want application-cursor-key mode?  Affects
+    /// how arrow/Home/End keys must be encoded.
+    pub fn application_cursor(&self) -> bool {
+        self.parser.screen().application_cursor()
     }
 
-    /// Parse `bytes` as UTF‑8 and feed the characters into the line
-    /// buffer, handling \\r, \\b, \\t and ANSI escapes.
-    fn process_bytes(&mut self, bytes: &[u8], default_style: Style) {
-        let s = String::from_utf8_lossy(bytes);
-        let mut chars = s.chars().peekable();
+    /// Has the application enabled bracketed paste?
+    pub fn bracketed_paste(&self) -> bool {
+        self.parser.screen().bracketed_paste()
+    }
 
-        while let Some(ch) = chars.next() {
-            match ch {
-                '\x1b' => match chars.next() {
-                    Some('[') => {
-                        let mut params = String::new();
-                        while let Some(&c) = chars.peek() {
-                            if c as u32 >= 0x40 && c as u32 <= 0x7e {
-                                let term = chars.next().unwrap();
-                                if term == 'm' {
-                                    self.cache_style =
-                                        parse_sgr(&params, default_style);
-                                } else if term == 'J'
-                                    && (params == "2" || params == "3")
-                                {
-                                    self.cache_lines.clear();
-                                    self.cache_cur.clear();
-                                    self.cache_cursor = 0;
-                                    self.cursor_row = 0;
-                                    self.cursor_col = 0;
-                                } else if term == 'A' {
-                                    let n: usize = params.parse().unwrap_or(1);
-                                    for _ in 0..n { self.cursor_up(); }
-                                } else if term == 'B' {
-                                    let n: usize = params.parse().unwrap_or(1);
-                                    for _ in 0..n { self.cursor_down(); }
-                                } else if term == 'C' {
-                                    let n: usize = params.parse().unwrap_or(1);
-                                    for _ in 0..n { self.cursor_forward(); }
-                                } else if term == 'D' {
-                                    let n: usize = params.parse().unwrap_or(1);
-                                    for _ in 0..n { self.cursor_back(); }
-                                } else if term == 'H' || term == 'f' {
-                                    let parts: Vec<&str> = params.split(';').collect();
-                                    let row: usize = parts.first().and_then(|s| s.parse().ok()).unwrap_or(1usize).saturating_sub(1);
-                                    let col: usize = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(1usize).saturating_sub(1);
-                                    self.cursor_goto(row, col);
-                                } else if term == 'K' {
-                                    if params == "0" || params.is_empty() {
-                                        self.cache_cur.truncate(self.cache_cursor);
-                                    } else if params == "2" {
-                                        self.cache_cur.clear();
-                                        self.cache_cursor = 0;
-                                    }
-                                }
-                                break;
-                            }
-                            params.push(chars.next().unwrap());
-                        }
-                    }
-                    Some('O') => {
-                        // SS3 — application-mode cursor keys (ESC O A/B/C/D).
-                        if let Some(&c) = chars.peek() {
-                            if c as u32 >= 0x40 && c as u32 <= 0x7e {
-                                let term = chars.next().unwrap();
-                                match term {
-                                    'A' => self.cursor_up(),
-                                    'B' => self.cursor_down(),
-                                    'C' => self.cursor_forward(),
-                                    'D' => self.cursor_back(),
-                                    'H' => self.cursor_goto(0, 0),
-                                    _ => {}
-                                }
-                            }
-                        }
-                    }
-                    Some(']') => {
-                        for c2 in &mut chars {
-                            if c2 == '\x07' { break; }
-                            if c2 == '\x1b' {
-                                if let Some('\\') = chars.next() {}
-                                break;
-                            }
-                        }
-                    }
-                    Some(c) if (c as u32) >= 0x20 && (c as u32) <= 0x2f => {
-                        // Two-char sequences: ESC ( B (charset), ESC # 8, etc.
-                        chars.next();
-                    }
-                    Some(c) if (c as u32) >= 0x30 && (c as u32) <= 0x7e => {
-                        // Single-char sequences: ESC 7/8 (save/restore cursor),
-                        // ESC D/E/M (vertical cursor movement).
-                        match c {
-                            '7' => {} // save cursor — not yet supported
-                            '8' => {} // restore cursor — not yet supported
-                            'D' => self.cursor_down(),
-                            'M' => self.cursor_up(),
-                            'E' => {
-                                self.commit_line();
-                                self.cursor_col = 0;
-                                let next = self.cursor_row + 1;
-                                self.load_line(next);
-                                self.cache_cursor = 0;
-                            }
-                            _ => {}
-                        }
-                    }
-                    Some(_) => {}
-                    None => break,
-                },
-                '\r' => {
-                    self.cache_cursor = 0;
-                    self.cursor_col = 0;
-                }
-                '\n' => {
-                    self.commit_line();
-                    self.cursor_col = 0;
-                    let next = self.cursor_row + 1;
-                    self.load_line(next);
-                    self.cache_cursor = 0;
-                }
-                '\x08' => {
-                    if self.cache_cursor > 0 {
-                        let w = char_width(self.cache_cur[self.cache_cursor - 1].ch);
-                        self.cache_cur.remove(self.cache_cursor - 1);
-                        self.cache_cursor -= 1;
-                        self.cursor_col = self.cursor_col.saturating_sub(w);
-                    }
-                }
-                '\t' => {
-                    let spaces = 8 - (self.cursor_col % 8);
-                    for _ in 0..spaces {
-                        insert_styled(
-                            &mut self.cache_cur,
-                            self.cache_cursor,
-                            StyledChar {
-                                ch: ' ',
-                                style: self.cache_style,
-                            },
-                        );
-                        self.cache_cursor += 1;
-                    }
-                    self.cursor_col += spaces;
-                }
-                _ => {
-                    if ch.is_control() {
-                        continue;
-                    }
-                    insert_styled(
-                        &mut self.cache_cur,
-                        self.cache_cursor,
-                        StyledChar {
-                            ch,
-                            style: self.cache_style,
-                        },
-                    );
-                    self.cache_cursor += 1;
-                    self.cursor_col += char_width(ch);
-                }
+    /// Render the visible screen into styled ratatui lines.
+    pub fn styled_lines(&self, default_fg: Color, default_bg: Color) -> Vec<Line<'static>> {
+        screen_lines(self.parser.screen(), default_fg, default_bg)
+    }
+}
+
+/// Convert a parsed terminal screen into ratatui lines.
+pub fn screen_lines(
+    screen: &vt100::Screen,
+    default_fg: Color,
+    default_bg: Color,
+) -> Vec<Line<'static>> {
+    let (rows, cols) = screen.size();
+    let mut lines = Vec::with_capacity(rows as usize);
+    for row in 0..rows {
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        let mut text = String::new();
+        let mut style = Style::new();
+        let mut col = 0;
+        while col < cols {
+            let Some(cell) = screen.cell(row, col) else {
+                col += 1;
+                continue;
+            };
+            if cell.is_wide_continuation() {
+                col += 1;
+                continue;
             }
+            let mut contents = cell.contents();
+            if contents.is_empty() {
+                contents.push(' ');
+            }
+            let cell_style = cell_style(cell, default_fg, default_bg);
+            if cell_style != style {
+                if !text.is_empty() {
+                    spans.push(Span::styled(std::mem::take(&mut text), style));
+                }
+                style = cell_style;
+            }
+            text.push_str(&contents);
+            col += 1;
         }
+        if !text.is_empty() {
+            spans.push(Span::styled(text, style));
+        }
+        lines.push(Line::from(spans));
+    }
+    lines
+}
+
+/// Convert a vt100 cell's colours/attributes to a ratatui style.
+fn cell_style(cell: &vt100::Cell, default_fg: Color, default_bg: Color) -> Style {
+    let bold = cell.bold();
+    let mut fg = vt_color(cell.fgcolor(), default_fg, bold);
+    let mut bg = vt_color(cell.bgcolor(), default_bg, false);
+    if cell.inverse() {
+        std::mem::swap(&mut fg, &mut bg);
+    }
+    let mut style = Style::new().fg(fg).bg(bg);
+    if bold {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    if cell.italic() {
+        style = style.add_modifier(Modifier::ITALIC);
+    }
+    if cell.underline() {
+        style = style.add_modifier(Modifier::UNDERLINED);
+    }
+    style
+}
+
+fn vt_color(c: VtColor, default: Color, bold: bool) -> Color {
+    match c {
+        VtColor::Default => default,
+        VtColor::Idx(n) => {
+            // Bold + a normal ANSI colour is the classic "bright" colour.
+            let n = if bold && n < 8 { n + 8 } else { n };
+            color_256(n)
+        }
+        VtColor::Rgb(r, g, b) => Color::Rgb(r, g, b),
     }
 }
 
@@ -532,9 +354,8 @@ impl Drop for ShellProcess {
 
 // ── ANSI SGR (Select Graphic Rendition) support ──────────────────
 //
-// We parse `ESC[<params>m` sequences and turn them into ratatui
-// Styles so coloured shell output (e.g. `ls --color`, `grep --color`,
-// git diff) shows up in the pop‑up shell.
+// Used by the markdown preview's `glow` output.  The PTY shell itself
+// is parsed by vt100 (above).
 
 /// One-shot conversion of ANSI-coloured text into styled ratatui
 /// lines (used for the `glow` markdown preview).  Colour/attribute
@@ -588,51 +409,6 @@ pub(crate) fn ansi_to_lines(text: &str, default_style: Style) -> Vec<Line<'stati
         }
     }
     lines.into_iter().map(Line::from).collect()
-}
-
-/// A single character with its ANSI-derived style.
-#[derive(Clone, Copy)]
-struct StyledChar {
-    ch: char,
-    style: Style,
-}
-
-/// Map a terminal column (cells) to a char index within `chars`.
-fn char_index_for_col(chars: &[StyledChar], col: usize) -> usize {
-    let mut w = 0usize;
-    for (i, sc) in chars.iter().enumerate() {
-        if w >= col {
-            return i;
-        }
-        w += char_width(sc.ch);
-    }
-    chars.len()
-}
-
-/// Insert `sc` at `pos`, overwriting if within bounds.
-fn insert_styled(line: &mut Vec<StyledChar>, pos: usize, sc: StyledChar) {
-    if pos < line.len() {
-        line[pos] = sc;
-    } else {
-        line.push(sc);
-    }
-}
-
-/// Collapse a line of [`StyledChar`]s into a ratatui `Line` by
-/// merging consecutive spans with identical style.
-fn collapse_styled(chars: Vec<StyledChar>) -> Line<'static> {
-    let mut spans: Vec<Span> = Vec::new();
-    let mut i = 0;
-    while i < chars.len() {
-        let s = chars[i].style;
-        let mut text = String::new();
-        while i < chars.len() && chars[i].style == s {
-            text.push(chars[i].ch);
-            i += 1;
-        }
-        spans.push(Span::styled(text, s));
-    }
-    Line::from(spans)
 }
 
 /// Parse an ANSI SGR parameter string (the part between `ESC[` and
@@ -803,3 +579,71 @@ static ANSI4: [Color; 16] = [
     Color::Rgb(0x70, 0xc0, 0xb1), // bright cyan
     Color::Rgb(0xea, 0xea, 0xea), // bright white
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line_text(line: &Line) -> String {
+        line.spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect::<String>()
+    }
+
+    fn text(parser: &Parser) -> Vec<String> {
+        screen_lines(parser.screen(), Color::White, Color::Black)
+            .iter()
+            .map(|l| line_text(l).trim_end().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn cursor_addressing_overwrites_cells() {
+        let mut p = Parser::new(3, 12, 0);
+        p.process(b"hello");
+        p.process(b"\x1b[1;1Habc");
+        assert_eq!(text(&p)[0], "abclo");
+        p.process(b"\x1b[2J\x1b[H");
+        assert!(text(&p).iter().all(|l| l.trim().is_empty()));
+    }
+
+    #[test]
+    fn alternate_screen_switches() {
+        let mut p = Parser::new(3, 10, 0);
+        p.process(b"main");
+        p.process(b"\x1b[?1049h");
+        p.process(b"alt");
+        assert_eq!(text(&p)[0], "alt");
+        p.process(b"\x1b[?1049l");
+        assert_eq!(text(&p)[0], "main");
+    }
+
+    #[test]
+    fn colours_and_attributes_are_kept() {
+        let mut p = Parser::new(2, 10, 0);
+        p.process(b"\x1b[1;31mred\x1b[0m");
+        let lines = screen_lines(p.screen(), Color::White, Color::Black);
+        let first = &lines[0].spans[0];
+        assert_eq!(first.content.as_ref(), "red");
+        assert_eq!(first.style.fg, Some(ANSI4[9])); // bold brings out bright red
+        assert!(first.style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn wide_chars_are_not_split() {
+        let mut p = Parser::new(2, 10, 0);
+        p.process("日x".as_bytes());
+        assert!(text(&p)[0].starts_with("日x"));
+    }
+
+    #[test]
+    fn cursor_visibility_is_reported() {
+        let mut p = Parser::new(2, 10, 0);
+        assert!(!p.screen().hide_cursor());
+        p.process(b"\x1b[?25l");
+        assert!(p.screen().hide_cursor());
+        p.process(b"\x1b[?25h");
+        assert!(!p.screen().hide_cursor());
+    }
+}
