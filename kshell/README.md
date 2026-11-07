@@ -157,6 +157,16 @@ draws only content, masked to the same outline. With the frame off, a panel goes
 back to its own frosted material and convex corners (`SheetShape`), flush with the
 screen's edge.
 
+Panels arrive with a little weight: the stepped easing runs about four percent
+past the resting size before settling back, and the panel's window is built with
+that much slack on the side it grows toward (`OverlayPanel.overshootAllowance`),
+since a window sized exactly to the panel would clip the settle flat. Only the
+axis the panel grows along overshoots — the other is clamped, because the slack
+is only on that one side. The ticker follows the display (60–120 Hz) instead of
+a fixed 60, so on a ProMotion screen the stepped glass keeps up. The media
+island is the exception: its window is exactly its open rectangle, so its easing
+is clamped and it gets the faster timing without the bounce.
+
 A surface's blur — and SwiftUI's adaptive text on top of it — follow the
 *window's appearance*, not the tint painted over it. So every window takes the
 appearance its theme's background implies (`RGBA.vibrancyAppearance`), which is
@@ -457,7 +467,8 @@ window ignores the mouse.
 
 A right-edge sidebar, built from the same `OverlayLauncher` as the theme
 launcher — so it grows out of the edge, borrows the frame's glass and takes the
-keyboard — plus a card that drops out from under the bar when something arrives.
+keyboard — plus a card that slides out of the same edge, under the bar, when
+something arrives.
 
 Two sources feed one list (`NotificationStore`):
 
@@ -477,7 +488,10 @@ shell, is what "replacing Notification Center" amounts to. The system database
 is an implementation detail: if a future macOS changes its shape, the mirror
 goes quiet and the shell keeps working.
 
-The popup is deliberately non-activating (`OverlayPanel(takesKeyboard: false)`):
+The card is a trailing-edge panel too, so it is flush with the frame and carries
+the same concave fillets; it sits just below the bar rather than moving it. Like
+the menus it now overshoots slightly on the way out. It is deliberately
+non-activating (`OverlayPanel(takesKeyboard: false)`):
 it appears above other windows without taking the keyboard, so a notification
 cannot interrupt typing. Hovering pauses its countdown; clicking opens the
 centre. The centre walks with `j`/`k`, `g`/`G`, `⏎` opens, `x` dismisses,

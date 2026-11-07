@@ -140,7 +140,7 @@ struct LauncherView: View {
                 // Keep the armed row in view as the arrows walk past the fold.
                 .onChange(of: selected) { _, new in
                     guard results.indices.contains(new) else { return }
-                    withAnimation(.snappy(duration: 0.22, extraBounce: 0.1)) {
+                    withAnimation(.snappy(duration: 0.19, extraBounce: 0.22)) {
                         proxy.scrollTo(results[new].id, anchor: .center)
                     }
                 }

@@ -38,8 +38,8 @@ public final class MediaIslandPanel: NSPanel {
     private var isShown = false
 
     /// How long the island takes to unfurl, and to fold back.
-    static let openDuration: TimeInterval = 0.42
-    static let closeDuration: TimeInterval = 0.26
+    static let openDuration: TimeInterval = 0.34
+    static let closeDuration: TimeInterval = 0.20
 
     /// - Parameters:
     ///   - barFrame: the bar's visible rectangle on screen; the island hangs off
@@ -221,11 +221,16 @@ public final class MediaIslandPanel: NSPanel {
         let from = progress
         let start = CACurrentMediaTime()
         let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now(), repeating: 1.0 / 60.0)
+        let fps = max(60, min(Double(targetScreen.maximumFramesPerSecond), 120))
+        timer.schedule(deadline: .now(), repeating: 1.0 / fps)
         timer.setEventHandler { [weak self] in
             guard let self else { return }
             let t = min(1, max(0, (CACurrentMediaTime() - start) / duration))
-            self.apply(progress: from + (target - from) * SlideEasing.value(t, opening: opening))
+            // Unlike the launchers, the island's window is exactly its open
+            // rectangle, so it cannot overshoot — it would be clipped. It still
+            // gets the faster, display-rate motion.
+            let eased = min(1, SlideEasing.value(t, opening: opening))
+            self.apply(progress: from + (target - from) * eased)
             if t >= 1 {
                 self.ticker?.cancel()
                 self.ticker = nil

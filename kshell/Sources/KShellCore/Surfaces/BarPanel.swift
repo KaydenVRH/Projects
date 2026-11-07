@@ -430,7 +430,7 @@ public final class BarPanel: NSPanel {
         // view frame moves the blur — only per-frame model changes do. Without
         // this the glass snapped out at full size and left a bare sheet sitting
         // under the content as it slid.
-        let duration: TimeInterval = opening ? 0.32 : 0.20
+        let duration: TimeInterval = opening ? 0.27 : 0.17
         let from = previous
         let to = height
         let start = CACurrentMediaTime()
@@ -473,7 +473,7 @@ public final class BarPanel: NSPanel {
             return
         }
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = revealed ? 0.28 : 0.18
+            context.duration = revealed ? 0.24 : 0.15
             // easeOutBack on the way in: the bar overshoots its resting place a
             // little and settles back, instead of stopping dead.
             context.timingFunction = revealed

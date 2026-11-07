@@ -201,7 +201,7 @@ struct MusicPanelView: View {
         guard count > 0 else { return .ignored }
         let next = min(max(0, selection + delta), count - 1)
         guard next != selection else { return .handled }
-        withAnimation(.snappy(duration: 0.2, extraBounce: 0.18)) { setSelection(next) }
+        withAnimation(.snappy(duration: 0.17, extraBounce: 0.3)) { setSelection(next) }
         return .handled
     }
 
@@ -240,7 +240,7 @@ struct MusicPanelView: View {
             HStack(spacing: 4) {
                 ForEach(Tab.allCases) { item in
                     Button {
-                        withAnimation(.snappy(duration: 0.28, extraBounce: 0.16)) { tab = item }
+                        withAnimation(.snappy(duration: 0.24, extraBounce: 0.28)) { tab = item }
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: item.icon)
@@ -286,7 +286,7 @@ struct MusicPanelView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .animation(.snappy(duration: 0.3, extraBounce: 0.1), value: player.hasTrack)
+        .animation(.snappy(duration: 0.26, extraBounce: 0.22), value: player.hasTrack)
     }
 
     // MARK: downloads
@@ -322,7 +322,7 @@ struct MusicPanelView: View {
             }
         }
         .padding(.bottom, 10)
-        .animation(.snappy(duration: 0.3), value: downloads.jobs)
+        .animation(.snappy(duration: 0.26, extraBounce: 0.22), value: downloads.jobs)
     }
 
     // MARK: tabs
@@ -394,7 +394,7 @@ struct MusicPanelView: View {
                     }
                     .onChange(of: resultSelection) { _, new in
                         guard downloads.results.indices.contains(new) else { return }
-                        withAnimation(.snappy(duration: 0.25, extraBounce: 0.1)) {
+                        withAnimation(.snappy(duration: 0.21, extraBounce: 0.22)) {
                             proxy.scrollTo(downloads.results[new].id, anchor: .center)
                         }
                     }
@@ -428,7 +428,7 @@ struct MusicPanelView: View {
                     }
                     .onChange(of: librarySelection) { _, new in
                         guard library.tracks.indices.contains(new) else { return }
-                        withAnimation(.snappy(duration: 0.25, extraBounce: 0.1)) {
+                        withAnimation(.snappy(duration: 0.21, extraBounce: 0.22)) {
                             proxy.scrollTo(library.tracks[new].id, anchor: .center)
                         }
                     }
@@ -494,7 +494,7 @@ struct MusicPanelView: View {
                 }
                 .onChange(of: queueSelection) { _, new in
                     guard queue.tracks.indices.contains(new) else { return }
-                    withAnimation(.snappy(duration: 0.25, extraBounce: 0.1)) {
+                    withAnimation(.snappy(duration: 0.21, extraBounce: 0.22)) {
                         proxy.scrollTo(queue.tracks[new].id, anchor: .center)
                     }
                 }
@@ -586,14 +586,14 @@ struct MusicPanelView: View {
         guard let current = all.firstIndex(of: tab) else { return .ignored }
         let next = min(max(current + delta, 0), all.count - 1)
         guard next != current else { return .handled }
-        withAnimation(.snappy(duration: 0.28, extraBounce: 0.16)) { tab = all[next] }
+        withAnimation(.snappy(duration: 0.24, extraBounce: 0.28)) { tab = all[next] }
         return .handled
     }
 
     /// `/` — hand the keyboard to the search field, opening that tab if needed.
     private func focusSearch() -> KeyPress.Result {
         if tab != .search {
-            withAnimation(.snappy(duration: 0.28, extraBounce: 0.16)) { tab = .search }
+            withAnimation(.snappy(duration: 0.24, extraBounce: 0.28)) { tab = .search }
             focusedField = true
         } else {
             tabChanged(to: .search)
@@ -675,8 +675,8 @@ private struct SearchRow: View {
                 .stroke(accent.opacity(selected ? 0.9 : (hovering ? 0.35 : 0)), lineWidth: selected ? 1.5 : 1)
         )
         .scaleEffect(selected ? 1.01 : (hovering ? 1.008 : 1))
-        .animation(.snappy(duration: 0.2, extraBounce: 0.2), value: hovering)
-        .animation(.snappy(duration: 0.22, extraBounce: 0.2), value: selected)
+        .animation(.snappy(duration: 0.17, extraBounce: 0.32), value: hovering)
+        .animation(.snappy(duration: 0.19, extraBounce: 0.32), value: selected)
         .onHover { hovering = $0 }
     }
 
@@ -828,8 +828,8 @@ private struct LibraryRow: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onPlay)
         .onHover { hovering = $0 }
-        .animation(.snappy(duration: 0.22, extraBounce: 0.15), value: hovering)
-        .animation(.snappy(duration: 0.22), value: playing)
+        .animation(.snappy(duration: 0.19, extraBounce: 0.27), value: hovering)
+        .animation(.snappy(duration: 0.19, extraBounce: 0.22), value: playing)
     }
 }
 
@@ -914,7 +914,7 @@ private struct QueueRow: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onPlay)
         .onHover { hovering = $0 }
-        .animation(.snappy(duration: 0.22, extraBounce: 0.15), value: hovering)
+        .animation(.snappy(duration: 0.19, extraBounce: 0.27), value: hovering)
     }
 
     private func control(_ symbol: String, action: @escaping () -> Void) -> some View {
@@ -985,7 +985,7 @@ private struct MusicPlayerBar: View {
         .frame(width: 44, height: 44)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
-        .animation(.snappy(duration: 0.32, extraBounce: 0.2), value: player.current?.path)
+        .animation(.snappy(duration: 0.27, extraBounce: 0.32), value: player.current?.path)
     }
 
     private var controls: some View {
@@ -1004,7 +1004,7 @@ private struct MusicPlayerBar: View {
             }
             .buttonStyle(.plain)
             .scaleEffect(player.isPlaying ? 1.04 : 1)
-            .animation(.snappy(duration: 0.25, extraBounce: 0.35), value: player.isPlaying)
+            .animation(.snappy(duration: 0.21, extraBounce: 0.42), value: player.isPlaying)
             button("forward.fill", size: 12) { player.next() }
         }
         .disabled(!player.hasTrack)

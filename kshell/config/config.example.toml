@@ -572,8 +572,8 @@ fade    = 0.5           # seconds to fade in and out
 display = "all"         # all | main
 
 # Notifications. kshell keeps its own centre: a right-edge sidebar (j/k to walk,
-# enter to open, x dismiss, C clear) plus a card that drops out from under the
-# bar when something arrives. Two sources feed it — notifications macOS delivers
+# enter to open, x dismiss, C clear) plus a card that slides out of the right
+# edge, under the bar, when something arrives. Two sources feed it — notifications macOS delivers
 # for other apps (mirrored read-only from Notification Center's database) and
 # anything posted with `kshell notify "Title" "Body"`.
 #

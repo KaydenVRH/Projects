@@ -75,19 +75,21 @@ final class NotificationToast {
         let generation = self.generation
 
         let bar = viewModel.appearance
-        let edge: OverlayEdge = bar.edge == .top ? .top : .bottom
-        // Under a top bar, above a bottom one: either way, clear of it.
-        let distance = margin + CGFloat(bar.height) + 8
+        // Out of the right edge, like the other menus: flush against the frame,
+        // with the same concave fillets where it meets it. It starts just under
+        // the bar so it does not cover it.
         let height: CGFloat = item.hasBody ? 92 : 72
+        let top = margin + CGFloat(bar.height) + 8
 
         let panel = OverlayPanel(
             screen: screen,
             size: NSSize(width: 384, height: height),
-            edge: edge,
-            margin: distance,
-            align: .trailing,
+            edge: .trailing,
+            margin: margin,
+            vertical: .leading,
+            verticalMargin: top,
             appearance: bar,
-            style: viewModel.panelStyle(for: edge),
+            style: viewModel.panelStyle(for: .trailing),
             glass: viewModel.makeGlass,
             takesKeyboard: false,
             content: AnyView(NotificationToastView(
@@ -191,6 +193,11 @@ struct NotificationToastView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .modifier(PanelSurface(
+            viewModel: viewModel,
+            edge: .trailing,
+            fallback: SheetShape(radius: 22, corners: .leading)
+        ))
         .contentShape(Rectangle())
         .onTapGesture(perform: onOpen)
         .onHover { inside in
