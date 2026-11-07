@@ -98,6 +98,7 @@ Per-widget overrides: `icon`, `icon_hex`, `icon_color`, `label_color`,
 
 Built-in events: `app_launcher_{toggle,open,close}`,
 `script_launcher_{toggle,open,close}`, `wallpaper_launcher_{toggle,open,close}`,
+`bluetooth_menu_{toggle,open,close}`, `bluetooth_toggle <name>`, `bluetooth_power on|off`,
 `theme_launcher_{toggle,open,close}`, `media_center_{toggle,open,close}`,
 `media_{play_pause,next,previous}`, `bar_{hide,show,toggle}`, `config_reload`.
 
@@ -199,6 +200,20 @@ glass lag the content and snap into place at the end of the animation. Five pane
   (rotated at 2 MB). Running it as a plain child is what used to kill scripts the
   moment the overlay closed: the `Process` went away, taking the pipes nobody had
   read with it, and the script's next write took it down.
+
+**Bluetooth menu** — paired devices, connect/disconnect, radio power.
+- Open with `kshell trigger bluetooth_menu_toggle`.
+- A right-edge sidebar like the other menus; `⏎` connects or disconnects the
+  selected device, `p` turns the radio on/off, `r` refreshes, `j`/`k` walk.
+- Driven by `IOBluetooth` directly (no `blueutil`): the paired list is read from
+  `IOBluetoothDevice.pairedDevices()` and the action is `openConnection()` /
+  `closeConnection()`. Connecting blocks until the device answers or pages out,
+  so it runs off the main thread and the row shows a spinner; failures come back
+  as a line in the panel's footer ("didn't answer — it may be asleep").
+- The list polls only while the panel is open, and connected devices sort first.
+- Scriptable: `kshell trigger bluetooth_toggle "AirPods"` (name or address),
+  `kshell trigger bluetooth_power on|off|toggle`.
+- `[bluetooth] enabled = false` removes it.
 
 **Wallpaper launcher** — a left sidebar of preview rows that grows out of the
 left edge (rounded right corners).
@@ -606,6 +621,7 @@ Sources/KShellCore/
   Surfaces/BarView.swift         SwiftUI left/center/right widget rows
   Surfaces/VisualiserPanel.swift cava-style bars on the desktop (Canvas, tap-fed)
   Music/AudioSpectrum.swift      mixer tap -> FFT -> smoothed log-spaced bands
+  Bluetooth/                     paired devices + connect/disconnect (IOBluetooth)
   Notifications/                 system mirror, store, popup, centre panel
   Widgets/                       Widget protocol, factory, runtimes
   Services/                      ProcessRunner, Shell, SystemMetrics

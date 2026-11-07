@@ -228,6 +228,14 @@ public struct NotificationsConfig {
     public init() {}
 }
 
+/// The Bluetooth menu: paired devices, connect/disconnect, radio power.
+public struct BluetoothConfig {
+    /// Whether the menu is built (and its events answered) at all.
+    public var enabled: Bool = true
+
+    public init() {}
+}
+
 /// A single widget declaration. Kept as a raw TOML table plus a `type` so the
 /// registry can interpret it and new widget types stay cheap to add.
 public struct WidgetSpec {
@@ -270,6 +278,8 @@ public struct ShellConfig {
     public var visualiser: VisualiserConfig
     /// The notification centre and its popups.
     public var notifications: NotificationsConfig
+    /// The Bluetooth menu.
+    public var bluetooth: BluetoothConfig
 
     public init(
         bar: BarConfig = BarConfig(),
@@ -288,7 +298,8 @@ public struct ShellConfig {
         border: BorderConfig = BorderConfig(),
         music: MusicConfig = MusicConfig(),
         visualiser: VisualiserConfig = VisualiserConfig(),
-        notifications: NotificationsConfig = NotificationsConfig()
+        notifications: NotificationsConfig = NotificationsConfig(),
+        bluetooth: BluetoothConfig = BluetoothConfig()
     ) {
         self.bar = bar
         self.theme = theme
@@ -303,6 +314,7 @@ public struct ShellConfig {
         self.music = music
         self.visualiser = visualiser
         self.notifications = notifications
+        self.bluetooth = bluetooth
     }
 
     public static func parse(toml text: String) throws -> ShellConfig {
@@ -437,6 +449,10 @@ public struct ShellConfig {
             if let v = table.string("color"), let parsed = RGBA.parse(v) { border.color = parsed }
             if let v = table.bool("blur") { border.blur = v }
         }
+        var bluetooth = BluetoothConfig()
+        if let table = root.table("bluetooth") {
+            if let v = table.bool("enabled") { bluetooth.enabled = v }
+        }
         return ShellConfig(
             bar: bar,
             theme: theme,
@@ -450,7 +466,8 @@ public struct ShellConfig {
             border: border,
             music: music,
             visualiser: visualiser,
-            notifications: notifications
+            notifications: notifications,
+            bluetooth: bluetooth
         )
     }
 

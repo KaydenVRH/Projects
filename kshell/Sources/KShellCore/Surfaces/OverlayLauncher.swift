@@ -14,6 +14,11 @@ final class OverlayLauncher {
     private var panel: OverlayPanel?
     private var isVisible = false
 
+    /// Called once the panel is up, and once it has gone — for a panel that
+    /// polls only while it is on screen.
+    var onShow: (() -> Void)?
+    var onHide: (() -> Void)?
+
     init(
         viewModel: BarViewModel,
         edge: OverlayEdge = .bottom,
@@ -68,6 +73,7 @@ final class OverlayLauncher {
         )
         panel = overlay
         overlay.show(animated: animated)
+        onShow?()
     }
 
     func hide(animated: Bool = true) {
@@ -76,5 +82,6 @@ final class OverlayLauncher {
         let current = panel
         panel = nil
         current?.hide(animated: animated)
+        onHide?()
     }
 }

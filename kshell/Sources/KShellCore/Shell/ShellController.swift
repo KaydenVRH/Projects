@@ -30,6 +30,7 @@ public final class ShellController {
     private var borderOverride: Bool?
     /// Runtime override for `[visualiser] enabled`; `nil` follows the config.
     private var visualiserOverride: Bool?
+    private var bluetoothMenu: BluetoothMenu?
     private var notificationCentre: NotificationCentre?
     private var notificationToast: NotificationToast?
     private var macNotifications: MacNotificationWatcher?
@@ -54,6 +55,7 @@ public final class ShellController {
         makeMediaCenter()
         makeMusicLauncher()
         makeNotifications()
+        makeBluetoothMenu()
         subscribeToEvents()
         rebuildBars()
         fullscreen.start()
@@ -81,6 +83,7 @@ public final class ShellController {
             self.makeMediaCenter()
             self.makeMusicLauncher()
             self.makeNotifications()
+            self.makeBluetoothMenu()
             self.rebuildBars()
         }
     }
@@ -94,6 +97,8 @@ public final class ShellController {
         themeLauncher?.hide(animated: false)
         mediaCenter?.hide(animated: false)
         musicLauncher?.hide(animated: false)
+        bluetoothMenu?.hide(animated: false)
+        bluetoothMenu = nil
         notificationCentre?.hide(animated: false)
         notificationCentre = nil
         notificationToast?.dismissNow()
@@ -173,6 +178,15 @@ public final class ShellController {
             guard let item = KShellNotification.parse(payload: payload) else { return }
             NotificationStore.shared.ingest([item])
         })
+        eventTokens.append(bus.observe("bluetooth_menu_toggle") { [weak self] _ in self?.bluetoothMenu?.toggle() })
+        eventTokens.append(bus.observe("bluetooth_menu_open") { [weak self] _ in self?.bluetoothMenu?.show() })
+        eventTokens.append(bus.observe("bluetooth_menu_close") { [weak self] _ in self?.bluetoothMenu?.hide() })
+        eventTokens.append(bus.observe("bluetooth_toggle") { [weak self] payload in
+            self?.bluetoothMenu?.toggleDevice(matching: payload)
+        })
+        eventTokens.append(bus.observe("bluetooth_power") { [weak self] payload in
+            self?.bluetoothMenu?.setPower(payload)
+        })
         eventTokens.append(bus.observe("notification_clear") { _ in NotificationStore.shared.clear() })
         eventTokens.append(bus.observe("config_reload") { [weak self] _ in
             self?.loader.reloadNow()
@@ -197,6 +211,18 @@ public final class ShellController {
 
     private func setVisualiserPlaying(_ playing: Bool, animated: Bool = true) {
         for panel in visualisers { panel.setPlaying(playing, animated: animated) }
+    }
+
+    /// Build the Bluetooth menu, or tear it down when it is switched off.
+    private func makeBluetoothMenu() {
+        guard loader.config.bluetooth.enabled else {
+            bluetoothMenu?.hide(animated: false)
+            bluetoothMenu = nil
+            return
+        }
+        if bluetoothMenu == nil {
+            bluetoothMenu = BluetoothMenu(viewModel: viewModel, margin: panelMargin)
+        }
     }
 
     /// Build the notification centre, its popups and the system database watcher.
