@@ -10,12 +10,18 @@ public struct ScriptItem: Identifiable, Hashable {
 
 /// Lists executable-ish scripts in a directory (one level deep).
 public enum ScriptCatalog {
+    /// A script can keep itself out of the launcher with this marker anywhere in
+    /// its header — for the ones that are meant to be called by something else
+    /// (`agent-notify.sh`), not clicked.
+    static let hiddenMarker = "# kshell-launcher: hidden"
+
     public static func load(directory: URL) -> [ScriptItem] {
         guard let entries = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else {
             return []
         }
         return entries
             .filter { $0.hasSuffix(".sh") }
+            .filter { !isHidden(directory.appendingPathComponent($0)) }
             .sorted()
             .map { filename in
                 let path = directory.appendingPathComponent(filename).path
@@ -25,6 +31,13 @@ public enum ScriptCatalog {
                     path: path
                 )
             }
+    }
+
+    private static func isHidden(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        let head = (try? handle.read(upToCount: 512)) ?? Data()
+        return String(decoding: head, as: UTF8.self).contains(hiddenMarker)
     }
 
     public static func filter(_ scripts: [ScriptItem], query: String) -> [ScriptItem] {

@@ -35,6 +35,22 @@ final class LauncherTests: XCTestCase {
         XCTAssertEqual(ScriptCatalog.filter(scripts, query: "").count, 2)
     }
 
+    func testScriptCatalogSkipsMarkedHelpers() throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("kshell-scripts-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let visible = directory.appendingPathComponent("theme-switch.sh")
+        let hidden = directory.appendingPathComponent("agent-notify.sh")
+        try "#!/bin/sh\necho hi\n".write(to: visible, atomically: true, encoding: .utf8)
+        try "#!/bin/sh\n# kshell-launcher: hidden\necho hi\n".write(to: hidden, atomically: true, encoding: .utf8)
+        // Not a script: ignored however it reads.
+        try "notes\n".write(to: directory.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+
+        XCTAssertEqual(ScriptCatalog.load(directory: directory).map(\.name), ["theme-switch"])
+    }
+
     func testWallpaperCatalogFiltersExtensions() throws {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("kshell-wp-\(UUID().uuidString)")

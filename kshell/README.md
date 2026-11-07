@@ -191,6 +191,9 @@ glass lag the content and snap into place at the end of the animation. Five pane
   [script_launcher]
   directory = "~/dotfiles/scripts"
   ```
+- A script can keep itself out of the grid with a `# kshell-launcher: hidden`
+  line in its header — for helpers that are called by something else rather than
+  clicked (see `agent-notify.sh` in the dotfiles).
 - A selection runs `bash <script>` **detached**: it outlives the panel — and the
   shell — and its output is appended to `~/Library/Logs/kshell/scripts.log`
   (rotated at 2 MB). Running it as a plain child is what used to kill scripts the
@@ -478,6 +481,13 @@ Two sources feed one list (`NotificationStore`):
   `req`. Nothing is re-delivered, nothing private is linked — it is read-only.
   The first pass seeds a day of history without popping cards.
 - **kshell.** `kshell notify` (or the `notify` event) posts a card directly.
+
+Agents use the same path: `~/dotfiles/scripts/agent-notify.sh` wraps `kshell
+notify` with the policy that matters for them — stay silent while a terminal is
+frontmost, speak up when blocked, don't announce a five-second turn, and fall back
+to a macOS banner if the shell isn't running. OpenCode and Claude Code call it
+from their own hooks; anything else can call it directly (see the workspace
+`AGENTS.md`).
 
 Both are display only. Showing a notification in kshell does **not** suppress
 macOS's own banner — no public API can intercept another app's notification. To
