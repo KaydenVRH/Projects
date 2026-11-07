@@ -5,7 +5,7 @@
 //!   - tree-sitter syntax highlighting (Rust, Python, C/C++, JS/TS,
 //!     HTML, CSS, TOML, JSON, Bash, Go, Markdown) with shebang /
 //!     filename / extension language detection
-//!   - 30 colour themes (dark and light)
+//!   - 31 colour themes (dark and light)
 //!   - Fuzzy file finder (Ctrl+P)
 //!   - Run code in buffer (Ctrl+E: .py, .rs, .c, .h, .go)
 //!   - Command mode (:w, :q, :q!, :wq, :theme ...)

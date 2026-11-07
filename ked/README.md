@@ -11,7 +11,7 @@
 
 ked is a personal vim‑like text editor that runs entirely in your
 terminal. It's a single Rust binary: modal editing, hand‑rolled syntax
-highlighting, 30 themes, animated colour effects, a fuzzy finder, a
+highlighting, 31 themes, animated colour effects, a fuzzy finder, a
 file tree, a real PTY shell, a music player, and a system dashboard —
 all in the alternate screen.
 
@@ -103,12 +103,12 @@ all in the alternate screen.
 
 ### Looks
 
-- **30 themes** — 22 dark (default, mono, monokai, nord, gruvbox, bi,
+- **31 themes** — 23 dark (default, mono, monokai, nord, gruvbox, bi,
   blue-lagoon, catppuccin, tokyonight, amber, dracula, onedark,
   everforest, rosepine, oxocarbon, ayu, kanagawa, palenight, darkplus,
-  moonlight, osaka-jade, last-horizon) and 8 light (solarized, latte,
-  gruvbox-light, one-light, github-light, tokyonight-day, rosepine-dawn,
-  everforest-light).
+  moonlight, osaka-jade, last-horizon, synthwave) and 8 light
+  (solarized, latte, gruvbox-light, one-light, github-light,
+  tokyonight-day, rosepine-dawn, everforest-light).
   Palettes follow the canonical Neovim theme colours, with distinct
   roles for keywords, functions, types, strings, constants, and
   properties.  **mono** is pure grayscale: tokens are separated by a
@@ -295,7 +295,7 @@ files fall back to defaults.
 
 ```toml
 # ── appearance ──
-theme          = "oxocarbon"   # any of the 30 theme names
+theme          = "oxocarbon"   # any of the 31 theme names
 transparent    = false         # let the terminal background show through
 animations     = true          # tab shimmer, rainbow dashes, splash, fx
 bar_stats      = true          # context bar: language, buffers, clock
@@ -544,7 +544,7 @@ src/
   main.rs       entry point: terminal setup, event loop, kitty protocol
   editor.rs     editor core: modes, key handling, render, undo, scrolling
   highlight.rs  tree-sitter highlighting + language detection
-  theme.rs      30 themes + HSL hue rotation for colour FX
+  theme.rs      31 themes + HSL hue rotation for colour FX
   config.rs     ~/.config/ked/config.toml loading
   finder.rs     fuzzy file finder (Ctrl+P)
   filetree.rs   file-tree panel with Nerd Font icons (Ctrl+F)

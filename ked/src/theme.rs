@@ -67,6 +67,7 @@ pub enum ThemeKind {
     Moonlight,
     OsakaJade,
     LastHorizon,
+    Synthwave,
     // ── light-mode variants ──
     Latte,
     GruvboxLight,
@@ -104,6 +105,7 @@ impl ThemeKind {
             ThemeKind::Moonlight  => moonlight(),
             ThemeKind::OsakaJade  => osaka_jade(),
             ThemeKind::LastHorizon=> last_horizon(),
+            ThemeKind::Synthwave => synthwave(),
             ThemeKind::Latte          => latte(),
             ThemeKind::GruvboxLight   => gruvbox_light(),
             ThemeKind::OneLight       => one_light(),
@@ -140,6 +142,7 @@ impl ThemeKind {
             ThemeKind::Moonlight  => "moonlight",
             ThemeKind::OsakaJade  => "osaka-jade",
             ThemeKind::LastHorizon=> "last-horizon",
+            ThemeKind::Synthwave => "synthwave",
             ThemeKind::Latte          => "latte",
             ThemeKind::GruvboxLight   => "gruvbox-light",
             ThemeKind::OneLight       => "one-light",
@@ -176,6 +179,7 @@ impl ThemeKind {
             ThemeKind::Moonlight,
             ThemeKind::OsakaJade,
             ThemeKind::LastHorizon,
+            ThemeKind::Synthwave,
             ThemeKind::Latte,
             ThemeKind::GruvboxLight,
             ThemeKind::OneLight,
@@ -215,6 +219,8 @@ impl ThemeKind {
                 Some(ThemeKind::OsakaJade),
             "last-horizon" | "lasthorizon" | "last_horizon" =>
                 Some(ThemeKind::LastHorizon),
+            "synthwave" | "synth" | "outrun" =>
+                Some(ThemeKind::Synthwave),
             "latte" | "catppuccin-latte" | "catppuccinlatte" =>
                 Some(ThemeKind::Latte),
             "gruvbox-light" | "gruvboxlight" | "gruvbox_light" =>
@@ -912,6 +918,44 @@ fn last_horizon() -> Theme {
     }
 }
 
+// ── synthwave ────────────────────────────────────────────────────
+//
+// Kayden's Synthwave theme (dotfiles/nvim/colors/synthwave.lua):
+// neon outrun — hot pink, cyan and violet on deep purple-black.
+
+fn synthwave() -> Theme {
+    // Palette from the nvim colorscheme:
+    // bg #100018 · bg_dark #0A0012 · bg_light #1A0028
+    // fg #E0D0F0 · fg_dim #9A80AA · selection #3A0050
+    // red #FF2A85 · green #00D4FF · amber #FFB347
+    // blue #7000FF · purple #D400FF · cyan #00FFCC · white #F5EEFF
+    // bright: #FF6BA5 #66E3FF #FFC773 #9933FF #E666FF #66FFDD
+    Theme {
+        fg:            Color::Rgb(0xe0, 0xd0, 0xf0),
+        bg:            Color::Rgb(0x10, 0x00, 0x18),
+        selection_bg:  Color::Rgb(0x3a, 0x00, 0x50),
+        line_number:   Style::new().fg(Color::Rgb(0x9a, 0x80, 0xaa)),
+        tilde:         Style::new().fg(Color::Rgb(0x1a, 0x00, 0x28)),
+        status_bg:     Color::Rgb(0x0a, 0x00, 0x12),
+        status_fg:     Color::Rgb(0xe0, 0xd0, 0xf0),
+        border:        Color::Rgb(0x9a, 0x80, 0xaa),
+        keyword:       fg(Color::Rgb(0xd4, 0x00, 0xff)),  // purple
+        builtin:       fg(Color::Rgb(0xe6, 0x66, 0xff)),  // bright purple
+        rstype:        fg(Color::Rgb(0x00, 0xff, 0xcc)),  // cyan
+        function:      fg(Color::Rgb(0xd4, 0x00, 0xff)),  // purple
+        lifetime:      fg(Color::Rgb(0xff, 0xb3, 0x47)),  // amber
+        string:        fg(Color::Rgb(0x00, 0xd4, 0xff)),  // neon blue
+        fstring_prefix:fg_bold(Color::Rgb(0x00, 0xd4, 0xff)),
+        comment:       fg_italic(Color::Rgb(0x9a, 0x80, 0xaa)),
+        number:        fg(Color::Rgb(0xff, 0xb3, 0x47)),  // amber
+        constant:      fg(Color::Rgb(0x00, 0xff, 0xcc)),  // cyan
+        decorator:     fg(Color::Rgb(0x00, 0xff, 0xcc)),
+        property:      fg(Color::Rgb(0x00, 0xff, 0xcc)),
+        operator:      fg(Color::Rgb(0x00, 0xff, 0xcc)),
+        punctuation:   fg(Color::Rgb(0x9a, 0x80, 0xaa)),
+    }
+}
+
 // ── light themes ─────────────────────────────────────────────────
 //
 // Light backgrounds, dark text.  Accents use the "deep" end of each
@@ -1216,7 +1260,7 @@ mod tests {
 
     #[test]
     fn every_theme_is_constructible_and_named() {
-        assert_eq!(ThemeKind::all().len(), 30);
+        assert_eq!(ThemeKind::all().len(), 31);
         for k in ThemeKind::all() {
             let _ = k.theme();
             assert_eq!(ThemeKind::from_str(k.name()), Some(*k), "{}", k.name());

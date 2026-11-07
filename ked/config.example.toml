@@ -12,7 +12,7 @@
 # theme: default, mono, monokai, solarized, nord, gruvbox, bi,
 # blue-lagoon, catppuccin, tokyonight, amber, dracula, onedark,
 # everforest, rosepine, oxocarbon, ayu, kanagawa, palenight,
-# darkplus, moonlight, osaka-jade, last-horizon, latte, gruvbox-light, one-light,
+# darkplus, moonlight, osaka-jade, last-horizon, synthwave, latte, gruvbox-light, one-light,
 # github-light, tokyonight-day, rosepine-dawn, everforest-light
 theme          = "oxocarbon"
 transparent    = false      # let the terminal background show through

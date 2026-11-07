@@ -9,7 +9,7 @@ pub struct Config {
     /// Theme name (default, mono, monokai, solarized, nord, gruvbox,
     /// bi, blue-lagoon, catppuccin, tokyonight, amber, dracula, onedark,
     /// everforest, rosepine, oxocarbon, ayu, kanagawa, palenight,
-    /// darkplus, moonlight, osaka-jade, last-horizon, latte, gruvbox-light, one-light,
+    /// darkplus, moonlight, osaka-jade, last-horizon, synthwave, latte, gruvbox-light, one-light,
     /// github-light, tokyonight-day, rosepine-dawn, everforest-light).
     #[serde(default)]
     pub theme: String,
@@ -176,7 +176,7 @@ pub fn example() -> String {
          # theme: default, mono, monokai, solarized, nord, gruvbox, bi,\n\
          # blue-lagoon, catppuccin, tokyonight, amber, dracula, onedark,\n\
          # everforest, rosepine, oxocarbon, ayu, kanagawa, palenight,\n\
-         # darkplus, moonlight, osaka-jade, last-horizon, latte, gruvbox-light, one-light,\n\
+         # darkplus, moonlight, osaka-jade, last-horizon, synthwave, latte, gruvbox-light, one-light,\n\
          # github-light, tokyonight-day, rosepine-dawn, everforest-light\n\
          theme          = \"oxocarbon\"\n\
          transparent    = false      # let the terminal background show through\n\
