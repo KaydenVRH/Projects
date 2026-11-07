@@ -206,6 +206,28 @@ public struct MediaConfig {
     public init() {}
 }
 
+/// The shell's own notification centre.
+///
+/// Two sources can feed it: the notifications macOS delivers (mirrored from the
+/// system database, so they are not re-delivered) and notifications posted to
+/// the shell through `kshell notify`. Both are display only — showing a
+/// notification here never suppresses the system's own banner, which is a
+/// per-app setting in System Settings, not something an app can turn off.
+public struct NotificationsConfig {
+    /// Whether the centre, its popups and the database watcher run at all.
+    public var enabled: Bool = true
+    /// Mirror what macOS delivers for other apps.
+    public var mirrorMacOS: Bool = true
+    /// Drop a card under the bar when something arrives.
+    public var toasts: Bool = true
+    /// How long a card stays before folding away, unless the pointer rests on it.
+    public var toastSeconds: Double = 6
+    /// How many notifications the centre keeps, across restarts.
+    public var history: Int = 200
+
+    public init() {}
+}
+
 /// A single widget declaration. Kept as a raw TOML table plus a `type` so the
 /// registry can interpret it and new widget types stay cheap to add.
 public struct WidgetSpec {
@@ -246,6 +268,8 @@ public struct ShellConfig {
     public var music: MusicConfig
     /// The desktop audio visualiser.
     public var visualiser: VisualiserConfig
+    /// The notification centre and its popups.
+    public var notifications: NotificationsConfig
 
     public init(
         bar: BarConfig = BarConfig(),
@@ -263,7 +287,8 @@ public struct ShellConfig {
         media: MediaConfig = MediaConfig(),
         border: BorderConfig = BorderConfig(),
         music: MusicConfig = MusicConfig(),
-        visualiser: VisualiserConfig = VisualiserConfig()
+        visualiser: VisualiserConfig = VisualiserConfig(),
+        notifications: NotificationsConfig = NotificationsConfig()
     ) {
         self.bar = bar
         self.theme = theme
@@ -277,6 +302,7 @@ public struct ShellConfig {
         self.border = border
         self.music = music
         self.visualiser = visualiser
+        self.notifications = notifications
     }
 
     public static func parse(toml text: String) throws -> ShellConfig {
@@ -394,6 +420,14 @@ public struct ShellConfig {
             if let v = table.number("fade") { visualiser.fade = max(0, v) }
             if let v = table.string("display") { visualiser.display = v.lowercased() }
         }
+        var notifications = NotificationsConfig()
+        if let table = root.table("notifications") {
+            if let v = table.bool("enabled") { notifications.enabled = v }
+            if let v = table.bool("mirror_macos") { notifications.mirrorMacOS = v }
+            if let v = table.bool("toasts") { notifications.toasts = v }
+            if let v = table.number("toast_seconds") { notifications.toastSeconds = max(1, v) }
+            if let v = table.number("history") { notifications.history = max(0, Int(v)) }
+        }
         var border = BorderConfig()
         if let table = root.table("border") {
             if let v = table.bool("enabled") { border.enabled = v }
@@ -415,7 +449,8 @@ public struct ShellConfig {
             media: media,
             border: border,
             music: music,
-            visualiser: visualiser
+            visualiser: visualiser,
+            notifications: notifications
         )
     }
 

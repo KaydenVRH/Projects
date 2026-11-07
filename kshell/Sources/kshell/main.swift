@@ -28,6 +28,9 @@ if arguments.count >= 2 {
           kshell reload                       reload the config
           kshell theme                        list configured themes
           kshell theme <name>                 apply a theme (kitty/nvim/kshell/wallpaper)
+          kshell notify <title> [body]        post a notification to the shell
+                                              [--app=NAME] [--bundle=ID] [--action=CMD]
+          kshell notifications                open the notification centre
           kshell --diagnose                   print screen + system info
           kshell --version | --help
         """)
@@ -58,6 +61,58 @@ if arguments.count >= 2 {
         print("applied \(theme.name) → \(result.changed.joined(separator: ", "))")
         if !result.failed.isEmpty {
             FileHandle.standardError.write(Data("kshell: could not update: \(result.failed.joined(separator: ", "))\n".utf8))
+        }
+        exit(0)
+
+    case "notify":
+        // `kshell notify "Title" "Body"`, with optional `--app=`, `--action=`
+        // and `--tone=` anywhere in the arguments. The payload is JSON so the
+        // body may contain the `|` the old one-line form uses as a separator.
+        var title: String?
+        var body = ""
+        var app: String?
+        var bundle: String?
+        var action: String?
+        var tone: String?
+
+        for argument in arguments.dropFirst(2) {
+            if argument.hasPrefix("--app=") {
+                app = String(argument.dropFirst("--app=".count))
+            } else if argument.hasPrefix("--bundle=") {
+                bundle = String(argument.dropFirst("--bundle=".count))
+            } else if argument.hasPrefix("--action=") {
+                action = String(argument.dropFirst("--action=".count))
+            } else if argument.hasPrefix("--tone=") {
+                tone = String(argument.dropFirst("--tone=".count))
+            } else if title == nil {
+                title = argument
+            } else if body.isEmpty {
+                body = argument
+            } else {
+                body += " " + argument
+            }
+        }
+
+        guard let title, !title.isEmpty else {
+            fail("usage: kshell notify <title> [body] [--app=NAME] [--bundle=ID] [--action=COMMAND] [--tone=info|success|warning|error]")
+        }
+        var payload: [String: Any] = ["title": title, "body": body]
+        if let app { payload["app"] = app }
+        if let bundle { payload["bundle"] = bundle }
+        if let action { payload["action"] = action }
+        if let tone { payload["tone"] = tone }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else {
+            fail("kshell: could not encode the notification")
+        }
+        guard IPCClient.send("notify " + json) else {
+            fail("kshell: no running instance — is the kshell bar running?", code: 1)
+        }
+        exit(0)
+
+    case "notifications", "notification":
+        guard IPCClient.send("notification_center_open") else {
+            fail("kshell: no running instance — is the kshell bar running?", code: 1)
         }
         exit(0)
 

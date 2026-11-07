@@ -7,7 +7,7 @@ final class OverlayLauncher {
     private let viewModel: BarViewModel
     private let edge: OverlayEdge
     private let align: OverlayAlign
-    private let margin: CGFloat
+    private var margin: CGFloat
     private let preferredSize: (NSScreen) -> NSSize
     private let makeContent: (@escaping () -> Void) -> AnyView
 
@@ -33,6 +33,19 @@ final class OverlayLauncher {
     func toggle() { visible ? hide() : show() }
 
     var visible: Bool { isVisible }
+
+    /// The distance between the panel and the screen edge it grows from. The
+    /// frame's thickness can change at runtime (`border_toggle`), so this follows.
+    func setMargin(_ value: CGFloat) {
+        guard value != margin else { return }
+        margin = value
+        // An open panel was built with the old distance; rebuild it so the glass
+        // and the outline still meet the frame.
+        if isVisible {
+            hide(animated: false)
+            show(animated: false)
+        }
+    }
 
     func show(animated: Bool = true) {
         guard !isVisible else { return }

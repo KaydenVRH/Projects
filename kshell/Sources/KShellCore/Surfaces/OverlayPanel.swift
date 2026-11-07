@@ -57,6 +57,9 @@ public final class OverlayPanel: NSPanel {
     private let style: PanelStyle?
     private let makeGlass: ((NSScreen) -> SurfaceGlass?)?
     private let targetScreen: NSScreen
+    /// Whether the panel takes the keyboard. Launchers do; a notification popup
+    /// must not, or it would interrupt whatever is being typed when it appears.
+    private let takesKeyboard: Bool
     /// The outline to step while the frame is off: same rounding, no fillets.
     private let fallbackStyle: PanelStyle
 
@@ -76,6 +79,7 @@ public final class OverlayPanel: NSPanel {
         appearance: BarConfig = BarConfig(),
         style: PanelStyle? = nil,
         glass: ((NSScreen) -> SurfaceGlass?)? = nil,
+        takesKeyboard: Bool = true,
         content: AnyView
     ) {
         let screenFrame = screen.frame
@@ -113,12 +117,18 @@ public final class OverlayPanel: NSPanel {
         self.size = size
         self.style = style
         self.makeGlass = glass
+        self.takesKeyboard = takesKeyboard
         self.fallbackStyle = style
             ?? PanelStyle(radius: SheetShape.defaultRadius, filletRadius: 0, attachment: .none)
 
+        // A popup that doesn't take the keyboard must not activate the app when
+        // clicked, or a stray notification would steal the front from a terminal.
+        var styleMask: NSWindow.StyleMask = [.borderless]
+        if !takesKeyboard { styleMask.insert(.nonactivatingPanel) }
+
         super.init(
             contentRect: shownFrame,
-            styleMask: [.borderless],
+            styleMask: styleMask,
             backing: .buffered,
             defer: false
         )
@@ -199,9 +209,15 @@ public final class OverlayPanel: NSPanel {
         glass = makeGlass?(targetScreen)
         apply(progress: 0)
 
-        Frontmost.claim()
-        makeKeyAndOrderFront(nil)
-        makeKey()
+        if takesKeyboard {
+            Frontmost.claim()
+            makeKeyAndOrderFront(nil)
+            makeKey()
+        } else {
+            // A notification card appears without taking anything: no key
+            // window, no app activation, so typing carries on undisturbed.
+            orderFrontRegardless()
+        }
 
         guard animated else {
             apply(progress: 1)
@@ -241,7 +257,7 @@ public final class OverlayPanel: NSPanel {
         glass = nil
         orderOut(nil)
         // The keyboard came with us; give it back now the panel is gone.
-        Frontmost.handBack()
+        if takesKeyboard { Frontmost.handBack() }
     }
 
     /// Step the panel from where it is to `progress` (0 = the pill, 1 = open).

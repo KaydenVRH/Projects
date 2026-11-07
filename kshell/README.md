@@ -110,6 +110,21 @@ kshell trigger media_changed
 kshell trigger aerospace_workspace_change FOCUSED_WORKSPACE=2
 ```
 
+Notifications can be posted the same way, which is how scripts put something in
+the shell's own centre:
+
+```sh
+kshell notify "Download finished" "Song.m4a" --app=Music --bundle=com.apple.Music
+kshell notify "Build failed" --tone=error --action="open -a Terminal"
+kshell trigger notify '{"title":"Hi","body":"posted straight to the socket"}'
+kshell trigger notification_center_toggle
+```
+
+`--tone` is `info` (default), `success`, `warning` or `error`; `--bundle` lets the
+card borrow an app's icon; `--action` runs a command when the card is chosen.
+The events are `notify`, `notification_center_{toggle,open,close}` and
+`notification_clear`.
+
 The socket lives at `~/Library/Application Support/kshell/kshell.sock`. The
 `workspaces` widget already listens for `aerospace_workspace_change` (and polls
 as a fallback). To make workspace switches instant, point aerospace at kshell
@@ -438,6 +453,36 @@ window ignores the mouse.
   display = "all"         # all | main
   ```
 
+### Notification centre (`[notifications]`)
+
+A right-edge sidebar, built from the same `OverlayLauncher` as the theme
+launcher — so it grows out of the edge, borrows the frame's glass and takes the
+keyboard — plus a card that drops out from under the bar when something arrives.
+
+Two sources feed one list (`NotificationStore`):
+
+- **macOS.** The system records every delivered notification in
+  `~/Library/Group Containers/group.com.apple.usernoted/db2/db`; a watcher polls
+  it and reads each payload, which is an ordinary binary property list under
+  `req`. Nothing is re-delivered, nothing private is linked — it is read-only.
+  The first pass seeds a day of history without popping cards.
+- **kshell.** `kshell notify` (or the `notify` event) posts a card directly.
+
+Both are display only. Showing a notification in kshell does **not** suppress
+macOS's own banner — no public API can intercept another app's notification. To
+make kshell the only place notifications appear, set the apps to "None" in
+System Settings → Notifications (or use a Focus); the system still records what
+it delivers, and the centre still mirrors it. That, rather than any trick in the
+shell, is what "replacing Notification Center" amounts to. The system database
+is an implementation detail: if a future macOS changes its shape, the mirror
+goes quiet and the shell keeps working.
+
+The popup is deliberately non-activating (`OverlayPanel(takesKeyboard: false)`):
+it appears above other windows without taking the keyboard, so a notification
+cannot interrupt typing. Hovering pauses its countdown; clicking opens the
+centre. The centre walks with `j`/`k`, `g`/`G`, `⏎` opens, `x` dismisses,
+`C` clears and `esc` closes.
+
 ## JavaScript widgets
 
 A widget with `type = "js"` renders whatever a user script produces. Point it at
@@ -477,6 +522,8 @@ Scripts hot-reload when the file changes.
 kshell                             # run the shell
 kshell trigger <event> [payload]   # push an event (IPC)
 kshell reload                      # reload the config
+kshell notify <title> [body]       # post a notification into the shell
+kshell notifications               # open the notification centre
 kshell --diagnose                  # screens, notch, sensors
 kshell --version | --help
 ```
@@ -518,6 +565,10 @@ pointer is on.
   height.
 - Bars are non-activating panels on every Space, including over full-screen
   apps.
+- **Notifications:** the shell mirrors what macOS delivers by reading
+  Notification Center's database read-only; it cannot suppress the system's own
+  banner, which is a per-app setting. See the notification centre section above.
+  A card never takes the keyboard.
 
 ## Architecture
 
@@ -531,6 +582,7 @@ Sources/KShellCore/
   Surfaces/BarView.swift         SwiftUI left/center/right widget rows
   Surfaces/VisualiserPanel.swift cava-style bars on the desktop (Canvas, tap-fed)
   Music/AudioSpectrum.swift      mixer tap -> FFT -> smoothed log-spaced bands
+  Notifications/                 system mirror, store, popup, centre panel
   Widgets/                       Widget protocol, factory, runtimes
   Services/                      ProcessRunner, Shell, SystemMetrics
   Config/                        TOML models, loader + file watching, colors

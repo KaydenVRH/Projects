@@ -30,6 +30,9 @@ public final class ShellController {
     private var borderOverride: Bool?
     /// Runtime override for `[visualiser] enabled`; `nil` follows the config.
     private var visualiserOverride: Bool?
+    private var notificationCentre: NotificationCentre?
+    private var notificationToast: NotificationToast?
+    private var macNotifications: MacNotificationWatcher?
     /// Displays whose frontmost window fills them.
     private var fullscreenDisplays: Set<CGDirectDisplayID> = []
     private lazy var fullscreen = FullscreenWatch { [weak self] covered in
@@ -50,6 +53,7 @@ public final class ShellController {
         makeThemeLauncher()
         makeMediaCenter()
         makeMusicLauncher()
+        makeNotifications()
         subscribeToEvents()
         rebuildBars()
         fullscreen.start()
@@ -76,6 +80,7 @@ public final class ShellController {
             self.makeThemeLauncher()
             self.makeMediaCenter()
             self.makeMusicLauncher()
+            self.makeNotifications()
             self.rebuildBars()
         }
     }
@@ -89,6 +94,13 @@ public final class ShellController {
         themeLauncher?.hide(animated: false)
         mediaCenter?.hide(animated: false)
         musicLauncher?.hide(animated: false)
+        notificationCentre?.hide(animated: false)
+        notificationCentre = nil
+        notificationToast?.dismissNow()
+        notificationToast = nil
+        macNotifications?.stop()
+        macNotifications = nil
+        NotificationStore.shared.onArrive = nil
         autoHide.stop()
         playingObserver = nil
         for panel in visualisers { panel.dismiss() }
@@ -154,6 +166,14 @@ public final class ShellController {
         })
         eventTokens.append(bus.observe("visualiser_show") { [weak self] _ in self?.setVisualiserEnabled(true) })
         eventTokens.append(bus.observe("visualiser_hide") { [weak self] _ in self?.setVisualiserEnabled(false) })
+        eventTokens.append(bus.observe("notification_center_toggle") { [weak self] _ in self?.notificationCentre?.toggle() })
+        eventTokens.append(bus.observe("notification_center_open") { [weak self] _ in self?.notificationCentre?.show() })
+        eventTokens.append(bus.observe("notification_center_close") { [weak self] _ in self?.notificationCentre?.hide() })
+        eventTokens.append(bus.observe("notify") { payload in
+            guard let item = KShellNotification.parse(payload: payload) else { return }
+            NotificationStore.shared.ingest([item])
+        })
+        eventTokens.append(bus.observe("notification_clear") { _ in NotificationStore.shared.clear() })
         eventTokens.append(bus.observe("config_reload") { [weak self] _ in
             self?.loader.reloadNow()
         })
@@ -177,6 +197,63 @@ public final class ShellController {
 
     private func setVisualiserPlaying(_ playing: Bool, animated: Bool = true) {
         for panel in visualisers { panel.setPlaying(playing, animated: animated) }
+    }
+
+    /// Build the notification centre, its popups and the system database watcher.
+    ///
+    /// Rebuilt on every config reload so `[notifications]` takes effect without a
+    /// restart; the store itself outlives the panels, so the history is not lost.
+    private func makeNotifications() {
+        let config = loader.config.notifications
+        let store = NotificationStore.shared
+
+        guard config.enabled else {
+            notificationCentre?.hide(animated: false)
+            notificationCentre = nil
+            notificationToast?.dismissNow()
+            notificationToast = nil
+            macNotifications?.stop()
+            macNotifications = nil
+            store.onArrive = nil
+            return
+        }
+
+        store.limit = config.history
+
+        if let centre = notificationCentre {
+            centre.update(config: config, margin: panelMargin)
+        } else {
+            notificationCentre = NotificationCentre(viewModel: viewModel, config: config, margin: panelMargin)
+        }
+
+        if config.toasts {
+            if let toast = notificationToast {
+                toast.update(margin: panelMargin, seconds: config.toastSeconds)
+            } else {
+                notificationToast = NotificationToast(
+                    viewModel: viewModel,
+                    margin: panelMargin,
+                    seconds: config.toastSeconds,
+                    onOpen: { [weak self] in self?.notificationCentre?.show() }
+                )
+            }
+            store.onArrive = { [weak self] item in self?.notificationToast?.present(item) }
+        } else {
+            notificationToast?.dismissNow()
+            notificationToast = nil
+            store.onArrive = nil
+        }
+
+        if config.mirrorMacOS {
+            if macNotifications == nil {
+                let watcher = MacNotificationWatcher(store: store, history: min(config.history, 60))
+                watcher.start()
+                macNotifications = watcher
+            }
+        } else {
+            macNotifications?.stop()
+            macNotifications = nil
+        }
     }
 
     /// Build the visualiser strips for whichever displays the config asks for.

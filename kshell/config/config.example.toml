@@ -570,3 +570,19 @@ opacity = 0.8
 mirror  = 0.35          # reflection under the baseline; 0 turns it off
 fade    = 0.5           # seconds to fade in and out
 display = "all"         # all | main
+
+# Notifications. kshell keeps its own centre: a right-edge sidebar (j/k to walk,
+# enter to open, x dismiss, C clear) plus a card that drops out from under the
+# bar when something arrives. Two sources feed it — notifications macOS delivers
+# for other apps (mirrored read-only from Notification Center's database) and
+# anything posted with `kshell notify "Title" "Body"`.
+#
+# Showing one here does not suppress macOS's own banner: that is a per-app
+# setting in System Settings → Notifications. Set apps to "None" (or use a Focus)
+# to make kshell the only place they appear.
+[notifications]
+enabled       = true
+mirror_macos  = true    # mirror other apps' notifications from the system database
+toasts        = true    # drop a card under the bar when something arrives
+toast_seconds = 6       # hover pauses the countdown
+history       = 200     # kept across restarts, in ~/Library/Caches/kshell
