@@ -47,15 +47,6 @@ public enum OverlayAlign: Sendable {
 public final class OverlayPanel: NSPanel {
     static let showDuration: TimeInterval = 0.34
     static let hideDuration: TimeInterval = 0.20
-    /// How far past its resting size the outline may travel while it overshoots.
-    /// The window is built this much larger on the side the panel grows toward;
-    /// without it the window would clip the bounce flat. Six percent of the
-    /// distance travelled covers the easing's four percent peak with room to
-    /// spare, and keeps small panels from carrying a wide invisible margin.
-    static func overshootAllowance(for edge: OverlayEdge, size: NSSize) -> CGFloat {
-        let travel = (edge == .top || edge == .bottom) ? size.height : size.width
-        return max(16, min(36, travel * 0.06))
-    }
     /// How far the pill reaches along the edge, and out from it.
     private static let seedLength: CGFloat = 300
     private static let seedDepth: CGFloat = 44
@@ -66,9 +57,6 @@ public final class OverlayPanel: NSPanel {
     private let style: PanelStyle?
     private let makeGlass: ((NSScreen) -> SurfaceGlass?)?
     private let targetScreen: NSScreen
-    /// The window's origin, which is the shown frame's less the overshoot
-    /// allowance on the side the panel grows toward.
-    private let windowOrigin: CGPoint
     /// Whether the panel takes the keyboard. Launchers do; a notification popup
     /// must not, or it would interrupt whatever is being typed when it appears.
     private let takesKeyboard: Bool
@@ -129,21 +117,7 @@ public final class OverlayPanel: NSPanel {
             y = Self.verticalY(vertical, inset: verticalMargin ?? margin, size: size, screen: screenFrame)
         }
         // The window always sits at its final spot; only the content grows.
-        let shownFrame = NSRect(x: x, y: y, width: size.width, height: size.height)
-        self.shownFrame = shownFrame
-
-        // Room for the outline to overshoot, on the side it grows toward. The
-        // panel itself never leaves its final spot; only the window's far edge
-        // is given some slack so the settle is visible rather than clipped.
-        let allowance = Self.overshootAllowance(for: edge, size: size)
-        let slack = Self.growthSlack(for: edge, allowance: allowance)
-        let windowFrame = NSRect(
-            x: shownFrame.minX + min(0, slack.width),
-            y: shownFrame.minY + min(0, slack.height),
-            width: shownFrame.width + abs(slack.width),
-            height: shownFrame.height + abs(slack.height)
-        )
-        self.windowOrigin = windowFrame.origin
+        self.shownFrame = NSRect(x: x, y: y, width: size.width, height: size.height)
         self.targetScreen = screen
         self.edge = edge
         self.size = size
@@ -159,7 +133,7 @@ public final class OverlayPanel: NSPanel {
         if !takesKeyboard { styleMask.insert(.nonactivatingPanel) }
 
         super.init(
-            contentRect: windowFrame,
+            contentRect: shownFrame,
             styleMask: styleMask,
             backing: .buffered,
             defer: false
@@ -210,17 +184,6 @@ public final class OverlayPanel: NSPanel {
         case .leading: return screen.maxY - inset - size.height
         case .trailing: return screen.minY + inset
         case .center: return screen.midY - size.height / 2
-        }
-    }
-
-    /// Which way the panel grows, and therefore which side of the window needs
-    /// the extra room.
-    private static func growthSlack(for edge: OverlayEdge, allowance: CGFloat) -> CGSize {
-        switch edge {
-        case .top: return CGSize(width: 0, height: -allowance)      // grows down
-        case .bottom: return CGSize(width: 0, height: allowance)    // grows up
-        case .leading: return CGSize(width: allowance, height: 0)   // grows right
-        case .trailing: return CGSize(width: -allowance, height: 0) // grows left
         }
     }
 
@@ -350,27 +313,18 @@ public final class OverlayPanel: NSPanel {
     private func apply(progress value: CGFloat) {
         progress = value
         let seed = seedFrame
-        // Only the axis the panel grows along overshoots — that is the pop you
-        // read as weight. The other axis is clamped, because the window only has
-        // slack on the side it grows toward; letting the width of a bottom panel
-        // overshoot would clip its exposed corners a few points at the peak.
-        let alongEdge: CGFloat = min(1, value)
-        let outward: CGFloat = max(0, value)
-        let acrossX = (edge == .leading || edge == .trailing) ? outward : alongEdge
-        let acrossY = (edge == .top || edge == .bottom) ? outward : alongEdge
         let rect = NSRect(
-            x: seed.minX + (shownFrame.minX - seed.minX) * acrossX,
-            y: seed.minY + (shownFrame.minY - seed.minY) * acrossY,
-            width: seed.width + (shownFrame.width - seed.width) * acrossX,
-            height: seed.height + (shownFrame.height - seed.height) * acrossY
+            x: seed.minX + (shownFrame.minX - seed.minX) * value,
+            y: seed.minY + (shownFrame.minY - seed.minY) * value,
+            width: seed.width + (shownFrame.width - seed.width) * value,
+            height: seed.height + (shownFrame.height - seed.height) * value
         )
         let style = self.style ?? fallbackStyle
 
-        // The container is the window's frame, less the window's origin (which
-        // is the shown frame's, moved out by the overshoot allowance).
+        // The container is the window's frame, less the shown frame's origin.
         let local = NSRect(
-            x: rect.minX - windowOrigin.x,
-            y: rect.minY - windowOrigin.y,
+            x: rect.minX - shownFrame.minX,
+            y: rect.minY - shownFrame.minY,
             width: rect.width,
             height: rect.height
         )

@@ -158,15 +158,12 @@ draws only content, masked to the same outline. With the frame off, a panel goes
 back to its own frosted material and convex corners (`SheetShape`), flush with the
 screen's edge.
 
-Panels arrive with a little weight: the stepped easing runs about four percent
-past the resting size before settling back, and the panel's window is built with
-that much slack on the side it grows toward (`OverlayPanel.overshootAllowance`),
-since a window sized exactly to the panel would clip the settle flat. Only the
-axis the panel grows along overshoots — the other is clamped, because the slack
-is only on that one side. The ticker follows the display (60–120 Hz) instead of
-a fixed 60, so on a ProMotion screen the stepped glass keeps up. The media
-island is the exception: its window is exactly its open rectangle, so its easing
-is clamped and it gets the faster timing without the bounce.
+Panels arrive quickly and stop dead at their resting size: the easing stays within
+0…1, so there is no bounce past the outline and the window is exactly the panel
+— every pixel of it belongs to the panel, and none of it swallows clicks meant
+for the app behind. The springiness is in the rows and selections inside the
+panel, not in its geometry. The ticker follows the display (60–120 Hz) instead of
+a fixed 60, so on a ProMotion screen the stepped glass keeps up.
 
 A surface's blur — and SwiftUI's adaptive text on top of it — follow the
 *window's appearance*, not the tint painted over it. So every window takes the

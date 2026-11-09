@@ -226,11 +226,7 @@ public final class MediaIslandPanel: NSPanel {
         timer.setEventHandler { [weak self] in
             guard let self else { return }
             let t = min(1, max(0, (CACurrentMediaTime() - start) / duration))
-            // Unlike the launchers, the island's window is exactly its open
-            // rectangle, so it cannot overshoot — it would be clipped. It still
-            // gets the faster, display-rate motion.
-            let eased = min(1, SlideEasing.value(t, opening: opening))
-            self.apply(progress: from + (target - from) * eased)
+            self.apply(progress: from + (target - from) * SlideEasing.value(t, opening: opening))
             if t >= 1 {
                 self.ticker?.cancel()
                 self.ticker = nil

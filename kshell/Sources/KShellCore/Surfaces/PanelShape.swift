@@ -256,13 +256,12 @@ struct PanelSurface: ViewModifier {
 public enum SlideEasing {
     /// A cubic-bezier step for the panels' stepped geometry.
     ///
-    /// Opening runs slightly past 1 (about 4%) before it settles, so a panel
-    /// arrives with a little weight rather than stopping dead. The panels give
-    /// their windows room for that overshoot (see `OverlayPanel`); closing stays
-    /// strict, because a bounce on the way out reads as hesitation.
+    /// Both directions stay within 0…1: a panel arrives quickly and stops at its
+    /// resting size, with no bounce past it. The springiness lives in the rows
+    /// and selections inside the panel instead.
     public static func value(_ t: CGFloat, opening: Bool) -> CGFloat {
-        let c1x: CGFloat = opening ? 0.16 : 0.42
-        let c1y: CGFloat = opening ? 1.36 : 0.00
+        let c1x: CGFloat = opening ? 0.18 : 0.42
+        let c1y: CGFloat = opening ? 1.00 : 0.00
         let c2x: CGFloat = opening ? 0.36 : 1.00
         let c2y: CGFloat = opening ? 1.00 : 1.00
         if t <= 0 { return 0 }
