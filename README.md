@@ -6,7 +6,7 @@ Personal tools built for fun.
 
 A vim‑like TUI text editor written in **Rust** with ratatui/crossterm.
 
-- 22 themes, 8 syntax languages, multi‑buffer tabs
+- 53 themes, 14 syntax languages, multi‑buffer tabs
 - Fuzzy file finder, file tree with Nerd Font icons
 - Built‑in music player (mpv/afplay), PTY shell popup
 - System dashboard with CPU/MEM/BATT gauges and log tail
