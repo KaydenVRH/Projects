@@ -87,6 +87,9 @@ struct MusicPanelView: View {
     @State private var resultSelection = 0
     @State private var queueSelection = 0
     @State private var playlistsSelection = 0
+    /// Which playlist is drilled into, if any, and the armed track inside it.
+    @State private var openedPlaylist: String?
+    @State private var trackSelection = 0
     /// Naming a playlist: the field takes the keyboard until Enter or Esc.
     @State private var naming = false
     @State private var newName = ""
@@ -114,21 +117,22 @@ struct MusicPanelView: View {
             togglePlay: { player.toggle() },
             seek: { delta in player.seek(toSeconds: player.position + delta) },
             volume: { delta in player.volume = min(1, max(0, player.volume + delta)) },
-            fieldFocused: focusedField
+            fieldFocused: typing
         ))
         .modifier(VimListKeys(
             move: move,
             jump: jump,
             search: focusSearch,
-            fieldFocused: focusedField
+            fieldFocused: typing
         ))
         .modifier(MusicLetterKeys(
             shiftTab: shiftTab,
             addToQueue: letterA,
             removeFromQueue: letterX,
             savePlaylist: startSavingPlaylist,
+            playPlaylist: playArmedPlaylist,
             moveInQueue: shiftArmedInQueue,
-            fieldFocused: focusedField
+            fieldFocused: typing
         ))
         .onExitCommand { onClose() }
         .onAppear {
@@ -158,8 +162,14 @@ struct MusicPanelView: View {
         if new == .search { focusedField = true } else { refocusPanel() }
     }
 
+    /// Any text field holds the keyboard: the search box, or the playlist name
+    /// while it is being typed. Every list and transport binding stands down so
+    /// letters and Enter reach the field.
+    private var typing: Bool { focusedField || namingFocused }
+
     /// Focus the panel itself (not the search field), so transport keys land.
     private func refocusPanel() {
+        guard !naming else { return }
         focusedField = false
         DispatchQueue.main.async { panelFocused = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { panelFocused = true }
@@ -188,7 +198,7 @@ struct MusicPanelView: View {
         case .search: return resultSelection
         case .library: return librarySelection
         case .queue: return queueSelection
-        case .playlists: return playlistsSelection
+        case .playlists: return openedPlaylist == nil ? playlistsSelection : trackSelection
         }
     }
 
@@ -197,7 +207,11 @@ struct MusicPanelView: View {
         case .search: return downloads.results.count
         case .library: return library.tracks.count
         case .queue: return queue.tracks.count
-        case .playlists: return playlists.count
+        case .playlists:
+            if let name = openedPlaylist {
+                return playlists.playlist(named: name)?.tracks.count ?? 0
+            }
+            return playlists.count
         }
     }
 
@@ -206,7 +220,8 @@ struct MusicPanelView: View {
         case .search: resultSelection = value
         case .library: librarySelection = value
         case .queue: queueSelection = value
-        case .playlists: playlistsSelection = value
+        case .playlists:
+            if openedPlaylist == nil { playlistsSelection = value } else { trackSelection = value }
         }
     }
 
@@ -241,35 +256,65 @@ struct MusicPanelView: View {
             guard queue.tracks.indices.contains(queueSelection) else { return .ignored }
             player.play(queue.tracks, startAt: queueSelection)
         case .playlists:
-            guard playlists.playlists.indices.contains(playlistsSelection) else { return .ignored }
-            let playlist = playlists.playlists[playlistsSelection]
-            guard !playlist.tracks.isEmpty else { return .ignored }
-            // A playlist replaces the queue: it is a thing you listen to, not a
-            // set of suggestions to merge into whatever was lined up.
-            queue.replace(playlist.tracks)
-            player.play(playlist.tracks, startAt: 0)
+            if let name = openedPlaylist {
+                // Inside a playlist: play from the armed track.
+                let tracks = playlists.playlist(named: name)?.tracks ?? []
+                guard tracks.indices.contains(trackSelection) else { return .ignored }
+                queue.replace(tracks)
+                player.play(tracks, startAt: trackSelection)
+            } else {
+                // On the list: drill in, so tracks can be played or removed.
+                guard playlists.playlists.indices.contains(playlistsSelection) else { return .ignored }
+                let playlist = playlists.playlists[playlistsSelection]
+                guard !playlist.tracks.isEmpty else { return .ignored }
+                withAnimation(.snappy(duration: 0.2, extraBounce: 0.2)) {
+                    openedPlaylist = playlist.name
+                    trackSelection = 0
+                }
+            }
         }
         return .handled
     }
 
     /// `a` — queue the armed track, or in Playlists add the playing track to the
-    /// armed playlist.
+    /// playlist being looked at.
     private func letterA() -> KeyPress.Result {
         guard tab == .playlists else { return addArmedToQueue() }
-        guard playlists.playlists.indices.contains(playlistsSelection),
+        guard let name = openedPlaylist ?? playlists.playlists[safe: playlistsSelection]?.name,
               let playing = player.current
         else { return .ignored }
-        let name = playlists.playlists[playlistsSelection].name
         playlists.add(playing, to: name)
         return .handled
     }
 
-    /// `x` — dequeue the armed track, or in Playlists delete the armed playlist.
+    /// `x` — dequeue the armed track; in Playlists remove the armed track from
+    /// the playlist, or the playlist itself when the list is armed.
     private func letterX() -> KeyPress.Result {
+        if let name = openedPlaylist {
+            let tracks = playlists.playlist(named: name)?.tracks ?? []
+            guard tracks.indices.contains(trackSelection) else { return .ignored }
+            playlists.remove(tracks[trackSelection], from: name)
+            // Keep the arm on a real row after the list shrinks.
+            trackSelection = min(trackSelection, max(tracks.count - 2, 0))
+            return .handled
+        }
         guard tab == .playlists else { return removeArmedFromQueue() }
         guard playlists.playlists.indices.contains(playlistsSelection) else { return .ignored }
         playlists.remove(named: playlists.playlists[playlistsSelection].name)
         playlistsSelection = min(playlistsSelection, max(playlists.count - 1, 0))
+        return .handled
+    }
+
+    /// `p` — play the armed playlist without drilling in.
+    private func playArmedPlaylist() -> KeyPress.Result {
+        guard tab == .playlists, openedPlaylist == nil else { return .ignored }
+        guard playlists.playlists.indices.contains(playlistsSelection) else { return .ignored }
+        let playlist = playlists.playlists[playlistsSelection]
+        guard !playlist.tracks.isEmpty else { return .ignored }
+        // A playlist replaces the queue: it is a thing you listen to, not a set
+        // of suggestions to merge into whatever was lined up.
+        queue.replace(playlist.tracks)
+        player.play(playlist.tracks, startAt: 0)
         return .handled
     }
 
@@ -580,7 +625,9 @@ struct MusicPanelView: View {
 
     private var playlistsTab: some View {
         Group {
-            if playlists.isEmpty {
+            if let name = openedPlaylist {
+                playlistDetail(name)
+            } else if playlists.isEmpty {
                 emptyState(
                     icon: "square.stack",
                     title: "No playlists yet",
@@ -596,22 +643,142 @@ struct MusicPanelView: View {
         ))
     }
 
-    private var playlistsList: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 4) {
-                    ForEach(Array(playlists.playlists.enumerated()), id: \.element.id) { index, playlist in
-                        playlistRow(index: index, playlist: playlist)
-                            .id(playlist.id)
+    /// Inside one playlist: play from a track, or take a track out of it.
+    private func playlistDetail(_ name: String) -> some View {
+        let tracks = playlists.playlist(named: name)?.tracks ?? []
+        return VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Button {
+                    withAnimation(.snappy(duration: 0.2, extraBounce: 0.2)) { openedPlaylist = nil }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(name)
+                            .font(.custom(bar.fontFamily, size: 11))
+                            .lineLimit(1)
+                    }
+                    .foregroundColor(dim)
+                }
+                .buttonStyle(.plain)
+
+                Spacer(minLength: 0)
+
+                Text("enter play · x remove · h back")
+                    .font(.custom(bar.fontFamily, size: 10))
+                    .foregroundColor(dim.opacity(0.8))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+
+            if tracks.isEmpty {
+                emptyState(
+                    icon: "music.note",
+                    title: "Playlist is empty",
+                    subtitle: "Press a on a playlist to add the playing track, or save the queue with s."
+                )
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 2) {
+                            ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                                detailRow(index: index, track: track, playlist: name)
+                                    .id(track.id)
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                    }
+                    .onChange(of: trackSelection) { _, new in
+                        guard tracks.indices.contains(new) else { return }
+                        withAnimation(.snappy(duration: 0.2, extraBounce: 0.2)) {
+                            proxy.scrollTo(tracks[new].id, anchor: .center)
+                        }
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
             }
-            .onChange(of: playlistsSelection) { _, new in
-                guard playlists.playlists.indices.contains(new) else { return }
-                withAnimation(.snappy(duration: 0.21, extraBounce: 0.22)) {
-                    proxy.scrollTo(playlists.playlists[new].id, anchor: .center)
+        }
+        // Esc steps out of the playlist instead of closing the whole panel.
+        .onExitCommand {
+            withAnimation(.snappy(duration: 0.2, extraBounce: 0.2)) { openedPlaylist = nil }
+        }
+    }
+
+    private func detailRow(index: Int, track: MusicTrack, playlist: String) -> some View {
+        let armed = index == trackSelection
+        let playing = player.current == track
+        return HStack(spacing: 10) {
+            Text("\(index + 1)")
+                .font(.custom(bar.fontFamily, size: 10))
+                .foregroundColor(dim.opacity(0.7))
+                .frame(width: 22, alignment: .trailing)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(track.displayTitle)
+                    .font(.custom(bar.fontFamily, size: 12))
+                    .foregroundColor(playing ? accent : foreground)
+                    .lineLimit(1)
+                Text(track.displayArtist)
+                    .font(.custom(bar.fontFamily, size: 10))
+                    .foregroundColor(dim)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            if playing {
+                Image(systemName: player.isPlaying ? "speaker.wave.2.fill" : "speaker.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(accent)
+            }
+            Button {
+                playlists.remove(track, from: playlist)
+                trackSelection = min(trackSelection, max(index - 1, 0))
+            } label: {
+                Image(systemName: "minus.circle")
+                    .font(.system(size: 11))
+                    .foregroundColor(dim.opacity(0.8))
+            }
+            .buttonStyle(.plain)
+            .help("remove from playlist")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(armed ? accent.opacity(0.16) : Color.clear)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .onTapGesture {
+            trackSelection = index
+            _ = activate()
+        }
+    }
+
+    private var playlistsList: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("s saves the queue · p plays · enter opens")
+                    .font(.custom(bar.fontFamily, size: 10))
+                    .foregroundColor(dim.opacity(0.8))
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 8)
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 4) {
+                        ForEach(Array(playlists.playlists.enumerated()), id: \.element.id) { index, playlist in
+                            playlistRow(index: index, playlist: playlist)
+                                .id(playlist.id)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                }
+                .onChange(of: playlistsSelection) { _, new in
+                    guard playlists.playlists.indices.contains(new) else { return }
+                    withAnimation(.snappy(duration: 0.21, extraBounce: 0.22)) {
+                        proxy.scrollTo(playlists.playlists[new].id, anchor: .center)
+                    }
                 }
             }
         }
@@ -642,6 +809,9 @@ struct MusicPanelView: View {
             Text("\(playlist.count)")
                 .font(.custom(bar.fontFamily, size: 10))
                 .foregroundColor(dim)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(dim.opacity(0.6))
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
@@ -773,6 +943,12 @@ struct MusicPanelView: View {
 
     /// `h`/`l` — walk the tabs.
     private func shiftTab(_ delta: Int) -> KeyPress.Result {
+        // Inside a playlist, `h` steps back to the list rather than the previous tab.
+        if openedPlaylist != nil {
+            guard delta < 0 else { return .handled }
+            withAnimation(.snappy(duration: 0.2, extraBounce: 0.2)) { openedPlaylist = nil }
+            return .handled
+        }
         let all = Tab.allCases
         guard let current = all.firstIndex(of: tab) else { return .ignored }
         let next = min(max(current + delta, 0), all.count - 1)
@@ -1336,14 +1512,18 @@ private struct MusicKeys: ViewModifier {
     func body(content: Content) -> some View {
         content
             .onKeyPress(.upArrow, phases: .down) { press in
-                guard press.modifiers.contains(.command) else { return move(-1) }
-                volume(0.05)
-                return .handled
+                if press.modifiers.contains(.command) {
+                    volume(0.05)
+                    return .handled
+                }
+                return typed { move(-1) }
             }
             .onKeyPress(.downArrow, phases: .down) { press in
-                guard press.modifiers.contains(.command) else { return move(1) }
-                volume(-0.05)
-                return .handled
+                if press.modifiers.contains(.command) {
+                    volume(-0.05)
+                    return .handled
+                }
+                return typed { move(1) }
             }
             .onKeyPress(.leftArrow, phases: .down) { press in
                 guard press.modifiers.contains(.command) else { return .ignored }
@@ -1355,12 +1535,20 @@ private struct MusicKeys: ViewModifier {
                 seek(5)
                 return .handled
             }
-            .onKeyPress(.return, phases: .down) { press in activate() }
-            .onKeyPress(.space, phases: .down) { press in
-                guard !fieldFocused else { return .ignored }
-                togglePlay()
-                return .handled
+            .onKeyPress(.return, phases: .down) { _ in typed(activate) }
+            .onKeyPress(.space, phases: .down) { _ in
+                typed {
+                    togglePlay()
+                    return .handled
+                }
             }
+    }
+
+    /// A text field with the keyboard (the search box, or the playlist name)
+    /// gets every key: Enter submits the field, arrows move its caret, and the
+    /// transport must not act on them.
+    private func typed(_ action: () -> KeyPress.Result) -> KeyPress.Result {
+        fieldFocused ? .ignored : action()
     }
 }
 
@@ -1372,6 +1560,7 @@ private struct MusicLetterKeys: ViewModifier {
     let addToQueue: () -> KeyPress.Result
     let removeFromQueue: () -> KeyPress.Result
     let savePlaylist: () -> KeyPress.Result
+    let playPlaylist: () -> KeyPress.Result
     let moveInQueue: (Int) -> KeyPress.Result
     let fieldFocused: Bool
 
@@ -1382,6 +1571,7 @@ private struct MusicLetterKeys: ViewModifier {
             .onKeyPress("a", phases: .down) { _ in typed(addToQueue) }
             .onKeyPress("x", phases: .down) { _ in typed(removeFromQueue) }
             .onKeyPress("s", phases: .down) { _ in typed(savePlaylist) }
+            .onKeyPress("p", phases: .down) { _ in typed(playPlaylist) }
             .onKeyPress("J", phases: .down) { _ in typed { moveInQueue(1) } }
             .onKeyPress("K", phases: .down) { _ in typed { moveInQueue(-1) } }
     }
