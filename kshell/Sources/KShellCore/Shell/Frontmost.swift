@@ -18,14 +18,35 @@ enum Frontmost {
     /// Take the front, remembering who had it. Safe to call repeatedly — only
     /// the first call records, since later panels are not the ones that stole it.
     static func claim() {
-        if previous == nil {
-            previous = NSWorkspace.shared.frontmostApplication
+        let me = ProcessInfo.processInfo.processIdentifier
+        let front = NSWorkspace.shared.frontmostApplication
+
+        // Only remember a *different* app. When a panel closes without handing the
+        // front back the shell is itself frontmost, and recording that makes
+        // `handBack()` a no-op — which is how the shell gets stranded below.
+        if previous == nil, front?.processIdentifier != me {
+            previous = front
         }
-        // Deliberately the forcible activation. The polite `activate()` lets a
-        // frontmost terminal keep the keyboard, so the panel appears but never
-        // becomes key: typing, Enter and Escape all go to the other app, which
-        // looks exactly like the overlay ignoring input.
+
+        guard !NSApp.isActive else { return }
+
+        // The WindowServer can still report the shell frontmost while NSApp is
+        // inactive (a panel closed, the front was never handed back). In that
+        // state `activate(ignoringOtherApps:)` is a no-op — AppKit believes we
+        // already have the front — so no window can become key: every keystroke
+        // beeps and clicks do nothing at all until the shell is restarted.
+        // Resigning first clears that belief and makes the activation real.
+        if front?.processIdentifier == me {
+            NSApp.deactivate()
+        }
         NSApp.activate(ignoringOtherApps: true)
+
+        // Activation is asynchronous, so verify a turn later and force it through
+        // the running-application path if AppKit still has not taken it.
+        DispatchQueue.main.async {
+            guard !NSApp.isActive else { return }
+            NSRunningApplication.current.activate(options: [.activateAllWindows])
+        }
     }
 
     /// Give the front back, if the shell still has it. If something else took it
@@ -37,7 +58,11 @@ enum Frontmost {
         let me = ProcessInfo.processInfo.processIdentifier
         guard app.processIdentifier != me else { return }
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == me else { return }
-        app.activate(options: [])
+        if app.activate(options: []) { return }
+        // Dropped: the shell still owns the front with no key window, which is
+        // the dead-keyboard state. Resign so the WindowServer promotes someone
+        // else, rather than sitting in front owning nothing.
+        if NSApp.isActive { NSApp.deactivate() }
     }
 
     /// Forget the remembered app — for when the shell opened something that owns

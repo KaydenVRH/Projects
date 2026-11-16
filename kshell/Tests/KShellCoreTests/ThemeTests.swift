@@ -129,7 +129,7 @@ final class ThemeTests: XCTestCase {
         )
         let result = ThemeApplier.apply(theme, config: config)
         XCTAssertEqual(result.failed, [])
-        XCTAssertEqual(result.changed, ["kitty", "nvim", "kshell"])
+        XCTAssertEqual(result.changed, ["kitty", "tmux", "nvim", "kshell"])
 
         let kitty = try String(contentsOf: config.kittyConfig.url, encoding: .utf8)
         XCTAssertTrue(kitty.contains("include everforest.conf"))

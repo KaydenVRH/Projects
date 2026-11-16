@@ -24,6 +24,12 @@ public enum ThemeApplier {
             }
         }
 
+        if applyTmux(theme) {
+            result.changed.append("tmux")
+        } else {
+            result.failed.append("tmux")
+        }
+
         if let nvim = theme.nvim, !nvim.isEmpty {
             if setNvimTheme(nvim, palette: theme, path: KShellPaths.resolve(config.nvimInit)) {
                 result.changed.append("nvim")
@@ -59,6 +65,29 @@ public enum ThemeApplier {
         }
 
         return result
+    }
+
+    // MARK: - tmux
+
+    /// Rewrite `~/.config/tmux/theme.conf` from the palette and reload tmux.
+    ///
+    /// tmux cannot read kshell's config, so the shared writer in the dotfiles
+    /// repo owns the mapping — `theme-switch.sh` calls the same script, and the
+    /// two switchers cannot drift apart. A missing script is reported as a
+    /// failure rather than silently skipped, so the panel says which targets it
+    /// did not reach.
+    private static func applyTmux(_ theme: ThemeDefinition) -> Bool {
+        let script = KShellPaths.resolve("~/dotfiles/scripts/tmux-theme.sh")
+        guard FileManager.default.isExecutableFile(atPath: script.path) else { return false }
+
+        let palette = [
+            theme.name,
+            theme.accent, theme.highlight, theme.foreground,
+            theme.dim, theme.mid, theme.background,
+        ].map { $0 ?? "" }
+
+        let command = ([script.path] + palette.map(Shell.quote)).joined(separator: " ")
+        return Shell.capture(command, timeout: 10).contains("theme.conf written")
     }
 
     // MARK: - kitty

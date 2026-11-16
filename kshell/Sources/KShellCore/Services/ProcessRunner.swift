@@ -76,18 +76,34 @@ public final class ProcessRunner {
 
         let lock = NSLock()
         var output = Data()
+        var drainFinished = false
         let drained = DispatchSemaphore(value: 0)
         DispatchQueue.global(qos: .utility).async {
             let data = stdout.fileHandleForReading.readDataToEndOfFile()
             lock.lock()
             output = data
+            drainFinished = true
             lock.unlock()
             drained.signal()
         }
 
         if drained.wait(timeout: .now() + timeout) == .timedOut {
+            // SIGTERM first, then SIGKILL: a child that traps or ignores TERM
+            // (a wedged `aerospace`, a shell script waiting on a lock) would
+            // otherwise leave `waitUntilExit` below blocking for ever, and with
+            // it the serial queue this runner owns.
             process.terminate()
-            _ = drained.wait(timeout: .now() + 2)
+            if drained.wait(timeout: .now() + 1) == .timedOut {
+                kill(process.processIdentifier, SIGKILL)
+                _ = drained.wait(timeout: .now() + 1)
+            }
+            // A grandchild that inherited the pipe keeps the read end alive after
+            // the shell itself is dead, so the drain above never returns and leaks
+            // a thread per timed-out probe. Closing our end makes it return.
+            lock.lock()
+            let finished = drainFinished
+            lock.unlock()
+            if !finished { try? stdout.fileHandleForReading.close() }
         }
         process.waitUntilExit()
 

@@ -23,6 +23,9 @@ final class BarAutoHide {
         self.timer = timer
     }
 
+    /// Whether the pointer poll is currently armed.
+    var isRunning: Bool { timer != nil }
+
     func stop() {
         timer?.cancel()
         timer = nil

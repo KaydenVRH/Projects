@@ -125,6 +125,10 @@ public final class ShellController {
 
     private func subscribeToEvents() {
         let bus = EventBus.self
+        // `kshell trigger diagnose` — dump the state that decides whether the
+        // shell is on screen, into kshell.log. The bar can look dead while the
+        // process is perfectly healthy, and this is what tells the two apart.
+        eventTokens.append(bus.observe("diagnose") { [weak self] _ in self?.dumpState() })
         eventTokens.append(bus.observe("app_launcher_toggle") { [weak self] _ in self?.appLauncher?.toggle() })
         eventTokens.append(bus.observe("app_launcher_open") { [weak self] _ in self?.appLauncher?.show() })
         eventTokens.append(bus.observe("app_launcher_close") { [weak self] _ in self?.appLauncher?.hide() })
@@ -352,6 +356,42 @@ public final class ShellController {
         makeThemeLauncher()
         rebuildBars()
         rebuildVisualisers()
+    }
+
+    /// Print what the shell thinks its own windows are doing.
+    private func dumpState() {
+        let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"
+        let me = NSRunningApplication.current
+        var lines = [
+            "kshell: diagnose — front=\(front) shellFront=\(me.isActive) keyWindow=\(NSApp.keyWindow.map { "\(type(of: $0))" } ?? "none") covered=\(fullscreenDisplays.sorted()) manualHidden=\(manualHidden) autoHide=\(autoHide.isRunning)"
+        ]
+        for (i, bar) in bars.enumerated() {
+            let screen = FullscreenWatch.displayID(bar.targetScreen).map(String.init) ?? "?"
+            lines.append(
+                "  bar[\(i)] screen=\(screen) onscreen=\(bar.isVisible) revealed=\(bar.isRevealed) "
+                + "frame=\(bar.frame) sheet=\(bar.sheetHeight) hitRects=\(bar.hitRegionCount)"
+            )
+        }
+        // Every window the shell owns, whatever kind it is: a window that is
+        // still ordered in at a high level is what swallows clicks.
+        for window in NSApp.windows {
+            lines.append(
+                "  window \(type(of: window)) visible=\(window.isVisible) "
+                + "level=\(window.level.rawValue) frame=\(window.frame)"
+            )
+        }
+        FileHandle.standardError.write(Data((lines.joined(separator: "\n") + "\n").utf8))
+        // stderr is a launchd redirect, and it goes stale when the log file is
+        // rotated or recreated — a diagnose that writes only there can vanish
+        // entirely. Keep the last dump on disk too, where it can always be read.
+        let text = lines.joined(separator: "\n") + "\n"
+        let path = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Caches/kshell/diagnose.log")
+        try? FileManager.default.createDirectory(
+            at: path.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? text.write(to: path, atomically: true, encoding: .utf8)
     }
 
     /// Get out of the way of full-screen windows, and come back afterwards.

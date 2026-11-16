@@ -58,22 +58,14 @@ public enum Shell {
     }
 
     /// Runs a command synchronously and returns trimmed stdout ("" on failure).
-    /// Call off the main thread for anything slow.
-    public static func capture(_ command: String) -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lc", command]
-        let stdout = Pipe()
-        process.standardOutput = stdout
-        process.standardError = Pipe()
-        do {
-            try process.run()
-        } catch {
-            return ""
-        }
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    ///
+    /// Bounded and pipe-drained off the calling thread, like every other child
+    /// the shell starts. This used to read the pipe inline with no timeout, so
+    /// one wedged backend — `termusic info`, `nowplaying-cli`, an `aerospace`
+    /// query — parked whichever serial queue called it for the life of the
+    /// process. Call off the main thread for anything slow.
+    public static func capture(_ command: String, timeout: TimeInterval = 5) -> String {
+        ProcessRunner.runBounded(command: command, timeout: timeout)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

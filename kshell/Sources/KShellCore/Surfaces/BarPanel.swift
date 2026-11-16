@@ -61,7 +61,7 @@ public final class BarPanel: NSPanel {
     private var sheetAlign: OverlayAlign = .leading
     private var sheetWidth: CGFloat = 460
     private var sheetContentHeight: CGFloat = 306
-    private var sheetHeight: CGFloat = 0
+    public private(set) var sheetHeight: CGFloat = 0
     /// The fixed-size view holding the bar and the sheet area. The window clips
     /// whatever part of it is not in use.
     private weak var container: BarRootView?
@@ -485,6 +485,9 @@ public final class BarPanel: NSPanel {
         // too, on the same curve.
         publishSurface()
     }
+
+    /// How many regions currently accept clicks (1 = the bar, 2 = bar + sheet).
+    public var hitRegionCount: Int { container?.visibleRects.count ?? 0 }
 
     /// Whether the pointer is currently over this bar's shown area.
     public func containsMouseLocation() -> Bool {

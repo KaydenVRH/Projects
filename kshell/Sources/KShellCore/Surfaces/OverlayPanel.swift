@@ -68,7 +68,8 @@ public final class OverlayPanel: NSPanel {
     private weak var host: NSView?
     private var glass: SurfaceGlass?
     private var ticker: DispatchSourceTimer?
-    private var isShown = false
+    private var activationObserver: NSObjectProtocol?
+    public private(set) var isShown = false
 
     public init(
         screen: NSScreen,
@@ -153,7 +154,10 @@ public final class OverlayPanel: NSPanel {
         isMovable = false
         isMovableByWindowBackground = false
         hidesOnDeactivate = false
-        becomesKeyOnlyIfNeeded = true
+        // A keyboard panel must become key on a click anywhere in it. With this
+        // left on, clicking the body of a launcher never made the panel key, so
+        // nothing inside it could take focus.
+        becomesKeyOnlyIfNeeded = !takesKeyboard
         // No `.fullScreenAuxiliary`: the panels step aside for full-screen apps.
         collectionBehavior = [.canJoinAllSpaces, .ignoresCycle]
 
@@ -231,8 +235,7 @@ public final class OverlayPanel: NSPanel {
 
         if takesKeyboard {
             Frontmost.claim()
-            makeKeyAndOrderFront(nil)
-            makeKey()
+            takeKeyboard()
         } else {
             // A notification card appears without taking anything: no key
             // window, no app activation, so typing carries on undisturbed.
@@ -270,7 +273,45 @@ public final class OverlayPanel: NSPanel {
         isShown ? hide(animated: animated) : show(animated: animated)
     }
 
+    /// Put this panel in front and make it the key window.
+    ///
+    /// `NSApp.activate` is asynchronous: the `makeKey()` issued in the same turn
+    /// is dropped, so the panel appears while the shell is the active app with
+    /// no key window at all. Every keystroke then goes nowhere and nothing in
+    /// the panel gains focus — it looks alive and takes nothing. Re-assert on
+    /// the next turn, and again when activation actually lands.
+    private func takeKeyboard() {
+        reassertKey()
+        if activationObserver == nil {
+            activationObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.reassertKey()
+            }
+        }
+    }
+
+    /// Order the panel front and make it key, retrying briefly.
+    ///
+    /// Window ordering can also land a frame late, and a key window that is
+    /// asked for before the window is on screen is silently refused — which
+    /// leaves an active shell with no key window, the state that beeps at every
+    /// keystroke. Keep asking for a few turns until it takes.
+    private func reassertKey(attempt: Int = 0) {
+        guard isShown, takesKeyboard else { return }
+        makeKeyAndOrderFront(nil)
+        makeKey()
+        guard !isKeyWindow, attempt < 6 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.reassertKey(attempt: attempt + 1)
+        }
+    }
+
     private func finishHide() {
+        if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) }
+        activationObserver = nil
         ticker?.cancel()
         ticker = nil
         glass?.park()

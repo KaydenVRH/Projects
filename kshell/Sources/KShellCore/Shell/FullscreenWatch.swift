@@ -50,9 +50,17 @@ final class FullscreenWatch {
         covered = []
     }
 
-    /// Ask again now, without waiting for the next poll.
+    /// Re-evaluate against the windows that are on screen right now.
+    ///
+    /// Deliberately no process: the cached `flagged` set plus the window
+    /// server's own geometry is enough to answer "is anything still full
+    /// screen", and this runs on every application activation. Spawning
+    /// `aerospace` here put a full subprocess behind a serial queue that the
+    /// half-second poll already keeps busy, so a burst of activations built a
+    /// backlog that left `flagged` minutes stale — and a stale entry keeps its
+    /// display in `covered`, which is the shell hiding itself with no way back.
     func refresh() {
-        runner.runOnce(command: Self.command) { [weak self] output in self?.apply(output) }
+        evaluate()
     }
 
     private func apply(_ output: String) {
@@ -122,11 +130,22 @@ final class FullscreenWatch {
             let isFullscreen = number.map { flagged.contains($0) } ?? false
             guard isFullscreen || covers(rect, mainDisplay: main, screens: screens) else { continue }
 
-            for screen in screens where rect.intersects(screen.frame) {
-                if let id = displayID(screen) { covered.insert(id) }
+            // Only the display this window actually fills. A window that merely
+            // overlaps a second screen must not take that display's bar away too
+            // — one full-screen app used to blank every bar its window touched.
+            let home = screens.max { overlap(rect, $0.frame) < overlap(rect, $1.frame) }
+            if let home, overlap(rect, home.frame) > 0, let id = displayID(home) {
+                covered.insert(id)
             }
         }
         return covered
+    }
+
+    /// How much of `rect` lands on `screen`, in square points.
+    private static func overlap(_ rect: CGRect, _ screen: CGRect) -> CGFloat {
+        let shared = rect.intersection(screen)
+        guard !shared.isNull, !shared.isEmpty else { return 0 }
+        return shared.width * shared.height
     }
 
     /// A window that genuinely reaches a display's edges counts as full screen.

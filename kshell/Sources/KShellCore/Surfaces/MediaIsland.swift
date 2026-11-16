@@ -34,6 +34,7 @@ public final class MediaIslandPanel: NSPanel {
     private var localGlass: NSVisualEffectView?
     private var mask = CAShapeLayer()
     private var ticker: DispatchSourceTimer?
+    private var activationObserver: NSObjectProtocol?
     private var progress: CGFloat = 0
     private var isShown = false
 
@@ -167,13 +168,32 @@ public final class MediaIslandPanel: NSPanel {
 
     public func show(animated: Bool) {
         guard !isShown else { return }
+        if activationObserver == nil {
+            activationObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self, self.isShown else { return }
+                self.makeKeyAndOrderFront(nil)
+                self.makeKey()
+            }
+        }
         isShown = true
 
         glass = makeGlass?(targetScreen)
         apply(progress: 0)
 
         Frontmost.claim()
+        // Activation is asynchronous — see OverlayPanel.takeKeyboard. A panel
+        // ordered front before the app is active never becomes key, and then
+        // takes no input at all.
         makeKeyAndOrderFront(nil)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isShown else { return }
+            self.makeKeyAndOrderFront(nil)
+            self.makeKey()
+        }
 
         guard animated else {
             apply(progress: 1)
@@ -202,6 +222,8 @@ public final class MediaIslandPanel: NSPanel {
     }
 
     private func finishHide() {
+        if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) }
+        activationObserver = nil
         ticker?.cancel()
         ticker = nil
         glass?.park()
