@@ -15,6 +15,7 @@ public final class ShellController {
     private var musicLauncher: MusicPanel?
     private var musicLibrary: MusicLibrary?
     private var musicQueue: MusicQueue?
+    private var musicPlaylists: MusicPlaylists?
     private var mediaCenterAlign: OverlayAlign?
     private lazy var autoHide = BarAutoHide(
         bars: { [weak self] in self?.bars ?? [] },
@@ -491,9 +492,24 @@ public final class ShellController {
             musicQueue = queue
         }
 
+        // Playlists outlive the panel too — they are the user's, not the view's.
+        let playlists: MusicPlaylists
+        if let existing = musicPlaylists {
+            playlists = existing
+        } else {
+            playlists = MusicPlaylists()
+            musicPlaylists = playlists
+        }
+
         MusicPlayer.shared.libraryProvider = { [weak library] in library?.tracks ?? [] }
         if musicLauncher == nil {
-            musicLauncher = MusicPanel(viewModel: viewModel, library: library, queue: queue, margin: panelMargin)
+            musicLauncher = MusicPanel(
+                viewModel: viewModel,
+                library: library,
+                queue: queue,
+                playlists: playlists,
+                margin: panelMargin
+            )
         }
         library.refresh()
     }

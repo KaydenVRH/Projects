@@ -16,6 +16,28 @@ import MediaPlayer
 /// State is also mirrored into a small JSON file so the bar's shell-script
 /// widgets (separate processes) can show it.
 public final class MusicPlayer: NSObject, ObservableObject {
+    /// What happens when a track ends.
+    public enum RepeatMode: String, CaseIterable, Sendable {
+        /// Stop after the last track of the queue.
+        case off
+        /// Wrap round to the first track.
+        case all
+        /// Play the same track again.
+        case one
+
+        public var symbol: String {
+            self == .one ? "repeat.1" : "repeat"
+        }
+
+        public var label: String {
+            switch self {
+            case .off: return "repeat off"
+            case .all: return "repeat all"
+            case .one: return "repeat one"
+            }
+        }
+    }
+
     public static let shared = MusicPlayer()
 
     @Published public private(set) var current: MusicTrack?
@@ -30,6 +52,30 @@ public final class MusicPlayer: NSObject, ObservableObject {
 
     /// A short history, so "previous" can step back through what was played.
     @Published public private(set) var history: [MusicTrack] = []
+
+    /// Repeat behaviour, remembered across launches. Defaults to `.all` because
+    /// that is what the player always did — a queue that runs out mid-session
+    /// was more annoying than one that loops.
+    @Published public private(set) var repeatMode: RepeatMode = RepeatMode(
+        rawValue: UserDefaults.standard.string(forKey: "music_repeat_mode_v1") ?? ""
+    ) ?? .all {
+        didSet {
+            UserDefaults.standard.set(repeatMode.rawValue, forKey: "music_repeat_mode_v1")
+        }
+    }
+
+    /// off → all → one → off.
+    public func cycleRepeat() {
+        switch repeatMode {
+        case .off: repeatMode = .all
+        case .all: repeatMode = .one
+        case .one: repeatMode = .off
+        }
+    }
+
+    public func setRepeat(_ mode: RepeatMode) {
+        repeatMode = mode
+    }
 
     /// Live bands for the desktop visualiser.
     public let spectrum = AudioSpectrum()
@@ -293,7 +339,13 @@ public final class MusicPlayer: NSObject, ObservableObject {
         ) { [weak self] _ in
             DispatchQueue.main.async {
                 guard let self, self.scheduleToken == token else { return }
-                self.advance(step: 1)
+                // Repeat-one re-schedules the same track rather than advancing;
+                // `beginPlayback` skips the history entry for the same track.
+                if self.repeatMode == .one, let track = self.current {
+                    self.beginPlayback(track)
+                } else {
+                    self.advance(step: 1, auto: true)
+                }
             }
         }
     }
@@ -395,15 +447,22 @@ public final class MusicPlayer: NSObject, ObservableObject {
         writeSidecar()
     }
 
-    private func advance(step: Int, skippingUnplayable: Bool = false) {
+    /// Step through the queue.
+    ///
+    /// `auto` is a track that ended by itself: with repeat off that stops at the
+    /// end of the queue instead of wrapping. Manual next/previous always wrap —
+    /// pressing next on the last track should go somewhere.
+    private func advance(step: Int, skippingUnplayable: Bool = false, auto: Bool = false) {
         guard !queue.isEmpty else {
             stop()
             return
         }
         let next = index + step
         if next >= queue.count {
-            // Wrap round rather than stopping: a music player that runs out of
-            // queue mid-session is more annoying than one that loops.
+            if auto && repeatMode == .off {
+                stop()
+                return
+            }
             index = 0
         } else if next < 0 {
             index = queue.count - 1

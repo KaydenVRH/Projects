@@ -7,12 +7,20 @@ public final class MusicPanel {
     private let viewModel: BarViewModel
     private let library: MusicLibrary
     private let queue: MusicQueue
+    private let playlists: MusicPlaylists
     private let overlay: OverlayLauncher
 
-    public init(viewModel: BarViewModel, library: MusicLibrary, queue: MusicQueue, margin: CGFloat = 0) {
+    public init(
+        viewModel: BarViewModel,
+        library: MusicLibrary,
+        queue: MusicQueue,
+        playlists: MusicPlaylists,
+        margin: CGFloat = 0
+    ) {
         self.viewModel = viewModel
         self.library = library
         self.queue = queue
+        self.playlists = playlists
         overlay = OverlayLauncher(
             viewModel: viewModel,
             edge: .bottom,
@@ -29,6 +37,7 @@ public final class MusicPanel {
                     viewModel: viewModel,
                     library: library,
                     queue: queue,
+                    playlists: playlists,
                     downloads: .shared,
                     player: .shared,
                     onClose: onClose
@@ -50,6 +59,7 @@ struct MusicPanelView: View {
     @ObservedObject var viewModel: BarViewModel
     @ObservedObject var library: MusicLibrary
     @ObservedObject var queue: MusicQueue
+    @ObservedObject var playlists: MusicPlaylists
     @ObservedObject var downloads: MusicDownloads
     @ObservedObject var player: MusicPlayer
     let onClose: () -> Void
@@ -58,12 +68,14 @@ struct MusicPanelView: View {
         case search = "Search"
         case library = "Library"
         case queue = "Queue"
+        case playlists = "Playlists"
         var id: String { rawValue }
         var icon: String {
             switch self {
             case .search: return "magnifyingglass"
             case .library: return "music.note.list"
             case .queue: return "list.bullet"
+            case .playlists: return "square.stack"
             }
         }
     }
@@ -74,6 +86,11 @@ struct MusicPanelView: View {
     @State private var librarySelection = 0
     @State private var resultSelection = 0
     @State private var queueSelection = 0
+    @State private var playlistsSelection = 0
+    /// Naming a playlist: the field takes the keyboard until Enter or Esc.
+    @State private var naming = false
+    @State private var newName = ""
+    @FocusState private var namingFocused: Bool
     @FocusState private var focusedField: Bool
     @FocusState private var panelFocused: Bool
     @Namespace private var pill
@@ -107,8 +124,9 @@ struct MusicPanelView: View {
         ))
         .modifier(MusicLetterKeys(
             shiftTab: shiftTab,
-            addToQueue: addArmedToQueue,
-            removeFromQueue: removeArmedFromQueue,
+            addToQueue: letterA,
+            removeFromQueue: letterX,
+            savePlaylist: startSavingPlaylist,
             moveInQueue: shiftArmedInQueue,
             fieldFocused: focusedField
         ))
@@ -152,6 +170,7 @@ struct MusicPanelView: View {
     private var panel: some View {
         VStack(spacing: 0) {
             header
+            if naming { namingRow }
             if !downloads.jobs.filter(\.isActive).isEmpty { downloadsStrip }
             Divider().overlay(dim.opacity(0.18))
             content
@@ -169,6 +188,7 @@ struct MusicPanelView: View {
         case .search: return resultSelection
         case .library: return librarySelection
         case .queue: return queueSelection
+        case .playlists: return playlistsSelection
         }
     }
 
@@ -177,6 +197,7 @@ struct MusicPanelView: View {
         case .search: return downloads.results.count
         case .library: return library.tracks.count
         case .queue: return queue.tracks.count
+        case .playlists: return playlists.count
         }
     }
 
@@ -185,6 +206,7 @@ struct MusicPanelView: View {
         case .search: resultSelection = value
         case .library: librarySelection = value
         case .queue: queueSelection = value
+        case .playlists: playlistsSelection = value
         }
     }
 
@@ -205,7 +227,8 @@ struct MusicPanelView: View {
         return .handled
     }
 
-    /// Run the armed row: play it in the library, download it in search.
+    /// Run the armed row: play it in the library, download it in search, play the
+    /// playlist in playlists.
     private func activate() -> KeyPress.Result {
         switch tab {
         case .library:
@@ -217,8 +240,69 @@ struct MusicPanelView: View {
         case .queue:
             guard queue.tracks.indices.contains(queueSelection) else { return .ignored }
             player.play(queue.tracks, startAt: queueSelection)
+        case .playlists:
+            guard playlists.playlists.indices.contains(playlistsSelection) else { return .ignored }
+            let playlist = playlists.playlists[playlistsSelection]
+            guard !playlist.tracks.isEmpty else { return .ignored }
+            // A playlist replaces the queue: it is a thing you listen to, not a
+            // set of suggestions to merge into whatever was lined up.
+            queue.replace(playlist.tracks)
+            player.play(playlist.tracks, startAt: 0)
         }
         return .handled
+    }
+
+    /// `a` — queue the armed track, or in Playlists add the playing track to the
+    /// armed playlist.
+    private func letterA() -> KeyPress.Result {
+        guard tab == .playlists else { return addArmedToQueue() }
+        guard playlists.playlists.indices.contains(playlistsSelection),
+              let playing = player.current
+        else { return .ignored }
+        let name = playlists.playlists[playlistsSelection].name
+        playlists.add(playing, to: name)
+        return .handled
+    }
+
+    /// `x` — dequeue the armed track, or in Playlists delete the armed playlist.
+    private func letterX() -> KeyPress.Result {
+        guard tab == .playlists else { return removeArmedFromQueue() }
+        guard playlists.playlists.indices.contains(playlistsSelection) else { return .ignored }
+        playlists.remove(named: playlists.playlists[playlistsSelection].name)
+        playlistsSelection = min(playlistsSelection, max(playlists.count - 1, 0))
+        return .handled
+    }
+
+    /// `s` — save the queue as a playlist; the name is typed in the field above.
+    private func startSavingPlaylist() -> KeyPress.Result {
+        guard !queue.isEmpty else { return .ignored }
+        newName = playlists.uniqueName()
+        naming = true
+        focusedField = false
+        DispatchQueue.main.async { namingFocused = true }
+        return .handled
+    }
+
+    private func commitPlaylistName() {
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        naming = false
+        namingFocused = false
+        guard !name.isEmpty, !queue.isEmpty else {
+            refocusPanel()
+            return
+        }
+        playlists.save(name: name, tracks: queue.tracks)
+        tab = .playlists
+        if let at = playlists.playlists.firstIndex(where: { $0.name == name }) {
+            playlistsSelection = at
+        }
+        refocusPanel()
+    }
+
+    private func cancelNaming() {
+        naming = false
+        namingFocused = false
+        refocusPanel()
     }
 
     /// Scroll a list so the armed row stays in view.
@@ -333,6 +417,7 @@ struct MusicPanelView: View {
         case .search: searchTab
         case .library: libraryTab
         case .queue: queueTab
+        case .playlists: playlistsTab
         }
     }
 
@@ -463,6 +548,112 @@ struct MusicPanelView: View {
                 queue.remove(track)
             }
         )
+    }
+
+    // MARK: playlists
+
+    /// Naming a playlist: the queue becomes a named list.
+    private var namingRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "square.stack.badge.plus")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(accent)
+            TextField("Playlist name", text: $newName)
+                .textFieldStyle(.plain)
+                .font(.custom(bar.fontFamily, size: 12))
+                .foregroundColor(foreground)
+                .focused($namingFocused)
+                .onSubmit { commitPlaylistName() }
+                .onExitCommand { cancelNaming() }
+            Text(queue.count == 1 ? "1 track" : "\(queue.count) tracks")
+                .font(.custom(bar.fontFamily, size: 10))
+                .foregroundColor(dim)
+            Text("enter save · esc cancel")
+                .font(.custom(bar.fontFamily, size: 10))
+                .foregroundColor(dim.opacity(0.7))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(accent.opacity(0.08))
+        .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
+    private var playlistsTab: some View {
+        Group {
+            if playlists.isEmpty {
+                emptyState(
+                    icon: "square.stack",
+                    title: "No playlists yet",
+                    subtitle: "Line tracks up in the queue, then press s to save it here."
+                )
+            } else {
+                playlistsList
+            }
+        }
+        .transition(.asymmetric(
+            insertion: .move(edge: .trailing).combined(with: .opacity),
+            removal: .opacity
+        ))
+    }
+
+    private var playlistsList: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 4) {
+                    ForEach(Array(playlists.playlists.enumerated()), id: \.element.id) { index, playlist in
+                        playlistRow(index: index, playlist: playlist)
+                            .id(playlist.id)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+            }
+            .onChange(of: playlistsSelection) { _, new in
+                guard playlists.playlists.indices.contains(new) else { return }
+                withAnimation(.snappy(duration: 0.21, extraBounce: 0.22)) {
+                    proxy.scrollTo(playlists.playlists[new].id, anchor: .center)
+                }
+            }
+        }
+    }
+
+    private func playlistRow(index: Int, playlist: Playlist) -> some View {
+        let armed = index == playlistsSelection
+        let playing: Bool = {
+            guard let current = player.current else { return false }
+            return playlist.tracks.contains(current)
+        }()
+        return HStack(spacing: 10) {
+            Image(systemName: playing ? "speaker.wave.2.fill" : "square.stack")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(playing ? accent : dim)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(playlist.name)
+                    .font(.custom(bar.fontFamily, size: 12))
+                    .foregroundColor(foreground)
+                    .lineLimit(1)
+                Text(playlist.subtitle)
+                    .font(.custom(bar.fontFamily, size: 10))
+                    .foregroundColor(dim)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Text("\(playlist.count)")
+                .font(.custom(bar.fontFamily, size: 10))
+                .foregroundColor(dim)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(armed ? accent.opacity(0.16) : Color.clear)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .onTapGesture {
+            playlistsSelection = index
+            _ = activate()
+        }
     }
 
     private var queueTab: some View {
@@ -990,24 +1181,46 @@ private struct MusicPlayerBar: View {
 
     private var controls: some View {
         HStack(spacing: 14) {
-            button("backward.fill", size: 12) { player.previous() }
-            Button { player.toggle() } label: {
-                ZStack {
-                    Circle()
-                        .fill(accent.opacity(player.hasTrack ? 0.9 : 0.3))
-                        .frame(width: 30, height: 30)
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(theme.background?.color ?? .black)
-                        .offset(x: player.isPlaying ? 0 : 1)
+            HStack(spacing: 14) {
+                button("backward.fill", size: 12) { player.previous() }
+                Button { player.toggle() } label: {
+                    ZStack {
+                        Circle()
+                            .fill(accent.opacity(player.hasTrack ? 0.9 : 0.3))
+                            .frame(width: 30, height: 30)
+                        Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(theme.background?.color ?? .black)
+                            .offset(x: player.isPlaying ? 0 : 1)
+                    }
                 }
+                .buttonStyle(.plain)
+                .scaleEffect(player.isPlaying ? 1.04 : 1)
+                .animation(.snappy(duration: 0.21, extraBounce: 0.42), value: player.isPlaying)
+                button("forward.fill", size: 12) { player.next() }
+            }
+            .disabled(!player.hasTrack)
+
+            // Repeat works without a track, so it sits outside the disabled group.
+            Button { player.cycleRepeat() } label: {
+                Image(systemName: player.repeatMode.symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(player.repeatMode == .off ? dim.opacity(0.5) : accent)
+                    .overlay(alignment: .bottom) {
+                        // Both "off" and "all" use the plain repeat glyph, so a
+                        // dot marks the modes that actually loop.
+                        if player.repeatMode != .off {
+                            Circle()
+                                .fill(accent)
+                                .frame(width: 3, height: 3)
+                                .offset(y: 3)
+                        }
+                    }
+                    .frame(width: 14, height: 14)
             }
             .buttonStyle(.plain)
-            .scaleEffect(player.isPlaying ? 1.04 : 1)
-            .animation(.snappy(duration: 0.21, extraBounce: 0.42), value: player.isPlaying)
-            button("forward.fill", size: 12) { player.next() }
+            .help(player.repeatMode.label)
         }
-        .disabled(!player.hasTrack)
     }
 
     private var volume: some View {
@@ -1158,6 +1371,7 @@ private struct MusicLetterKeys: ViewModifier {
     let shiftTab: (Int) -> KeyPress.Result
     let addToQueue: () -> KeyPress.Result
     let removeFromQueue: () -> KeyPress.Result
+    let savePlaylist: () -> KeyPress.Result
     let moveInQueue: (Int) -> KeyPress.Result
     let fieldFocused: Bool
 
@@ -1167,6 +1381,7 @@ private struct MusicLetterKeys: ViewModifier {
             .onKeyPress("l", phases: .down) { _ in typed { shiftTab(1) } }
             .onKeyPress("a", phases: .down) { _ in typed(addToQueue) }
             .onKeyPress("x", phases: .down) { _ in typed(removeFromQueue) }
+            .onKeyPress("s", phases: .down) { _ in typed(savePlaylist) }
             .onKeyPress("J", phases: .down) { _ in typed { moveInQueue(1) } }
             .onKeyPress("K", phases: .down) { _ in typed { moveInQueue(-1) } }
     }
