@@ -1,0 +1,6 @@
+# Python bytecode from the helper scripts (lwp/, kshell tooling).
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store

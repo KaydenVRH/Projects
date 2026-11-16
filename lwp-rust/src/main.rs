@@ -24,6 +24,23 @@ fn ensure_state_dir() {
     fs::create_dir_all(STATE_DIR).ok();
 }
 
+/// Stdio pair for the detached worker, appending to `/tmp/lwp/lwp.log`.
+///
+/// The worker owns the only thread that can report a playback failure (bad
+/// codec, denied screen access), and its stdio used to be discarded, so a
+/// failure was silent.  Falling back to `null` keeps `set` working when the
+/// log cannot be opened.
+fn worker_log() -> (Stdio, Stdio) {
+    let path = format!("{STATE_DIR}/lwp.log");
+    match fs::OpenOptions::new().create(true).append(true).open(&path) {
+        Ok(f) => match f.try_clone() {
+            Ok(f2) => (Stdio::from(f), Stdio::from(f2)),
+            Err(_) => (Stdio::null(), Stdio::null()),
+        },
+        Err(_) => (Stdio::null(), Stdio::null()),
+    }
+}
+
 fn stop_wallpaper() {
     let p = PathBuf::from(PID_PATH);
     if let Ok(pid_str) = fs::read_to_string(&p) {
@@ -106,12 +123,13 @@ pub fn cmd_set_inner(path: &str) -> String {
     save_config(&vp, icons_hidden());
 
     let exe = std::env::current_exe().unwrap();
+    let (log_out, log_err) = worker_log();
     let child = Command::new(&exe)
         .arg("run")
         .arg("--path")
         .arg(&vp)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(log_out)
+        .stderr(log_err)
         .stdin(Stdio::null())
         .spawn()
         .unwrap_or_else(|e| {
@@ -146,13 +164,14 @@ fn cmd_set(path: &str, hide_icons: bool) {
     save_config(&vp, hide_icons);
 
     let exe = std::env::current_exe().unwrap();
+    let (log_out, log_err) = worker_log();
     let child = Command::new(&exe)
         .arg("run")
         .arg("--path")
         .arg(&vp)
         .args(if hide_icons { vec!["--hide-icons"] } else { vec![] })
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(log_out)
+        .stderr(log_err)
         .stdin(Stdio::null())
         .spawn()
         .unwrap_or_else(|e| {
@@ -358,5 +377,19 @@ fn main() {
         Commands::AutostartRun => cmd_autostart_run(),
         Commands::Run { path, hide_icons } => cmd_run(&path, hide_icons),
         Commands::Interactive => tui::run().unwrap_or_else(|e| eprintln!("tui error: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn worker_log_creates_the_log_file() {
+        ensure_state_dir();
+        let path = format!("{STATE_DIR}/lwp.log");
+        let _ = fs::remove_file(&path);
+        let (_out, _err) = worker_log();
+        assert!(PathBuf::from(&path).exists(), "worker_log should create {path}");
     }
 }
