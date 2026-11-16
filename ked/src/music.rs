@@ -34,6 +34,7 @@ fn player_cmd(path: &str) -> Command {
 }
 
 /// Kill orphaned players from a previous session.
+#[cfg(not(test))]
 fn kill_orphans() {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     { let _ = Command::new("pkill").arg("-x").arg("mpv").output(); }
@@ -90,7 +91,7 @@ pub struct MusicPlayer {
 }
 
 impl MusicPlayer {
-    /// Create a fresh player, kill any orphaned `afplay` from a
+    /// Create a fresh player, kill any orphaned `mpv` from a
     /// previous ked session, and spawn the background audio thread.
     pub fn new() -> Self {
         #[cfg(not(test))]

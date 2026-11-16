@@ -10,8 +10,8 @@
 ```
 
 ked is a personal vim‑like text editor that runs entirely in your
-terminal. It's a single Rust binary: modal editing, hand‑rolled syntax
-highlighting, 31 themes, animated colour effects, a fuzzy finder, a
+terminal. It's a single Rust binary: modal editing, tree‑sitter syntax
+highlighting, 53 themes, animated colour effects, a fuzzy finder, a
 file tree, a real PTY shell, a music player, and a system dashboard —
 all in the alternate screen.
 
@@ -59,6 +59,17 @@ all in the alternate screen.
   Full-screen programs work properly (htop, btop, vim, less, fzf, …):
   a real terminal emulator handles cursor addressing, the alternate
   screen, scrolling, colours and resizing.  Type `exit` to close
+- **Hermes chat** — `Ctrl+Shift+H` (or `:hermes`) opens a chat with the
+  Hermes agent, running in the directory of the file you have open.  It
+  streams: answers appear as they are written, and tool calls show up as
+  they happen (`⚙ terminal  git status` → `↳ ok · 139 ms · clean`).
+  The conversation keeps its context across turns, so a follow-up question
+  still knows what you asked before — and it survives restarting ked, which
+  brings the transcript back with it.  `Ctrl+O` drops the path of the file
+  you are editing into the message, `Shift+Enter` starts a new line,
+  `Ctrl+Y` copies the last answer, `Ctrl+I` inserts it into the buffer at
+  the cursor, `Ctrl+N` starts a fresh session, `Esc` closes (and cancels a
+  turn that is still running)
 - **Run code** — `Ctrl+E` runs the buffer: `.py` via `python3`,
   `.rs` via `rustc`, `.c`/`.h` via `cc`, `.go` via `go run`; output
   appears in an overlay
@@ -103,19 +114,27 @@ all in the alternate screen.
 
 ### Looks
 
-- **31 themes** — 23 dark (default, mono, monokai, nord, gruvbox, bi,
+- **53 themes** — 40 dark (default, mono, monokai, nord, gruvbox, bi,
   blue-lagoon, catppuccin, tokyonight, amber, dracula, onedark,
   everforest, rosepine, oxocarbon, ayu, kanagawa, palenight, darkplus,
-  moonlight, osaka-jade, last-horizon, synthwave) and 8 light
-  (solarized, latte, gruvbox-light, one-light, github-light,
-  tokyonight-day, rosepine-dawn, everforest-light).
+  moonlight, osaka-jade, last-horizon, synthwave, amethyst-lagoon,
+  azure-glow, cherry-blossom, cobalt-2, ethereal, fiery-ocean, glow,
+  hackerman, lumon, matte-black, night-lagoon, ristretto, solitude,
+  sunset, vantablack, vice-city, void) and 13 light (solarized, latte,
+  gruvbox-light, one-light, github-light, tokyonight-day, rosepine-dawn,
+  everforest-light, alabaster, ayu-light, flexoki-light, lupine,
+  monochrome-light).  The kshell palettes are the source for the themes
+  ked gained in the sync; their token roles are derived from each
+  theme's accent, highlight, mid, and dim colours.
   Palettes follow the canonical Neovim theme colours, with distinct
   roles for keywords, functions, types, strings, constants, and
   properties.  **mono** is pure grayscale: tokens are separated by a
   lightness ramp plus bold/italic styling instead of hue.  Light
   themes pair dark accents with automatic contrast-aware status/selection
   text.  Try `:theme latte` for Catppuccin Latte
-- **Theme selector** — `Ctrl+T` list with live preview, Enter applies
+- **Theme selector** — `Ctrl+T` list with live preview, Enter applies,
+  plus a fuzzy filter: just start typing (`tok` → tokyonight), `↑↓`/`Ctrl+N/P`
+  to move, `Esc` clears the filter then closes
 - **Colour FX** — animated theme modes from the config: gentle hue
   drift, breathing lightness, or a warm amber-purple wander. Only the
   meaningful tokens move (keywords, functions, types, strings,
@@ -194,6 +213,7 @@ Run `:keys` inside ked to see the effective map.
 | `Ctrl+Shift+N` | remember something (quick capture) |
 | `Ctrl+Shift+M` | memories / reminders dashboard |
 | `Ctrl+Shift+A` | planner / month calendar |
+| `Ctrl+Shift+H` | Hermes chat |
 | `Ctrl+S` | save |
 | `Ctrl+C` | quit — or, from insert/visual mode, step back to normal mode first |
 | `Ctrl+Shift+V` | paste the clipboard image into the buffer as `![](img-….png)` |
@@ -295,7 +315,7 @@ files fall back to defaults.
 
 ```toml
 # ── appearance ──
-theme          = "oxocarbon"   # any of the 31 theme names
+theme          = "oxocarbon"   # any of the 53 theme names
 transparent    = false         # let the terminal background show through
 animations     = true          # tab shimmer, rainbow dashes, splash, fx
 bar_stats      = true          # context bar: language, buffers, clock
@@ -528,9 +548,9 @@ ked is one binary with no runtime dependencies beyond the OS.
   FX modes convert every colour through HSL and rotate hue or pulse
   lightness per frame.
 - **Shell** (`src/shell.rs`) — a real PTY (`openpty` + `fork` +
-  `execvp $SHELL`) with a small ANSI/SGR parser that turns shell
-  colours into ratatui styles, so `ls --color`, git diffs, and TUIs
-  render correctly.
+  `execvp $SHELL`) running the `vt100` terminal emulator, so `ls --color`,
+  git diffs, and full-screen TUIs render correctly.  A small SGR parser
+  next to it is used only for `glow` markdown-preview output.
 - **Music** (`src/music.rs`) — a background thread drives `mpv` and
   reports track ends over a channel, so playback advances without
   blocking the editor.
@@ -544,13 +564,16 @@ src/
   main.rs       entry point: terminal setup, event loop, kitty protocol
   editor.rs     editor core: modes, key handling, render, undo, scrolling
   highlight.rs  tree-sitter highlighting + language detection
-  theme.rs      31 themes + HSL hue rotation for colour FX
+  theme.rs      53 themes + HSL hue rotation for colour FX
+  keymap.rs     configurable key bindings (layers, defaults, :keys)
+  graphics.rs   inline images via the kitty graphics protocol
   config.rs     ~/.config/ked/config.toml loading
   finder.rs     fuzzy file finder (Ctrl+P)
   filetree.rs   file-tree panel with Nerd Font icons (Ctrl+F)
   music.rs      mpv-backed music player with auto-advance (Ctrl+M)
   memory.rs     notes / reminders / journal store + planner + LaunchAgent (Ctrl+Shift+N/M/A)
   shell.rs      real PTY + vt100 terminal emulator (Ctrl+J)
+  hermes.rs     Hermes chat: stream-json turns, transcript (Ctrl+Shift+H)
 ```
 
 ## Dependencies

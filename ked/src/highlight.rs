@@ -1652,7 +1652,7 @@ mod tests {
         // The whole point of tree-sitter: state across lines.
         let t = tokens(Lang::C, "/* start\nstill comment */\nint x;\n");
         let comment_lines: Vec<&(TokenKind, String)> =
-            t.iter().filter(|(k, s)| *k == TokenKind::Comment).collect();
+            t.iter().filter(|(k, _)| *k == TokenKind::Comment).collect();
         assert_eq!(comment_lines.len(), 2);
         assert!(comment_lines[0].1 == "/* start");
         assert!(comment_lines[1].1 == "still comment */");

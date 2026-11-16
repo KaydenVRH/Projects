@@ -47,6 +47,7 @@ use ratatui::{
 
 use crate::highlight;
 use crate::shell::ShellProcess;
+use crate::hermes::{Chat, Role};
 use crate::config::Config;
 use crate::theme::{Theme, ThemeKind};
 use crate::finder::Finder;
@@ -74,6 +75,7 @@ pub enum State {
     Music,   // music player picker (Ctrl+M)
     Theme,   // theme selector (Ctrl+T)
     Shell,   // pop-up shell (Ctrl+J) — handled in main.rs
+    Hermes,  // Hermes chat pane (Ctrl+Shift+H, :hermes)
     Visual,  // visual mode: selecting text with movement keys
     Search,  // typing a / search query on the status line
     FileTree,// file tree panel (Ctrl+F)
@@ -273,6 +275,9 @@ pub struct Editor {
     // ── music player (Ctrl+M) ──
     pub music_player: MusicPlayer,
 
+    // ── Hermes chat (Ctrl+Shift+H, `:hermes`) ──
+    pub hermes: Chat,
+
     // ── file ──
     pub filename: Option<String>,
     pub modified: bool,
@@ -297,6 +302,8 @@ pub struct Editor {
     pub theme_selected: usize,
     /// Scroll offset for the theme selector list.
     pub theme_scroll: usize,
+    /// Fuzzy filter typed into the theme selector.
+    pub theme_query: String,
 
     // ── flash message (shown in status bar, cleared next render) ──
     pub flash: Option<String>,
@@ -451,6 +458,11 @@ impl Editor {
             run_output: String::new(),
             run_scroll: 0,
             music_player: MusicPlayer::new(),
+            hermes: Chat::new(
+                std::env::current_dir().unwrap_or_default(),
+                cfg.hermes.command.clone(),
+                cfg.hermes.model.clone(),
+            ),
             filename,
             last_mtime,
             modified: false,
@@ -462,6 +474,7 @@ impl Editor {
             theme,
             theme_selected: ThemeKind::all().iter().position(|t| *t == theme).unwrap_or(0),
             theme_scroll: 0,
+            theme_query: String::new(),
             flash: startup_flash,
             cache_w: 80,
             cache_h: 24,
@@ -572,6 +585,12 @@ impl Editor {
             return self.handle_shell_state(key);
         }
 
+        // The Hermes pane owns every key while it is open: characters go into
+        // the message line, Esc leaves, Ctrl+C stops a running turn.
+        if self.state == State::Hermes {
+            return self.handle_hermes_state(key);
+        }
+
         // Clear any flash message on the next keypress.
         self.flash = None;
 
@@ -598,10 +617,16 @@ impl Editor {
             return true;
         }
 
-        // Ctrl+T = theme selector (opens from any state).
+        // Ctrl+T = theme selector (toggles from any state).
         if key.code == KeyCode::Char('t') && key.modifiers == KeyModifiers::CONTROL {
-            self.state = State::Theme;
-            self.theme_selected = 0;
+            if self.state == State::Theme {
+                self.state = State::Normal;
+            } else {
+                self.state = State::Theme;
+                self.theme_selected = 0;
+                self.theme_scroll = 0;
+                self.theme_query.clear();
+            }
             return true;
         }
 
@@ -619,6 +644,18 @@ impl Editor {
         // Ctrl+J = pop-up shell (opens from any state *except* shell).
         if key.code == KeyCode::Char('j') && key.modifiers == KeyModifiers::CONTROL {
             self.open_shell();
+            return true;
+        }
+
+        // Ctrl+Shift+H = Hermes chat (toggles). Terminals differ on how they
+        // report the shift — some fold it into an uppercase character — so
+        // accept either form; `:hermes` is always available.
+        if matches!(key.code, KeyCode::Char('h') | KeyCode::Char('H'))
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && (key.modifiers.contains(KeyModifiers::SHIFT)
+                || matches!(key.code, KeyCode::Char('H')))
+        {
+            self.toggle_hermes();
             return true;
         }
 
@@ -640,6 +677,7 @@ impl Editor {
             State::Planner => return self.handle_planner_state(key),
             State::Normal => {}
             State::Shell => {}
+            State::Hermes => {}
             State::Visual => {}
         }
 
@@ -1693,29 +1731,91 @@ impl Editor {
 
     // ── theme-selector state ────────────────────────────────────
 
+    /// Themes matching the current filter, best match first.
+    ///
+    /// An empty query keeps the canonical `ThemeKind::all()` order (dark
+    /// palettes first, then the light ones) so the unfiltered list looks
+    /// exactly as it did before search existed.  Scoring is the file
+    /// finder's subsequence matcher, so `rp` finds `rose-pine` and `oned`
+    /// finds `onedark` — theme names are already lowercase kebab, which is
+    /// what `fuzzy_score` expects.
+    fn theme_matches(&self) -> Vec<ThemeKind> {
+        if self.theme_query.is_empty() {
+            return ThemeKind::all().to_vec();
+        }
+        let q: Vec<char> = self.theme_query.chars().flat_map(|c| c.to_lowercase()).collect();
+        let mut scored: Vec<(ThemeKind, i32)> = ThemeKind::all()
+            .iter()
+            .filter_map(|t| crate::finder::fuzzy_score(&q, t.name()).map(|score| (*t, score)))
+            .collect();
+        scored.sort_by(|a, b| {
+            a.1.cmp(&b.1).then_with(|| a.0.name().cmp(b.0.name()))
+        });
+        scored.into_iter().map(|(t, _)| t).collect()
+    }
+
     fn handle_theme_state(&mut self, key: KeyEvent) -> bool {
-        let themes = ThemeKind::all();
+        let matches = self.theme_matches();
         match key.code {
-            // Esc / Enter: close selector, apply selection.
-            KeyCode::Esc => self.state = State::Normal,
-            KeyCode::Enter => {
-                self.theme = themes[self.theme_selected];
-                self.state = State::Normal;
+            // Esc: clear the filter first, close once there is nothing to clear.
+            KeyCode::Esc => {
+                if self.theme_query.is_empty() {
+                    self.state = State::Normal;
+                } else {
+                    self.theme_query.clear();
+                    self.theme_selected = 0;
+                    self.theme_scroll = 0;
+                }
             }
-            // Navigation.
-            KeyCode::Up | KeyCode::Char('k') => {
+            // Enter: apply the highlighted theme.
+            KeyCode::Enter => {
+                if let Some(t) = matches.get(self.theme_selected) {
+                    self.theme = *t;
+                    self.state = State::Normal;
+                }
+            }
+            // Navigation: arrows / Ctrl+N / Ctrl+P, like the file finder.
+            // Plain characters go to the filter, so j/k type rather than move.
+            KeyCode::Up => {
                 self.theme_selected = self.theme_selected.saturating_sub(1);
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                let max = themes.len().saturating_sub(1);
-                self.theme_selected = (self.theme_selected + 1).min(max);
+            KeyCode::Char('p') if key.modifiers == KeyModifiers::CONTROL => {
+                self.theme_selected = self.theme_selected.saturating_sub(1);
             }
-            // Ctrl+C/D: quit.
+            KeyCode::Down => {
+                let max = matches.len().saturating_sub(1);
+                self.theme_selected = min(self.theme_selected + 1, max);
+            }
+            KeyCode::Char('n') if key.modifiers == KeyModifiers::CONTROL => {
+                let max = matches.len().saturating_sub(1);
+                self.theme_selected = min(self.theme_selected + 1, max);
+            }
+            KeyCode::PageUp => {
+                self.theme_selected = self.theme_selected.saturating_sub(10);
+            }
+            KeyCode::PageDown => {
+                let max = matches.len().saturating_sub(1);
+                self.theme_selected = min(self.theme_selected + 10, max);
+            }
+            // Backspace: drop the last filter character.
+            KeyCode::Backspace => {
+                self.theme_query.pop();
+                self.theme_selected = 0;
+                self.theme_scroll = 0;
+            }
             // Ctrl+C: quit.
-            KeyCode::Char('c')
-                if key.modifiers == KeyModifiers::CONTROL =>
-            {
+            KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
                 return false;
+            }
+            // Anything else printable narrows the filter.
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.theme_query.push(c);
+                self.theme_selected = 0;
+                self.theme_scroll = 0;
             }
             _ => {}
         }
@@ -1857,11 +1957,319 @@ impl Editor {
         true
     }
 
+    // ── Hermes chat (Ctrl+Shift+H, `:hermes`) ──────────────────────
+
+    /// Open the chat pane, pointed at the file's directory so hermes picks up
+    /// the project's AGENTS.md and can read the open file by name.
+    fn open_hermes(&mut self) {
+        if let Some(dir) = self
+            .filename
+            .as_deref()
+            .and_then(|f| Path::new(f).parent())
+            .filter(|d| !d.as_os_str().is_empty())
+        {
+            self.hermes.cwd = dir.to_path_buf();
+        }
+        // Opened from visual mode: quote what is selected, so "select the
+        // function, ask about it" is one keystroke.
+        if self.state == State::Visual && self.hermes.input.trim().is_empty() {
+            let sel = self.selection_text();
+            if !sel.trim().is_empty() {
+                self.hermes.input = format!("```\n{}\n```\n\n", sel.trim_end());
+            }
+        }
+        // First open of this ked run: pick up yesterday's thread if it is recent.
+        if self.hermes.turns == 0
+            && self.hermes.messages.is_empty()
+            && self.hermes.session.is_none()
+        {
+            self.hermes.resume_previous();
+        }
+        self.state = State::Hermes;
+    }
+
+    fn toggle_hermes(&mut self) {
+        if self.state == State::Hermes {
+            self.state = State::Normal;
+        } else {
+            self.open_hermes();
+        }
+    }
+
+    /// The chat pane is always in "typing" mode — a chat should not need a mode
+    /// switch to type — so plain characters go into the message and the
+    /// transcript scrolls on Ctrl+U / Ctrl+D / PgUp / PgDn.
+    fn handle_hermes_state(&mut self, key: KeyEvent) -> bool {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+
+        // The toggle closes the pane from inside as well — otherwise the key
+        // that opened it looks dead once the pane is up.
+        if matches!(key.code, KeyCode::Char('h') | KeyCode::Char('H'))
+            && ctrl
+            && (shift || matches!(key.code, KeyCode::Char('H')))
+        {
+            self.state = State::Normal;
+            return true;
+        }
+
+        match key.code {
+            KeyCode::Esc => {
+                if self.hermes.running {
+                    self.hermes.cancel();
+                } else {
+                    self.state = State::Normal;
+                }
+            }
+            KeyCode::Enter if !shift => {
+                let msg = self.hermes.input.trim().to_string();
+                if !msg.is_empty() && !self.hermes.running {
+                    self.hermes.input.clear();
+                    let _ = self.hermes.send(msg);
+                }
+            }
+            // Shift+Enter (or Ctrl+J) for a newline: pasting a few lines of code
+            // into a question should not send it.
+            KeyCode::Enter if shift => self.hermes.input.push('\n'),
+            KeyCode::Char('j') if ctrl => self.hermes.input.push('\n'),
+            KeyCode::Backspace => {
+                self.hermes.input.pop();
+            }
+            KeyCode::Char('c') if ctrl => {
+                if self.hermes.running {
+                    self.hermes.cancel();
+                } else {
+                    self.state = State::Normal;
+                }
+            }
+            KeyCode::Char('n') if ctrl => self.hermes.new_session(),
+            KeyCode::Char('u') if ctrl => {
+                self.hermes.scroll = self.hermes.scroll.saturating_add(10);
+            }
+            KeyCode::Char('d') if ctrl => {
+                self.hermes.scroll = self.hermes.scroll.saturating_sub(10);
+            }
+            KeyCode::PageUp => self.hermes.scroll = self.hermes.scroll.saturating_add(15),
+            KeyCode::PageDown => self.hermes.scroll = self.hermes.scroll.saturating_sub(15),
+            // Attach the file being edited to the message.
+            KeyCode::Char('o') if ctrl => {
+                if let Some(path) = self.filename.clone() {
+                    if !self.hermes.input.is_empty() && !self.hermes.input.ends_with(' ') {
+                        self.hermes.input.push(' ');
+                    }
+                    self.hermes.input.push_str(&path);
+                    self.hermes.input.push(' ');
+                }
+            }
+            // Copy the last answer to the system clipboard.
+            KeyCode::Char('y') if ctrl => self.copy_last_answer(),
+            // Insert the last answer into the buffer at the cursor.
+            KeyCode::Char('i') if ctrl => self.insert_last_answer(),
+            KeyCode::Char(ch) if !ctrl => self.hermes.input.push(ch),
+            _ => {}
+        }
+        true
+    }
+
+    fn copy_last_answer(&mut self) {
+        let Some(text) = self.hermes.last_answer().map(|s| s.to_string()) else {
+            self.hermes.push_note("nothing to copy yet");
+            return;
+        };
+        let chars = text.chars().count();
+        // Same clipboard path as yy/dd: the internal buffer plus OSC 52, so it
+        // lands in the system clipboard without spawning anything.
+        self.set_clipboard(text);
+        self.hermes
+            .push_note(format!("copied {chars} chars to the clipboard"));
+    }
+
+    fn insert_last_answer(&mut self) {
+        let Some(text) = self.hermes.last_answer().map(|s| s.to_string()) else {
+            self.hermes.push_note("nothing to insert yet");
+            return;
+        };
+        let lines = text.lines().count();
+        // `paste_from_terminal` only accepts the buffer states, and in insert
+        // mode it puts the text at the cursor (not after it, like `p`) with
+        // undo and multi-line handled — the same path bracketed paste uses.
+        self.state = State::Normal;
+        self.mode = Mode::Insert;
+        self.paste_from_terminal(&text);
+        self.state = State::Hermes;
+        self.hermes
+            .push_note(format!("inserted {lines} line(s) into the buffer"));
+    }
+
+    fn render_hermes(&mut self, f: &mut Frame, area: Rect) {
+        let theme = self.theme.theme();
+        let popup = modal_rect(area, 0.94, 0.88);
+        f.render_widget(Clear, popup);
+
+        let spinner = if self.hermes.running {
+            SPINNER[(self._frame as usize / 3) % SPINNER.len()]
+        } else {
+            "·"
+        };
+        let elapsed = if self.hermes.running {
+            format!(" · {}s", self.hermes.elapsed_secs())
+        } else {
+            String::new()
+        };
+        let title = format!(
+            " {spinner} Hermes — {} · {} · {} turn{}{elapsed} · {} tok ",
+            self.hermes.status,
+            self.hermes.session_tag(),
+            self.hermes.turns,
+            if self.hermes.turns == 1 { "" } else { "s" },
+            self.hermes.tokens.1
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .title_style(Style::new().fg(theme.fg).bg(theme.status_bg))
+            .border_style(Style::new().fg(theme.border));
+        let inner = block.inner(popup);
+        f.render_widget(block, popup);
+        if inner.height < 3 || inner.width < 8 {
+            return;
+        }
+
+        // The message line grows with the input (up to four rows), so a pasted
+        // snippet stays visible while it is being written.
+        let avail = inner.width.saturating_sub(2) as usize;
+        let input_lines = wrap_text(&self.hermes.input, avail);
+        let input_rows = input_lines.len().clamp(1, 4) as u16;
+        let body_h = inner.height.saturating_sub(input_rows + 1) as usize;
+        let text_w = inner.width.saturating_sub(3) as usize;
+
+        let mut lines: Vec<Line> = Vec::new();
+        if self.hermes.messages.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "Ask Hermes anything about this project.",
+                Style::new().fg(theme.fg),
+            )));
+            lines.push(Line::from(""));
+            for hint in [
+                "enter send · shift+enter newline · ctrl+o attach file",
+                "ctrl+y copy answer · ctrl+i insert answer · ctrl+n new session",
+                "ctrl+u / ctrl+d scroll · esc close",
+            ] {
+                lines.push(Line::from(Span::styled(
+                    hint,
+                    Style::new().fg(theme.comment.fg.unwrap_or(theme.fg)),
+                )));
+            }
+        }
+        for msg in &self.hermes.messages {
+            let (prefix, style) = match msg.role {
+                Role::User => (
+                    "› ",
+                    Style::new()
+                        .fg(theme.function.fg.unwrap_or(theme.fg))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Role::Assistant => ("  ", Style::new().fg(theme.fg)),
+                Role::Tool => (
+                    "⚙ ",
+                    Style::new().fg(theme.comment.fg.unwrap_or(theme.fg)),
+                ),
+                Role::ToolResult => (
+                    "  ↳ ",
+                    Style::new().fg(theme.comment.fg.unwrap_or(theme.fg)),
+                ),
+                Role::Error => (
+                    "! ",
+                    Style::new()
+                        .fg(theme.keyword.fg.unwrap_or(theme.fg))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Role::Note => (
+                    "· ",
+                    Style::new().fg(theme.comment.fg.unwrap_or(theme.fg)),
+                ),
+            };
+            let pad = " ".repeat(prefix.chars().count());
+            let body = text_w.saturating_sub(prefix.chars().count());
+            for (i, chunk) in wrap_text(&msg.text, body).into_iter().enumerate() {
+                let lead = if i == 0 { prefix } else { pad.as_str() };
+                lines.push(Line::from(vec![
+                    Span::styled(lead.to_string(), style),
+                    Span::styled(chunk, style),
+                ]));
+            }
+            lines.push(Line::from(""));
+        }
+
+        // Clamp: scrolling past the top would otherwise show an empty pane.
+        let max_scroll = lines.len().saturating_sub(body_h);
+        let scroll = (self.hermes.scroll as usize).min(max_scroll);
+        let end = lines.len().saturating_sub(scroll);
+        let start = end.saturating_sub(body_h);
+        let visible: Vec<Line> = lines.into_iter().skip(start).take(end - start).collect();
+        f.render_widget(
+            Paragraph::new(Text::from(visible)),
+            Rect::new(inner.x, inner.y, inner.width, body_h as u16),
+        );
+
+        let rule_y = inner.y + body_h as u16;
+        f.render_widget(
+            Paragraph::new("─".repeat(inner.width as usize)).style(Style::new().fg(theme.border)),
+            Rect::new(inner.x, rule_y, inner.width, 1),
+        );
+        if scroll > 0 {
+            f.render_widget(
+                Paragraph::new(format!("↓ {scroll} more "))
+                    .alignment(Alignment::Right)
+                    .style(Style::new().fg(theme.comment.fg.unwrap_or(theme.fg))),
+                Rect::new(inner.x, rule_y, inner.width, 1),
+            );
+        }
+
+        // Message line: the tail of the wrapped input, caret after the last
+        // character. A long message scrolls itself rather than pushing the
+        // transcript away.
+        let truncated = input_lines.len() > input_rows as usize;
+        let first = input_lines.len().saturating_sub(input_rows as usize);
+        let caret = "❯ ";
+        let prompt_style = if self.hermes.running {
+            Style::new().fg(theme.comment.fg.unwrap_or(theme.fg))
+        } else {
+            Style::new().fg(theme.fg)
+        };
+        for (i, chunk) in input_lines[first..].iter().enumerate() {
+            let lead = if i == 0 {
+                if truncated {
+                    "… "
+                } else {
+                    caret
+                }
+            } else {
+                "  "
+            };
+            f.render_widget(
+                Paragraph::new(format!("{lead}{chunk}")).style(prompt_style),
+                Rect::new(inner.x, rule_y + 1 + i as u16, inner.width, 1),
+            );
+        }
+        let last_row = input_lines.len().saturating_sub(1) - first;
+        let last_len = input_lines
+            .last()
+            .map(|l| l.chars().count())
+            .unwrap_or(0) as u16;
+        let cx = (inner.x + 2 + last_len).min(inner.x + inner.width.saturating_sub(1));
+        let cy = rule_y + 1 + last_row as u16;
+        self.cursor_screen = Some((cx, cy));
+        f.set_cursor_position(Position::new(cx, cy));
+    }
+
     /// Poll the music-player thread for events (auto-next-track).
     /// Called every frame: polls music events and auto-reloads the
     /// file if it changed on disk (only when there are no unsaved edits).
     pub fn tick(&mut self) {
         self.music_player.poll();
+        // Fold any Hermes chat events that arrived since the last frame.
+        self.hermes.poll();
         // When the background file scan finishes, re-run the current
         // query so results appear without another keypress.
         if self.finder.poll() {
@@ -2159,6 +2567,13 @@ impl Editor {
                         self.flash = Some(format!("Can't open {path}: {e}"));
                     }
                 }
+            }
+            // :hermes [new] — open the chat pane (new = fresh session)
+            "hermes" => {
+                if parts.len() > 1 && parts[1] == "new" {
+                    self.hermes.new_session();
+                }
+                self.open_hermes();
             }
             // :theme <name> — switch theme
             "theme" if parts.len() > 1 => {
@@ -2790,17 +3205,11 @@ impl Editor {
         self.graphics_out = out;
     }
 
-    /// Write the queued kitty-graphics escapes to the terminal and
-    /// restore the editor cursor.  Called after each frame is drawn.
-    pub fn flush_graphics(&mut self) -> io::Result<()> {
-        if self.graphics_out.is_empty() {
-            return Ok(());
-        }
-        let mut out = io::stdout();
-        out.write_all(&self.graphics_out)?;
-        out.flush()?;
-        self.graphics_out.clear();
-        Ok(())
+    /// Take the queued kitty-graphics escapes (which already end with a cursor
+    /// move) so the caller can append them to the frame and write the whole
+    /// thing to the terminal at once. Called after each frame is drawn.
+    pub fn take_graphics(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.graphics_out)
     }
 
     /// Remove every inline image from the terminal (called on exit).
@@ -3680,9 +4089,10 @@ impl Editor {
                 .min(status_area.x + status_area.width.saturating_sub(1));
             self.cursor_screen = Some((x, status_area.y));
             f.set_cursor_position(Position::new(x, status_area.y));
-        } else if self.state == State::Shell {
-            // The shell overlay sets (or hides) the cursor itself; don't
-            // also park the buffer cursor behind the popup.
+        } else if self.state == State::Shell || self.state == State::Hermes {
+            // These overlays set (or hide) the cursor themselves; parking the
+            // buffer cursor here as well would drag the caret back out of the
+            // popup — which is what made the chat's message line look broken.
             self.cursor_screen = None;
         } else if is_splash {
             self.cursor_screen = Some((0, 0));
@@ -3722,6 +4132,7 @@ impl Editor {
             State::Theme => self.render_theme(f, area, &theme),
             State::Run => self.render_run(f, area, &theme),
             State::Shell => self.render_shell(f, area),
+            State::Hermes => self.render_hermes(f, area),
             State::FileTree => {
                 if let Some(tree_area) = tree_area {
                     self.render_filetree(f, tree_area, &theme);
@@ -4230,21 +4641,61 @@ impl Editor {
     fn render_theme(&mut self, f: &mut Frame, area: Rect, theme: &Theme) {
 
         let popup = modal_rect(area, MODAL_W, MODAL_H);
-
         f.render_widget(Clear, popup);
 
         let block = overlay_block("Theme Selector", self._frame, self.animations, theme);
         let inner = block.inner(popup);
         f.render_widget(block, popup);
 
-        if inner.height < 1 {
+        // Query bar (1 line) + result list (rest), same shape as the finder.
+        if inner.height < 2 {
             return;
         }
+        let [query_area, list_area] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
+        .areas(inner);
 
-        let themes = ThemeKind::all();
-        let visible_h = inner.height as usize;
+        let matches = self.theme_matches();
+        // A narrower filter can leave the selection past the end.
+        if self.theme_selected >= matches.len() {
+            self.theme_selected = matches.len().saturating_sub(1);
+        }
 
-        // Auto-scroll to keep selected item visible
+        let query_text = if self.theme_query.is_empty() {
+            " type to filter themes…".to_string()
+        } else {
+            format!(" {}", self.theme_query)
+        };
+        let hint = format!(" {} themes · ↑↓ · Enter · Esc ", matches.len());
+        let [q_area, hint_area] = Layout::horizontal([
+            Constraint::Min(1),
+            Constraint::Length(hint.chars().count() as u16),
+        ])
+        .areas(query_area);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                query_text,
+                Style::new().fg(theme.status_fg).bg(theme.status_bg),
+            )))
+            .style(Style::new().bg(theme.status_bg)),
+            q_area,
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::new()
+                    .fg(theme.comment.fg.unwrap_or(theme.fg))
+                    .bg(theme.status_bg),
+            )))
+            .style(Style::new().bg(theme.status_bg)),
+            hint_area,
+        );
+
+        let visible_h = list_area.height as usize;
+
+        // Auto-scroll to keep the selected row visible.
         if self.theme_selected < self.theme_scroll {
             self.theme_scroll = self.theme_selected;
         }
@@ -4252,7 +4703,7 @@ impl Editor {
             self.theme_scroll = self.theme_selected - visible_h + 1;
         }
 
-        let list_items: Vec<ListItem> = themes
+        let list_items: Vec<ListItem> = matches
             .iter()
             .enumerate()
             .skip(self.theme_scroll)
@@ -4278,10 +4729,21 @@ impl Editor {
             })
             .collect();
 
-        f.render_widget(
-            List::new(list_items).style(Style::new().bg(theme.bg)),
-            inner,
-        );
+        if list_items.is_empty() {
+            let none = vec![ListItem::new(Line::from(Span::styled(
+                format!(" (no theme matches \"{}\")", self.theme_query),
+                Style::new().fg(theme.fg).bg(theme.bg),
+            )))];
+            f.render_widget(
+                List::new(none).style(Style::new().bg(theme.bg)),
+                list_area,
+            );
+        } else {
+            f.render_widget(
+                List::new(list_items).style(Style::new().bg(theme.bg)),
+                list_area,
+            );
+        }
     }
 
     // ── system dashboard (:sys) ──────────────────────────────────
@@ -4489,6 +4951,11 @@ impl Editor {
                 k("search"), k("search_next"), k("search_prev"),
             )),
             Line::from("  :keys shows the full effective keymap   :theme <name> switch theme"),
+            Line::from(""),
+            Line::from(Span::styled("Hermes", theme.keyword)),
+            Line::from("  ctrl+shift+h or :hermes chat   :hermes new fresh session"),
+            Line::from("  in chat: enter send · shift+enter newline · ctrl+o attach file"),
+            Line::from("  ctrl+y copy answer · ctrl+i insert answer · ctrl+u/d scroll · esc close"),
             Line::from(""),
             Line::from(Span::styled("Memories", theme.keyword)),
             Line::from(format!(
@@ -4850,6 +5317,7 @@ impl Editor {
             ("Ctrl+P", "find file"),
             ("Ctrl+F", "file tree"),
             ("Ctrl+J", "terminal"),
+            ("Ctrl+Shift+H", "hermes"),
             ("Ctrl+M", "music"),
             ("Ctrl+T", "theme"),
             ("Ctrl+E", "run"),
@@ -5129,6 +5597,59 @@ fn modal_rect(area: Rect, w_pct: f32, h_pct: f32) -> Rect {
     let w = ((area.width as f32 * w_pct) as u16).min(area.width);
     let h = ((area.height as f32 * h_pct) as u16).min(area.height);
     Rect::new((area.width - w) / 2, (area.height - h) / 2, w, h)
+}
+
+/// Spinner frames for the chat title while a turn is running.
+const SPINNER: [&str; 4] = ["◐", "◓", "◑", "◒"];
+
+/// Word-wrap `text` to `width` columns, keeping blank lines.
+///
+/// The chat transcript has no `Wrap` widget because wrapped lines need their
+/// own prefix and style per message, and a word longer than the pane still has
+/// to be broken or it would run off the edge.
+fn wrap_text(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(8);
+    let mut out: Vec<String> = Vec::new();
+    let push_long = |word: &str, out: &mut Vec<String>| {
+        let chars: Vec<char> = word.chars().collect();
+        for chunk in chars.chunks(width) {
+            out.push(chunk.iter().collect());
+        }
+    };
+    for line in text.split('\n') {
+        if line.trim().is_empty() {
+            out.push(String::new());
+            continue;
+        }
+        let mut cur = String::new();
+        for word in line.split_whitespace() {
+            let wlen = word.chars().count();
+            if cur.is_empty() {
+                if wlen > width {
+                    push_long(word, &mut out);
+                } else {
+                    cur.push_str(word);
+                }
+            } else if cur.chars().count() + 1 + wlen <= width {
+                cur.push(' ');
+                cur.push_str(word);
+            } else {
+                out.push(std::mem::take(&mut cur));
+                if wlen > width {
+                    push_long(word, &mut out);
+                } else {
+                    cur.push_str(word);
+                }
+            }
+        }
+        if !cur.is_empty() {
+            out.push(cur);
+        }
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
 }
 
 /// The one uniform overlay frame: bordered, with a scrolling title.
@@ -7028,5 +7549,255 @@ mod tests {
             false
         )
         .is_empty());
+    }
+
+    #[test]
+    fn theme_selector_filters_fuzzily_and_applies() {
+        let cfg = crate::config::Config::default();
+        let mut ed = Editor::new(None, &cfg).unwrap();
+        let _ = ed.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+        assert_eq!(ed.state, State::Theme);
+        // Unfiltered: the canonical list, in ThemeKind::all() order.
+        assert_eq!(ed.theme_matches(), ThemeKind::all().to_vec());
+
+        for ch in "tokyo".chars() {
+            let _ = ed.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        assert_eq!(ed.theme_query, "tokyo");
+        let m = ed.theme_matches();
+        assert!(m.contains(&ThemeKind::TokyoNight), "{m:?}");
+        assert!(m.contains(&ThemeKind::TokyoNightDay), "{m:?}");
+
+        // Enter applies whatever is highlighted in the filtered list.
+        let _ = ed.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(ed.state, State::Normal);
+        assert_eq!(ed.theme, m[0]);
+    }
+
+    #[test]
+    fn theme_selector_esc_clears_the_filter_before_closing() {
+        let cfg = crate::config::Config::default();
+        let mut ed = Editor::new(None, &cfg).unwrap();
+        let _ = ed.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+        for ch in "gruv".chars() {
+            let _ = ed.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        assert!(ed.theme_matches().contains(&ThemeKind::Gruvbox));
+
+        // First Esc: filter cleared, selector still open.
+        let _ = ed.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(ed.state, State::Theme);
+        assert!(ed.theme_query.is_empty());
+        assert_eq!(ed.theme_matches().len(), ThemeKind::all().len());
+
+        // Second Esc: closed, theme unchanged.
+        let before = ed.theme;
+        let _ = ed.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(ed.state, State::Normal);
+        assert_eq!(ed.theme, before);
+    }
+
+    #[test]
+    fn theme_selector_rejects_non_matches() {
+        let cfg = crate::config::Config::default();
+        let mut ed = Editor::new(None, &cfg).unwrap();
+        let _ = ed.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+        for ch in "zzzq".chars() {
+            let _ = ed.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        assert!(ed.theme_matches().is_empty());
+        // Enter on an empty result set must not panic or change the theme.
+        let before = ed.theme;
+        let _ = ed.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(ed.theme, before);
+        assert_eq!(ed.state, State::Theme);
+    }
+
+    #[test]
+    fn theme_selector_draws_the_filtered_rows() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let cfg = crate::config::Config::default();
+        let mut ed = Editor::new(None, &cfg).unwrap();
+        let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+
+        let _ = ed.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+        term.draw(|f| ed.render(f)).unwrap();
+        let unfiltered: String = term
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        // overlay_block upper-cases the title
+        assert!(unfiltered.contains("THEME SELECTOR"), "{unfiltered}");
+        assert!(unfiltered.contains("type to filter themes"));
+
+        for ch in "vice".chars() {
+            let _ = ed.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        term.draw(|f| ed.render(f)).unwrap();
+        let filtered: String = term
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(filtered.contains("vice-city"), "filtered screen: {filtered}");
+        assert!(!filtered.contains("gruvbox"), "unrelated theme still drawn");
+    }
+
+    #[test]
+    #[ignore]
+    fn dump_hermes_pane() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let cfg = crate::config::Config::default();
+        let mut ed = Editor::new(None, &cfg).unwrap();
+        let mut term = Terminal::new(TestBackend::new(100, 28)).unwrap();
+        let _ = ed.handle_key(KeyEvent::new(
+            KeyCode::Char('H'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ));
+        ed.hermes.messages.push(crate::hermes::Msg {
+            role: Role::User,
+            text: "why does the bar flicker when I scroll".into(),
+        });
+        ed.hermes.messages.push(crate::hermes::Msg {
+            role: Role::Assistant,
+            text: "Because tmux repaints after each write, and ratatui emits the\ncursor move as its own write.".into(),
+        });
+        ed.hermes.input = "here is a question\nwith a second line\nand a third".into();
+        ed.hermes.running = true;
+        ed.hermes.status = "answering…".into();
+        ed.hermes.scroll = 3;
+        term.draw(|f| ed.render(f)).unwrap();
+        let buf = term.backend().buffer();
+        for y in 0..buf.area.height {
+            let row: String = (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol())
+                .collect();
+            println!("|{row}|");
+        }
+    }
+
+    // ── Hermes chat pane ───────────────────────────────────────────
+
+    #[test]
+    fn hermes_pane_opens_on_its_key_and_draws_the_transcript() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let cfg = crate::config::Config::default();
+        let mut ed = Editor::new(None, &cfg).unwrap();
+        let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+
+        let _ = ed.handle_key(KeyEvent::new(
+            KeyCode::Char('H'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ));
+        assert_eq!(ed.state, State::Hermes, "Ctrl+Shift+H opens the pane");
+
+        ed.hermes.messages.push(crate::hermes::Msg {
+            role: Role::User,
+            text: "why does the bar flicker".into(),
+        });
+        ed.hermes.messages.push(crate::hermes::Msg {
+            role: Role::Assistant,
+            text: "because tmux repaints per write".into(),
+        });
+
+        term.draw(|f| ed.render(f)).unwrap();
+        let screen: String = term
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(screen.contains("Hermes"), "{screen}");
+        assert!(screen.contains("why does the bar flicker"), "{screen}");
+        assert!(screen.contains("tmux repaints per write"), "{screen}");
+    }
+
+    #[test]
+    fn hermes_message_line_takes_typing_and_escape_leaves() {
+        let cfg = crate::config::Config::default();
+        let mut ed = Editor::new(None, &cfg).unwrap();
+        let _ = ed.handle_key(KeyEvent::new(
+            KeyCode::Char('H'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ));
+
+        for ch in "hello".chars() {
+            let _ = ed.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        assert_eq!(ed.hermes.input, "hello");
+        let _ = ed.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(ed.hermes.input, "hell");
+
+        // Esc closes the pane when nothing is running.
+        let _ = ed.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(ed.state, State::Normal);
+    }
+
+    #[test]
+    fn hermes_ctrl_o_attaches_the_open_file() {
+        let cfg = crate::config::Config::default();
+        let mut ed = Editor::new(None, &cfg).unwrap();
+        ed.filename = Some("/tmp/notes.md".into());
+        let _ = ed.handle_key(KeyEvent::new(
+            KeyCode::Char('H'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ));
+        let _ = ed.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+        assert_eq!(ed.hermes.input, "/tmp/notes.md ");
+    }
+
+    #[test]
+    fn hermes_quotes_a_visual_selection() {
+        let cfg = crate::config::Config::default();
+        let mut ed = Editor::new(None, &cfg).unwrap();
+        ed.lines = vec![
+            "fn main() {".to_string(),
+            "    body();".to_string(),
+            "}".to_string(),
+        ];
+        ed.cy = 0;
+        ed.cx = 0;
+        let _ = ed.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
+        let _ = ed.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        let _ = ed.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        let _ = ed.handle_key(KeyEvent::new(
+            KeyCode::Char('H'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ));
+        assert_eq!(ed.state, State::Hermes);
+        assert!(
+            ed.hermes.input.starts_with("```"),
+            "selection should be quoted: {:?}",
+            ed.hermes.input
+        );
+        assert!(
+            ed.hermes.input.contains("body();"),
+            "selection missing: {:?}",
+            ed.hermes.input
+        );
+    }
+
+    #[test]
+    fn wrap_text_keeps_blank_lines_and_breaks_long_words() {
+        let wrapped = wrap_text("one two\n\nthree", 20);
+        assert_eq!(wrapped, vec!["one two", "", "three"]);
+
+        // A word wider than the pane must be split, not overflow.
+        let long = "x".repeat(50);
+        let wrapped = wrap_text(&long, 10);
+        assert!(wrapped.len() >= 5, "{wrapped:?}");
+        assert!(wrapped.iter().all(|l| l.chars().count() <= 10));
     }
 }

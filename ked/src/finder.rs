@@ -169,7 +169,7 @@ fn walk(root: &Path, dir: &Path, files: &mut Vec<String>, depth: usize) {
 ///   - consecutive character matches give a -5 bonus
 ///   - a match in the file name (not the directories) gives -10
 ///   - each leading directory costs a little (+2) so shallower wins
-fn fuzzy_score(q: &[char], text: &str) -> Option<i32> {
+pub(crate) fn fuzzy_score(q: &[char], text: &str) -> Option<i32> {
     if q.is_empty() {
         return Some(0);
     }

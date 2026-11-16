@@ -358,6 +358,7 @@ dependencies = [
  "libc",
  "ratatui",
  "serde",
+ "serde_json",
  "toml",
  "tree-sitter",
  "tree-sitter-bash",

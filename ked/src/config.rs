@@ -71,6 +71,35 @@ pub struct Config {
     /// Remembered things (notes, reminders, journal).
     #[serde(default)]
     pub memories: MemoryConfig,
+
+    /// `[hermes]` — the chat pane (Ctrl+Shift+H, `:hermes`).
+    #[serde(default)]
+    pub hermes: HermesConfig,
+}
+
+/// `[hermes]` — how ked launches Hermes for the chat pane.
+#[derive(Deserialize, Clone, Debug)]
+pub struct HermesConfig {
+    /// The `hermes` executable. Bare names are looked up on PATH, with the
+    /// install location as a fallback.
+    #[serde(default = "default_hermes_command")]
+    pub command: String,
+    /// Model for chat turns (passed as `-m`). Empty uses hermes' own default.
+    #[serde(default)]
+    pub model: String,
+}
+
+fn default_hermes_command() -> String {
+    "hermes".to_string()
+}
+
+impl Default for HermesConfig {
+    fn default() -> Self {
+        HermesConfig {
+            command: default_hermes_command(),
+            model: String::new(),
+        }
+    }
 }
 
 /// `[memories]` — reminders / notes / journal.
@@ -192,6 +221,12 @@ pub fn example() -> String {
          filetree_width = 30         # file-tree panel width in columns\n\
          music_dir      = \"~/Music\"  # where Ctrl+M scans for .mp3 files\n\
          inline_images  = true       # render ![alt](path) in .md buffers\n\n",
+    );
+    s.push_str(
+        "# ── Hermes chat (Ctrl+Shift+H) ──────────────────────────\n\
+         [hermes]\n\
+         command     = \"hermes\"      # the hermes executable (PATH, then ~/.hermes)\n\
+         model       = \"\"            # e.g. \"deepseek-v4.1-flash\"; empty = hermes default\n\n",
     );
     s.push_str(
         "# ── memories / reminders / journal ──────────────────────\n\

@@ -28,6 +28,11 @@ filetree_width = 30         # file-tree panel width in columns
 music_dir      = "~/Music"  # where Ctrl+M scans for .mp3 files
 inline_images  = true       # render ![alt](path) in .md buffers
 
+# ── Hermes chat (Ctrl+Shift+H) ──────────────────────────
+[hermes]
+command     = "hermes"      # the hermes executable (PATH, then ~/.hermes)
+model       = ""            # e.g. "deepseek-v4.1-flash"; empty = hermes default
+
 # ── memories / reminders / journal ──────────────────────
 [memories]
 # dir = "~/notes/memories"  # default: $XDG_DATA_HOME/ked/memories

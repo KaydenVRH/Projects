@@ -76,6 +76,29 @@ pub enum ThemeKind {
     TokyoNightDay,
     RosePineDawn,
     EverforestLight,
+    Alabaster,
+    AmethystLagoon,
+    AyuLight,
+    AzureGlow,
+    CherryBlossom,
+    Cobalt2,
+    Ethereal,
+    FieryOcean,
+    FlexokiLight,
+    Glow,
+    Hackerman,
+    Lumon,
+    Lupine,
+    MatteBlack,
+    MonochromeLight,
+    NightLagoon,
+    Ristretto,
+    Solitude,
+    Sunset,
+    Vantablack,
+    ViceCity,
+    Void,
+    MacosDark,
 }
 
 impl ThemeKind {
@@ -113,6 +136,29 @@ impl ThemeKind {
             ThemeKind::TokyoNightDay  => tokyo_night_day(),
             ThemeKind::RosePineDawn   => rose_pine_dawn(),
             ThemeKind::EverforestLight=> everforest_light(),
+            ThemeKind::Alabaster => alabaster(),
+            ThemeKind::AmethystLagoon => amethyst_lagoon(),
+            ThemeKind::AyuLight => ayu_light(),
+            ThemeKind::AzureGlow => azure_glow(),
+            ThemeKind::CherryBlossom => cherry_blossom(),
+            ThemeKind::Cobalt2 => cobalt_2(),
+            ThemeKind::Ethereal => ethereal(),
+            ThemeKind::FieryOcean => fiery_ocean(),
+            ThemeKind::FlexokiLight => flexoki_light(),
+            ThemeKind::Glow => glow(),
+            ThemeKind::Hackerman => hackerman(),
+            ThemeKind::Lumon => lumon(),
+            ThemeKind::Lupine => lupine(),
+            ThemeKind::MatteBlack => matte_black(),
+            ThemeKind::MonochromeLight => monochrome_light(),
+            ThemeKind::NightLagoon => night_lagoon(),
+            ThemeKind::Ristretto => ristretto(),
+            ThemeKind::Solitude => solitude(),
+            ThemeKind::Sunset => sunset(),
+            ThemeKind::Vantablack => vantablack(),
+            ThemeKind::ViceCity => vice_city(),
+            ThemeKind::Void => void(),
+            ThemeKind::MacosDark => macos_dark(),
         }
     }
 
@@ -150,6 +196,29 @@ impl ThemeKind {
             ThemeKind::TokyoNightDay  => "tokyonight-day",
             ThemeKind::RosePineDawn   => "rosepine-dawn",
             ThemeKind::EverforestLight=> "everforest-light",
+            ThemeKind::Alabaster => "alabaster",
+            ThemeKind::AmethystLagoon => "amethyst-lagoon",
+            ThemeKind::AyuLight => "ayu-light",
+            ThemeKind::AzureGlow => "azure-glow",
+            ThemeKind::CherryBlossom => "cherry-blossom",
+            ThemeKind::Cobalt2 => "cobalt-2",
+            ThemeKind::Ethereal => "ethereal",
+            ThemeKind::FieryOcean => "fiery-ocean",
+            ThemeKind::FlexokiLight => "flexoki-light",
+            ThemeKind::Glow => "glow",
+            ThemeKind::Hackerman => "hackerman",
+            ThemeKind::Lumon => "lumon",
+            ThemeKind::Lupine => "lupine",
+            ThemeKind::MatteBlack => "matte-black",
+            ThemeKind::MonochromeLight => "monochrome-light",
+            ThemeKind::NightLagoon => "night-lagoon",
+            ThemeKind::Ristretto => "ristretto",
+            ThemeKind::Solitude => "solitude",
+            ThemeKind::Sunset => "sunset",
+            ThemeKind::Vantablack => "vantablack",
+            ThemeKind::ViceCity => "vice-city",
+            ThemeKind::Void => "void",
+            ThemeKind::MacosDark => "macos-dark",
         }
     }
 
@@ -186,7 +255,30 @@ impl ThemeKind {
             ThemeKind::GithubLight,
             ThemeKind::TokyoNightDay,
             ThemeKind::RosePineDawn,
+            ThemeKind::Alabaster,
+            ThemeKind::AmethystLagoon,
+            ThemeKind::AyuLight,
+            ThemeKind::AzureGlow,
+            ThemeKind::CherryBlossom,
+            ThemeKind::Cobalt2,
+            ThemeKind::Ethereal,
+            ThemeKind::FieryOcean,
+            ThemeKind::FlexokiLight,
+            ThemeKind::Glow,
+            ThemeKind::Hackerman,
+            ThemeKind::Lumon,
+            ThemeKind::Lupine,
+            ThemeKind::MatteBlack,
+            ThemeKind::MonochromeLight,
+            ThemeKind::NightLagoon,
+            ThemeKind::Ristretto,
+            ThemeKind::Solitude,
+            ThemeKind::Sunset,
+            ThemeKind::Vantablack,
+            ThemeKind::ViceCity,
             ThemeKind::EverforestLight,
+            ThemeKind::Void,
+            ThemeKind::MacosDark,
         ]
     }
 
@@ -235,6 +327,52 @@ impl ThemeKind {
                 Some(ThemeKind::RosePineDawn),
             "everforest-light" | "everforestlight" | "everforest_light" =>
                 Some(ThemeKind::EverforestLight),
+            "alabaster" =>
+                Some(ThemeKind::Alabaster),
+            "amethyst-lagoon" | "amethystlagoon" | "amethyst_lagoon" | "amethyst lagoon" =>
+                Some(ThemeKind::AmethystLagoon),
+            "ayu-light" | "ayulight" | "ayu_light" | "ayu light" =>
+                Some(ThemeKind::AyuLight),
+            "azure-glow" | "azureglow" | "azure_glow" | "azure glow" =>
+                Some(ThemeKind::AzureGlow),
+            "cherry-blossom" | "cherryblossom" | "cherry_blossom" | "cherry blossom" =>
+                Some(ThemeKind::CherryBlossom),
+            "cobalt-2" | "cobalt2" | "cobalt_2" | "cobalt 2" =>
+                Some(ThemeKind::Cobalt2),
+            "ethereal" =>
+                Some(ThemeKind::Ethereal),
+            "fiery-ocean" | "fieryocean" | "fiery_ocean" | "fiery ocean" =>
+                Some(ThemeKind::FieryOcean),
+            "flexoki-light" | "flexokilight" | "flexoki_light" | "flexoki light" =>
+                Some(ThemeKind::FlexokiLight),
+            "glow" =>
+                Some(ThemeKind::Glow),
+            "hackerman" =>
+                Some(ThemeKind::Hackerman),
+            "lumon" =>
+                Some(ThemeKind::Lumon),
+            "lupine" =>
+                Some(ThemeKind::Lupine),
+            "matte-black" | "matteblack" | "matte_black" | "matte black" =>
+                Some(ThemeKind::MatteBlack),
+            "monochrome-light" | "monochromelight" | "monochrome_light" | "monochrome light" =>
+                Some(ThemeKind::MonochromeLight),
+            "night-lagoon" | "nightlagoon" | "night_lagoon" | "night lagoon" =>
+                Some(ThemeKind::NightLagoon),
+            "ristretto" =>
+                Some(ThemeKind::Ristretto),
+            "solitude" =>
+                Some(ThemeKind::Solitude),
+            "sunset" =>
+                Some(ThemeKind::Sunset),
+            "vantablack" =>
+                Some(ThemeKind::Vantablack),
+            "vice-city" | "vicecity" | "vice_city" | "vice city" =>
+                Some(ThemeKind::ViceCity),
+            "void" =>
+                Some(ThemeKind::Void),
+            "macos-dark" | "macosdark" | "macos_dark" | "macos dark" | "macos" =>
+                Some(ThemeKind::MacosDark),
             _            => None,
         }
     }
@@ -1215,6 +1353,632 @@ pub fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
     )
 }
 
+fn alabaster() -> Theme {
+    // Synced from the kshell "Alabaster" theme (accent #325cc0, highlight #aa3731).
+    Theme {
+        fg:            Color::Rgb(0x43, 0x43, 0x43),
+        bg:            Color::Rgb(0xf7, 0xf7, 0xf7),
+        selection_bg:  Color::Rgb(0xcb, 0xe2, 0xeb),
+        line_number:   Style::new().fg(Color::Rgb(0x77, 0x77, 0x77)),
+        tilde:         Style::new().fg(Color::Rgb(0xb1, 0xb1, 0xb1)),
+        status_bg:     Color::Rgb(0xe3, 0xe3, 0xe3),
+        status_fg:     Color::Rgb(0x43, 0x43, 0x43),
+        border:        Color::Rgb(0x00, 0x83, 0xb2),
+        keyword:       fg_bold(Color::Rgb(0x32, 0x5c, 0xc0)),
+        builtin:       fg(Color::Rgb(0xaa, 0x37, 0x31)),
+        rstype:        fg_bold(Color::Rgb(0xaa, 0x37, 0x31)),
+        function:      fg(Color::Rgb(0x38, 0x53, 0x94)),
+        lifetime:      fg_italic(Color::Rgb(0x77, 0x77, 0x77)),
+        string:        fg_italic(Color::Rgb(0x8d, 0x3a, 0x36)),
+        fstring_prefix:fg_bold(Color::Rgb(0x8d, 0x3a, 0x36)),
+        comment:       fg_italic(Color::Rgb(0x77, 0x77, 0x77)),
+        number:        fg(Color::Rgb(0x6e, 0x4a, 0x78)),
+        constant:      fg_bold(Color::Rgb(0x35, 0x58, 0xad)),
+        decorator:     fg_italic(Color::Rgb(0x7a, 0x46, 0x6a)),
+        property:      fg(Color::Rgb(0x2c, 0x59, 0x6a)),
+        operator:      fg(Color::Rgb(0x00, 0x83, 0xb2)),
+        punctuation:   fg(Color::Rgb(0x70, 0x70, 0x70)),
+    }
+}
+fn amethyst_lagoon() -> Theme {
+    // Synced from the kshell "Amethyst Lagoon" theme (accent #a78bfa, highlight #b8a4f0).
+    Theme {
+        fg:            Color::Rgb(0xe8, 0xe0, 0xf0),
+        bg:            Color::Rgb(0x12, 0x0e, 0x1a),
+        selection_bg:  Color::Rgb(0x40, 0x38, 0x56),
+        line_number:   Style::new().fg(Color::Rgb(0x8a, 0x80, 0xa0)),
+        tilde:         Style::new().fg(Color::Rgb(0x54, 0x4d, 0x64)),
+        status_bg:     Color::Rgb(0x0d, 0x0a, 0x12),
+        status_fg:     Color::Rgb(0xe8, 0xe0, 0xf0),
+        border:        Color::Rgb(0xb8, 0xa4, 0xf0),
+        keyword:       fg_bold(Color::Rgb(0xa7, 0x8b, 0xfa)),
+        builtin:       fg(Color::Rgb(0xb8, 0xa4, 0xf0)),
+        rstype:        fg_bold(Color::Rgb(0xb8, 0xa4, 0xf0)),
+        function:      fg(Color::Rgb(0xbe, 0xa9, 0xf6)),
+        lifetime:      fg_italic(Color::Rgb(0x8a, 0x80, 0xa0)),
+        string:        fg_italic(Color::Rgb(0xc5, 0xb5, 0xf0)),
+        fstring_prefix:fg_bold(Color::Rgb(0xc5, 0xb5, 0xf0)),
+        comment:       fg_italic(Color::Rgb(0x8a, 0x80, 0xa0)),
+        number:        fg(Color::Rgb(0xb0, 0x98, 0xf5)),
+        constant:      fg_bold(Color::Rgb(0xb1, 0x98, 0xf8)),
+        decorator:     fg_italic(Color::Rgb(0xb1, 0x9a, 0xf4)),
+        property:      fg(Color::Rgb(0xd7, 0xcb, 0xf0)),
+        operator:      fg(Color::Rgb(0xb8, 0xa4, 0xf0)),
+        punctuation:   fg(Color::Rgb(0xb2, 0xac, 0xba)),
+    }
+}
+fn ayu_light() -> Theme {
+    // Synced from the kshell "Ayu Light" theme (accent #fa8d3e, highlight #3199e1).
+    Theme {
+        fg:            Color::Rgb(0x5c, 0x61, 0x66),
+        bg:            Color::Rgb(0xf8, 0xf9, 0xfa),
+        selection_bg:  Color::Rgb(0xd8, 0xee, 0xe8),
+        line_number:   Style::new().fg(Color::Rgb(0x9a, 0xa0, 0xa6)),
+        tilde:         Style::new().fg(Color::Rgb(0xc4, 0xc8, 0xcc)),
+        status_bg:     Color::Rgb(0xe4, 0xe5, 0xe6),
+        status_fg:     Color::Rgb(0x5c, 0x61, 0x66),
+        border:        Color::Rgb(0x46, 0xba, 0x94),
+        keyword:       fg_bold(Color::Rgb(0xfa, 0x8d, 0x3e)),
+        builtin:       fg(Color::Rgb(0x31, 0x99, 0xe1)),
+        rstype:        fg_bold(Color::Rgb(0x31, 0x99, 0xe1)),
+        function:      fg(Color::Rgb(0xc3, 0x7e, 0x4c)),
+        lifetime:      fg_italic(Color::Rgb(0x9a, 0xa0, 0xa6)),
+        string:        fg_italic(Color::Rgb(0x3d, 0x89, 0xbf)),
+        fstring_prefix:fg_bold(Color::Rgb(0x3d, 0x89, 0xbf)),
+        comment:       fg_italic(Color::Rgb(0x9a, 0xa0, 0xa6)),
+        number:        fg(Color::Rgb(0x96, 0x93, 0x90)),
+        constant:      fg_bold(Color::Rgb(0xe2, 0x86, 0x44)),
+        decorator:     fg_italic(Color::Rgb(0x81, 0x94, 0xa0)),
+        property:      fg(Color::Rgb(0x54, 0x80, 0x76)),
+        operator:      fg(Color::Rgb(0x46, 0xba, 0x94)),
+        punctuation:   fg(Color::Rgb(0x83, 0x87, 0x8b)),
+    }
+}
+fn azure_glow() -> Theme {
+    // Synced from the kshell "Azure Glow" theme (accent #00aaff, highlight #66e0ff).
+    Theme {
+        fg:            Color::Rgb(0xa8, 0xdf, 0xff),
+        bg:            Color::Rgb(0x0a, 0x0f, 0x1a),
+        selection_bg:  Color::Rgb(0x15, 0x44, 0x5a),
+        line_number:   Style::new().fg(Color::Rgb(0x4a, 0x6b, 0x80)),
+        tilde:         Style::new().fg(Color::Rgb(0x2d, 0x42, 0x52)),
+        status_bg:     Color::Rgb(0x07, 0x0a, 0x12),
+        status_fg:     Color::Rgb(0xa8, 0xdf, 0xff),
+        border:        Color::Rgb(0x33, 0xcc, 0xff),
+        keyword:       fg_bold(Color::Rgb(0x00, 0xaa, 0xff)),
+        builtin:       fg(Color::Rgb(0x66, 0xe0, 0xff)),
+        rstype:        fg_bold(Color::Rgb(0x66, 0xe0, 0xff)),
+        function:      fg(Color::Rgb(0x3b, 0xbd, 0xff)),
+        lifetime:      fg_italic(Color::Rgb(0x4a, 0x6b, 0x80)),
+        string:        fg_italic(Color::Rgb(0x78, 0xe0, 0xff)),
+        fstring_prefix:fg_bold(Color::Rgb(0x78, 0xe0, 0xff)),
+        comment:       fg_italic(Color::Rgb(0x4a, 0x6b, 0x80)),
+        number:        fg(Color::Rgb(0x33, 0xc5, 0xff)),
+        constant:      fg_bold(Color::Rgb(0x19, 0xb2, 0xff)),
+        decorator:     fg_italic(Color::Rgb(0x3d, 0xca, 0xff)),
+        property:      fg(Color::Rgb(0x7f, 0xd8, 0xff)),
+        operator:      fg(Color::Rgb(0x33, 0xcc, 0xff)),
+        punctuation:   fg(Color::Rgb(0x80, 0xab, 0xc6)),
+    }
+}
+fn cherry_blossom() -> Theme {
+    // Synced from the kshell "Cherry Blossom" theme (accent #f8a5c2, highlight #c3aedb).
+    Theme {
+        fg:            Color::Rgb(0xf5, 0xe6, 0xe8),
+        bg:            Color::Rgb(0x1c, 0x11, 0x16),
+        selection_bg:  Color::Rgb(0x4b, 0x3d, 0x4d),
+        line_number:   Style::new().fg(Color::Rgb(0xa8, 0x8a, 0x92)),
+        tilde:         Style::new().fg(Color::Rgb(0x69, 0x54, 0x5a)),
+        status_bg:     Color::Rgb(0x14, 0x0c, 0x0f),
+        status_fg:     Color::Rgb(0xf5, 0xe6, 0xe8),
+        border:        Color::Rgb(0xc3, 0xae, 0xdb),
+        keyword:       fg_bold(Color::Rgb(0xf8, 0xa5, 0xc2)),
+        builtin:       fg(Color::Rgb(0xc3, 0xae, 0xdb)),
+        rstype:        fg_bold(Color::Rgb(0xc3, 0xae, 0xdb)),
+        function:      fg(Color::Rgb(0xf7, 0xbc, 0xcf)),
+        lifetime:      fg_italic(Color::Rgb(0xa8, 0x8a, 0x92)),
+        string:        fg_italic(Color::Rgb(0xd1, 0xbe, 0xdf)),
+        fstring_prefix:fg_bold(Color::Rgb(0xd1, 0xbe, 0xdf)),
+        comment:       fg_italic(Color::Rgb(0xa8, 0x8a, 0x92)),
+        number:        fg(Color::Rgb(0xde, 0xaa, 0xce)),
+        constant:      fg_bold(Color::Rgb(0xf8, 0xaf, 0xc8)),
+        decorator:     fg_italic(Color::Rgb(0xd8, 0xaa, 0xd1)),
+        property:      fg(Color::Rgb(0xe4, 0xd2, 0xe3)),
+        operator:      fg(Color::Rgb(0xc3, 0xae, 0xdb)),
+        punctuation:   fg(Color::Rgb(0xbf, 0xb1, 0xb4)),
+    }
+}
+fn cobalt_2() -> Theme {
+    // Synced from the kshell "Cobalt 2" theme (accent #ffc600, highlight #80fcff).
+    Theme {
+        fg:            Color::Rgb(0xff, 0xff, 0xff),
+        bg:            Color::Rgb(0x12, 0x27, 0x38),
+        selection_bg:  Color::Rgb(0x0d, 0x42, 0x70),
+        line_number:   Style::new().fg(Color::Rgb(0x7f, 0xa4, 0xbd)),
+        tilde:         Style::new().fg(Color::Rgb(0x4e, 0x6c, 0x81)),
+        status_bg:     Color::Rgb(0x0d, 0x1b, 0x27),
+        status_fg:     Color::Rgb(0xff, 0xff, 0xff),
+        border:        Color::Rgb(0x00, 0x88, 0xff),
+        keyword:       fg_bold(Color::Rgb(0xff, 0xc6, 0x00)),
+        builtin:       fg(Color::Rgb(0x80, 0xfc, 0xff)),
+        rstype:        fg_bold(Color::Rgb(0x80, 0xfc, 0xff)),
+        function:      fg(Color::Rgb(0xff, 0xda, 0x59)),
+        lifetime:      fg_italic(Color::Rgb(0x7f, 0xa4, 0xbd)),
+        string:        fg_italic(Color::Rgb(0xa4, 0xfd, 0xff)),
+        fstring_prefix:fg_bold(Color::Rgb(0xa4, 0xfd, 0xff)),
+        comment:       fg_italic(Color::Rgb(0x7f, 0xa4, 0xbd)),
+        number:        fg(Color::Rgb(0xc0, 0xe1, 0x80)),
+        constant:      fg_bold(Color::Rgb(0xff, 0xcf, 0x26)),
+        decorator:     fg_italic(Color::Rgb(0xb3, 0xe6, 0x99)),
+        property:      fg(Color::Rgb(0xa6, 0xd5, 0xff)),
+        operator:      fg(Color::Rgb(0x00, 0x88, 0xff)),
+        punctuation:   fg(Color::Rgb(0xc4, 0xc9, 0xcd)),
+    }
+}
+fn ethereal() -> Theme {
+    // Synced from the kshell "Ethereal" theme (accent #7d82d9, highlight #eb8b54).
+    Theme {
+        fg:            Color::Rgb(0xff, 0xce, 0xad),
+        bg:            Color::Rgb(0x06, 0x0b, 0x1e),
+        selection_bg:  Color::Rgb(0x46, 0x2f, 0x2d),
+        line_number:   Style::new().fg(Color::Rgb(0x6d, 0x7d, 0xb6)),
+        tilde:         Style::new().fg(Color::Rgb(0x3f, 0x4a, 0x72)),
+        status_bg:     Color::Rgb(0x04, 0x08, 0x15),
+        status_fg:     Color::Rgb(0xff, 0xce, 0xad),
+        border:        Color::Rgb(0xeb, 0x8b, 0x54),
+        keyword:       fg_bold(Color::Rgb(0x7d, 0x82, 0xd9)),
+        builtin:       fg(Color::Rgb(0xeb, 0x8b, 0x54)),
+        rstype:        fg_bold(Color::Rgb(0xeb, 0x8b, 0x54)),
+        function:      fg(Color::Rgb(0xaa, 0x9d, 0xca)),
+        lifetime:      fg_italic(Color::Rgb(0x6d, 0x7d, 0xb6)),
+        string:        fg_italic(Color::Rgb(0xf1, 0x9e, 0x6d)),
+        fstring_prefix:fg_bold(Color::Rgb(0xf1, 0x9e, 0x6d)),
+        comment:       fg_italic(Color::Rgb(0x6d, 0x7d, 0xb6)),
+        number:        fg(Color::Rgb(0xb4, 0x86, 0x96)),
+        constant:      fg_bold(Color::Rgb(0x90, 0x8d, 0xd2)),
+        decorator:     fg_italic(Color::Rgb(0xbf, 0x87, 0x89)),
+        property:      fg(Color::Rgb(0xf8, 0xb7, 0x8e)),
+        operator:      fg(Color::Rgb(0xeb, 0x8b, 0x54)),
+        punctuation:   fg(Color::Rgb(0xc1, 0x9d, 0x89)),
+    }
+}
+fn fiery_ocean() -> Theme {
+    // Synced from the kshell "Fiery Ocean" theme (accent #fca311, highlight #90e0ef).
+    Theme {
+        fg:            Color::Rgb(0xfd, 0xf0, 0xd5),
+        bg:            Color::Rgb(0x00, 0x21, 0x30),
+        selection_bg:  Color::Rgb(0x0c, 0x44, 0x4b),
+        line_number:   Style::new().fg(Color::Rgb(0x59, 0x69, 0x6a)),
+        tilde:         Style::new().fg(Color::Rgb(0x31, 0x49, 0x50)),
+        status_bg:     Color::Rgb(0x00, 0x17, 0x22),
+        status_fg:     Color::Rgb(0xfd, 0xf0, 0xd5),
+        border:        Color::Rgb(0x2a, 0x9d, 0x8f),
+        keyword:       fg_bold(Color::Rgb(0xfc, 0xa3, 0x11)),
+        builtin:       fg(Color::Rgb(0x90, 0xe0, 0xef)),
+        rstype:        fg_bold(Color::Rgb(0x90, 0xe0, 0xef)),
+        function:      fg(Color::Rgb(0xfc, 0xbe, 0x56)),
+        lifetime:      fg_italic(Color::Rgb(0x59, 0x69, 0x6a)),
+        string:        fg_italic(Color::Rgb(0xaf, 0xe4, 0xe8)),
+        fstring_prefix:fg_bold(Color::Rgb(0xaf, 0xe4, 0xe8)),
+        comment:       fg_italic(Color::Rgb(0x59, 0x69, 0x6a)),
+        number:        fg(Color::Rgb(0xc6, 0xc2, 0x80)),
+        constant:      fg_bold(Color::Rgb(0xfc, 0xaf, 0x2e)),
+        decorator:     fg_italic(Color::Rgb(0xbb, 0xc8, 0x96)),
+        property:      fg(Color::Rgb(0xb3, 0xd3, 0xbc)),
+        operator:      fg(Color::Rgb(0x2a, 0x9d, 0x8f)),
+        punctuation:   fg(Color::Rgb(0xbe, 0xbc, 0xac)),
+    }
+}
+fn flexoki_light() -> Theme {
+    // Synced from the kshell "Flexoki Light" theme (accent #205ea6, highlight #ce5d97).
+    Theme {
+        fg:            Color::Rgb(0x10, 0x0f, 0x0f),
+        bg:            Color::Rgb(0xff, 0xfc, 0xf0),
+        selection_bg:  Color::Rgb(0xdc, 0xed, 0xe1),
+        line_number:   Style::new().fg(Color::Rgb(0xb7, 0xb5, 0xac)),
+        tilde:         Style::new().fg(Color::Rgb(0xd7, 0xd5, 0xcb)),
+        status_bg:     Color::Rgb(0xeb, 0xe8, 0xdd),
+        status_fg:     Color::Rgb(0x10, 0x0f, 0x0f),
+        border:        Color::Rgb(0x3a, 0xa9, 0x9f),
+        keyword:       fg_bold(Color::Rgb(0x20, 0x5e, 0xa6)),
+        builtin:       fg(Color::Rgb(0xce, 0x5d, 0x97)),
+        rstype:        fg_bold(Color::Rgb(0xce, 0x5d, 0x97)),
+        function:      fg(Color::Rgb(0x1a, 0x42, 0x71)),
+        lifetime:      fg_italic(Color::Rgb(0xb7, 0xb5, 0xac)),
+        string:        fg_italic(Color::Rgb(0x99, 0x47, 0x71)),
+        fstring_prefix:fg_bold(Color::Rgb(0x99, 0x47, 0x71)),
+        comment:       fg_italic(Color::Rgb(0xb7, 0xb5, 0xac)),
+        number:        fg(Color::Rgb(0x77, 0x5e, 0x9e)),
+        constant:      fg_bold(Color::Rgb(0x1e, 0x52, 0x8f)),
+        decorator:     fg_italic(Color::Rgb(0x88, 0x5d, 0x9d)),
+        property:      fg(Color::Rgb(0x1f, 0x45, 0x41)),
+        operator:      fg(Color::Rgb(0x3a, 0xa9, 0x9f)),
+        punctuation:   fg(Color::Rgb(0x4c, 0x4a, 0x47)),
+    }
+}
+fn glow() -> Theme {
+    // Synced from the kshell "Glow" theme (accent #8a8ff8, highlight #8aa4f0).
+    Theme {
+        fg:            Color::Rgb(0xe6, 0xe8, 0xf4),
+        bg:            Color::Rgb(0x0c, 0x0e, 0x18),
+        selection_bg:  Color::Rgb(0x2f, 0x38, 0x54),
+        line_number:   Style::new().fg(Color::Rgb(0x86, 0x8a, 0xa4)),
+        tilde:         Style::new().fg(Color::Rgb(0x4f, 0x52, 0x65)),
+        status_bg:     Color::Rgb(0x08, 0x0a, 0x11),
+        status_fg:     Color::Rgb(0xe6, 0xe8, 0xf4),
+        border:        Color::Rgb(0x8a, 0xa4, 0xf0),
+        keyword:       fg_bold(Color::Rgb(0x8a, 0x8f, 0xf8)),
+        builtin:       fg(Color::Rgb(0x8a, 0xa4, 0xf0)),
+        rstype:        fg_bold(Color::Rgb(0x8a, 0xa4, 0xf0)),
+        function:      fg(Color::Rgb(0xaa, 0xae, 0xf7)),
+        lifetime:      fg_italic(Color::Rgb(0x86, 0x8a, 0xa4)),
+        string:        fg_italic(Color::Rgb(0xa4, 0xb7, 0xf1)),
+        fstring_prefix:fg_bold(Color::Rgb(0xa4, 0xb7, 0xf1)),
+        comment:       fg_italic(Color::Rgb(0x86, 0x8a, 0xa4)),
+        number:        fg(Color::Rgb(0x8a, 0x9a, 0xf4)),
+        constant:      fg_bold(Color::Rgb(0x98, 0x9c, 0xf7)),
+        decorator:     fg_italic(Color::Rgb(0x8a, 0x9c, 0xf3)),
+        property:      fg(Color::Rgb(0xc6, 0xd0, 0xf3)),
+        operator:      fg(Color::Rgb(0x8a, 0xa4, 0xf0)),
+        punctuation:   fg(Color::Rgb(0xb0, 0xb2, 0xbd)),
+    }
+}
+fn hackerman() -> Theme {
+    // Synced from the kshell "Hackerman" theme (accent #82fb9c, highlight #7cf8f7).
+    Theme {
+        fg:            Color::Rgb(0xdd, 0xf7, 0xff),
+        bg:            Color::Rgb(0x0b, 0x0c, 0x16),
+        selection_bg:  Color::Rgb(0x2b, 0x4e, 0x55),
+        line_number:   Style::new().fg(Color::Rgb(0x2d, 0x34, 0x50)),
+        tilde:         Style::new().fg(Color::Rgb(0x1e, 0x22, 0x36)),
+        status_bg:     Color::Rgb(0x08, 0x08, 0x0f),
+        status_fg:     Color::Rgb(0xdd, 0xf7, 0xff),
+        border:        Color::Rgb(0x7c, 0xf8, 0xf7),
+        keyword:       fg_bold(Color::Rgb(0x82, 0xfb, 0x9c)),
+        builtin:       fg(Color::Rgb(0x7c, 0xf8, 0xf7)),
+        rstype:        fg_bold(Color::Rgb(0x7c, 0xf8, 0xf7)),
+        function:      fg(Color::Rgb(0xa2, 0xfa, 0xbf)),
+        lifetime:      fg_italic(Color::Rgb(0x2d, 0x34, 0x50)),
+        string:        fg_italic(Color::Rgb(0x97, 0xf8, 0xf9)),
+        fstring_prefix:fg_bold(Color::Rgb(0x97, 0xf8, 0xf9)),
+        comment:       fg_italic(Color::Rgb(0x2d, 0x34, 0x50)),
+        number:        fg(Color::Rgb(0x7f, 0xfa, 0xca)),
+        constant:      fg_bold(Color::Rgb(0x90, 0xfa, 0xab)),
+        decorator:     fg_italic(Color::Rgb(0x7e, 0xf9, 0xd3)),
+        property:      fg(Color::Rgb(0xbb, 0xf7, 0xfc)),
+        operator:      fg(Color::Rgb(0x7c, 0xf8, 0xf7)),
+        punctuation:   fg(Color::Rgb(0xa8, 0xbc, 0xc5)),
+    }
+}
+fn lumon() -> Theme {
+    // Synced from the kshell "Lumon" theme (accent #8bc9eb, highlight #6fb8e3).
+    Theme {
+        fg:            Color::Rgb(0xd6, 0xe2, 0xee),
+        bg:            Color::Rgb(0x16, 0x24, 0x2d),
+        selection_bg:  Color::Rgb(0x2f, 0x4d, 0x60),
+        line_number:   Style::new().fg(Color::Rgb(0x30, 0x48, 0x60)),
+        tilde:         Style::new().fg(Color::Rgb(0x24, 0x38, 0x49)),
+        status_bg:     Color::Rgb(0x0f, 0x19, 0x20),
+        status_fg:     Color::Rgb(0xd6, 0xe2, 0xee),
+        border:        Color::Rgb(0x6f, 0xb8, 0xe3),
+        keyword:       fg_bold(Color::Rgb(0x8b, 0xc9, 0xeb)),
+        builtin:       fg(Color::Rgb(0x6f, 0xb8, 0xe3)),
+        rstype:        fg_bold(Color::Rgb(0x6f, 0xb8, 0xe3)),
+        function:      fg(Color::Rgb(0xa5, 0xd2, 0xec)),
+        lifetime:      fg_italic(Color::Rgb(0x30, 0x48, 0x60)),
+        string:        fg_italic(Color::Rgb(0x8c, 0xc4, 0xe6)),
+        fstring_prefix:fg_bold(Color::Rgb(0x8c, 0xc4, 0xe6)),
+        comment:       fg_italic(Color::Rgb(0x30, 0x48, 0x60)),
+        number:        fg(Color::Rgb(0x7d, 0xc0, 0xe7)),
+        constant:      fg_bold(Color::Rgb(0x96, 0xcd, 0xeb)),
+        decorator:     fg_italic(Color::Rgb(0x7a, 0xbf, 0xe6)),
+        property:      fg(Color::Rgb(0xb2, 0xd3, 0xea)),
+        operator:      fg(Color::Rgb(0x6f, 0xb8, 0xe3)),
+        punctuation:   fg(Color::Rgb(0xa6, 0xb2, 0xbe)),
+    }
+}
+fn lupine() -> Theme {
+    // Synced from the kshell "Lupine" theme (accent #3264eb, highlight #8a4ad7).
+    Theme {
+        fg:            Color::Rgb(0x21, 0x21, 0x21),
+        bg:            Color::Rgb(0xfa, 0xfa, 0xfa),
+        selection_bg:  Color::Rgb(0xcf, 0xe0, 0xf5),
+        line_number:   Style::new().fg(Color::Rgb(0x9e, 0x9e, 0x9e)),
+        tilde:         Style::new().fg(Color::Rgb(0xc7, 0xc7, 0xc7)),
+        status_bg:     Color::Rgb(0xe6, 0xe6, 0xe6),
+        status_fg:     Color::Rgb(0x21, 0x21, 0x21),
+        border:        Color::Rgb(0x0c, 0x67, 0xde),
+        keyword:       fg_bold(Color::Rgb(0x32, 0x64, 0xeb)),
+        builtin:       fg(Color::Rgb(0x8a, 0x4a, 0xd7)),
+        rstype:        fg_bold(Color::Rgb(0x8a, 0x4a, 0xd7)),
+        function:      fg(Color::Rgb(0x2c, 0x4d, 0xa4)),
+        lifetime:      fg_italic(Color::Rgb(0x9e, 0x9e, 0x9e)),
+        string:        fg_italic(Color::Rgb(0x6d, 0x3f, 0xa4)),
+        fstring_prefix:fg_bold(Color::Rgb(0x6d, 0x3f, 0xa4)),
+        comment:       fg_italic(Color::Rgb(0x9e, 0x9e, 0x9e)),
+        number:        fg(Color::Rgb(0x5e, 0x57, 0xe1)),
+        constant:      fg_bold(Color::Rgb(0x2f, 0x5a, 0xcd)),
+        decorator:     fg_italic(Color::Rgb(0x67, 0x54, 0xdf)),
+        property:      fg(Color::Rgb(0x1a, 0x3a, 0x63)),
+        operator:      fg(Color::Rgb(0x0c, 0x67, 0xde)),
+        punctuation:   fg(Color::Rgb(0x57, 0x57, 0x57)),
+    }
+}
+fn matte_black() -> Theme {
+    // Synced from the kshell "Matte Black" theme (accent #e68e0d, highlight #ffc107).
+    Theme {
+        fg:            Color::Rgb(0xbe, 0xbe, 0xbe),
+        bg:            Color::Rgb(0x12, 0x12, 0x12),
+        selection_bg:  Color::Rgb(0x54, 0x43, 0x0f),
+        line_number:   Style::new().fg(Color::Rgb(0x55, 0x55, 0x55)),
+        tilde:         Style::new().fg(Color::Rgb(0x37, 0x37, 0x37)),
+        status_bg:     Color::Rgb(0x0d, 0x0d, 0x0d),
+        status_fg:     Color::Rgb(0xbe, 0xbe, 0xbe),
+        border:        Color::Rgb(0xff, 0xc1, 0x07),
+        keyword:       fg_bold(Color::Rgb(0xe6, 0x8e, 0x0d)),
+        builtin:       fg(Color::Rgb(0xff, 0xc1, 0x07)),
+        rstype:        fg_bold(Color::Rgb(0xff, 0xc1, 0x07)),
+        function:      fg(Color::Rgb(0xd8, 0x9f, 0x4b)),
+        lifetime:      fg_italic(Color::Rgb(0x55, 0x55, 0x55)),
+        string:        fg_italic(Color::Rgb(0xed, 0xc0, 0x3a)),
+        fstring_prefix:fg_bold(Color::Rgb(0xed, 0xc0, 0x3a)),
+        comment:       fg_italic(Color::Rgb(0x55, 0x55, 0x55)),
+        number:        fg(Color::Rgb(0xf2, 0xa8, 0x0a)),
+        constant:      fg_bold(Color::Rgb(0xe0, 0x95, 0x28)),
+        decorator:     fg_italic(Color::Rgb(0xf5, 0xad, 0x09)),
+        property:      fg(Color::Rgb(0xd5, 0xbf, 0x7e)),
+        operator:      fg(Color::Rgb(0xff, 0xc1, 0x07)),
+        punctuation:   fg(Color::Rgb(0x93, 0x93, 0x93)),
+    }
+}
+fn monochrome_light() -> Theme {
+    // Synced from the kshell "Monochrome Light" theme (accent #6e6e6e, highlight #2a2a2a).
+    Theme {
+        fg:            Color::Rgb(0x00, 0x00, 0x00),
+        bg:            Color::Rgb(0xff, 0xff, 0xff),
+        selection_bg:  Color::Rgb(0xdc, 0xdc, 0xdc),
+        line_number:   Style::new().fg(Color::Rgb(0x80, 0x80, 0x80)),
+        tilde:         Style::new().fg(Color::Rgb(0xb9, 0xb9, 0xb9)),
+        status_bg:     Color::Rgb(0xeb, 0xeb, 0xeb),
+        status_fg:     Color::Rgb(0x00, 0x00, 0x00),
+        border:        Color::Rgb(0x3a, 0x3a, 0x3a),
+        keyword:       fg_bold(Color::Rgb(0x6e, 0x6e, 0x6e)),
+        builtin:       fg(Color::Rgb(0x2a, 0x2a, 0x2a)),
+        rstype:        fg_bold(Color::Rgb(0x2a, 0x2a, 0x2a)),
+        function:      fg(Color::Rgb(0x48, 0x48, 0x48)),
+        lifetime:      fg_italic(Color::Rgb(0x80, 0x80, 0x80)),
+        string:        fg_italic(Color::Rgb(0x1e, 0x1e, 0x1e)),
+        fstring_prefix:fg_bold(Color::Rgb(0x1e, 0x1e, 0x1e)),
+        comment:       fg_italic(Color::Rgb(0x80, 0x80, 0x80)),
+        number:        fg(Color::Rgb(0x4c, 0x4c, 0x4c)),
+        constant:      fg_bold(Color::Rgb(0x5e, 0x5e, 0x5e)),
+        decorator:     fg_italic(Color::Rgb(0x45, 0x45, 0x45)),
+        property:      fg(Color::Rgb(0x14, 0x14, 0x14)),
+        operator:      fg(Color::Rgb(0x3a, 0x3a, 0x3a)),
+        punctuation:   fg(Color::Rgb(0x40, 0x40, 0x40)),
+    }
+}
+fn night_lagoon() -> Theme {
+    // Synced from the kshell "Night Lagoon" theme (accent #8c6ad8, highlight #b098e8).
+    Theme {
+        fg:            Color::Rgb(0xe4, 0xde, 0xf0),
+        bg:            Color::Rgb(0x0a, 0x08, 0x12),
+        selection_bg:  Color::Rgb(0x38, 0x30, 0x4e),
+        line_number:   Style::new().fg(Color::Rgb(0x7a, 0x74, 0x90)),
+        tilde:         Style::new().fg(Color::Rgb(0x48, 0x43, 0x57)),
+        status_bg:     Color::Rgb(0x07, 0x06, 0x0d),
+        status_fg:     Color::Rgb(0xe4, 0xde, 0xf0),
+        border:        Color::Rgb(0xb0, 0x98, 0xe8),
+        keyword:       fg_bold(Color::Rgb(0x8c, 0x6a, 0xd8)),
+        builtin:       fg(Color::Rgb(0xb0, 0x98, 0xe8)),
+        rstype:        fg_bold(Color::Rgb(0xb0, 0x98, 0xe8)),
+        function:      fg(Color::Rgb(0xab, 0x93, 0xe0)),
+        lifetime:      fg_italic(Color::Rgb(0x7a, 0x74, 0x90)),
+        string:        fg_italic(Color::Rgb(0xbf, 0xac, 0xea)),
+        fstring_prefix:fg_bold(Color::Rgb(0xbf, 0xac, 0xea)),
+        comment:       fg_italic(Color::Rgb(0x7a, 0x74, 0x90)),
+        number:        fg(Color::Rgb(0x9e, 0x81, 0xe0)),
+        constant:      fg_bold(Color::Rgb(0x99, 0x7b, 0xdc)),
+        decorator:     fg_italic(Color::Rgb(0xa2, 0x86, 0xe2)),
+        property:      fg(Color::Rgb(0xd2, 0xc6, 0xed)),
+        operator:      fg(Color::Rgb(0xb0, 0x98, 0xe8)),
+        punctuation:   fg(Color::Rgb(0xae, 0xa8, 0xb8)),
+    }
+}
+fn ristretto() -> Theme {
+    // Synced from the kshell "Ristretto" theme (accent #f38d70, highlight #a8a9eb).
+    Theme {
+        fg:            Color::Rgb(0xe6, 0xd9, 0xdb),
+        bg:            Color::Rgb(0x2c, 0x25, 0x25),
+        selection_bg:  Color::Rgb(0x4f, 0x4a, 0x5c),
+        line_number:   Style::new().fg(Color::Rgb(0x72, 0x69, 0x6a)),
+        tilde:         Style::new().fg(Color::Rgb(0x52, 0x4a, 0x4b)),
+        status_bg:     Color::Rgb(0x1f, 0x1a, 0x1a),
+        status_fg:     Color::Rgb(0xe6, 0xd9, 0xdb),
+        border:        Color::Rgb(0xa8, 0xa9, 0xeb),
+        keyword:       fg_bold(Color::Rgb(0xf3, 0x8d, 0x70)),
+        builtin:       fg(Color::Rgb(0xa8, 0xa9, 0xeb)),
+        rstype:        fg_bold(Color::Rgb(0xa8, 0xa9, 0xeb)),
+        function:      fg(Color::Rgb(0xee, 0xa8, 0x95)),
+        lifetime:      fg_italic(Color::Rgb(0x72, 0x69, 0x6a)),
+        string:        fg_italic(Color::Rgb(0xb9, 0xb6, 0xe7)),
+        fstring_prefix:fg_bold(Color::Rgb(0xb9, 0xb6, 0xe7)),
+        comment:       fg_italic(Color::Rgb(0x72, 0x69, 0x6a)),
+        number:        fg(Color::Rgb(0xce, 0x9b, 0xae)),
+        constant:      fg_bold(Color::Rgb(0xf1, 0x98, 0x80)),
+        decorator:     fg_italic(Color::Rgb(0xc6, 0x9e, 0xba)),
+        property:      fg(Color::Rgb(0xd0, 0xc8, 0xe1)),
+        operator:      fg(Color::Rgb(0xa8, 0xa9, 0xeb)),
+        punctuation:   fg(Color::Rgb(0xb8, 0xac, 0xae)),
+    }
+}
+fn solitude() -> Theme {
+    // Synced from the kshell "Solitude" theme (accent #798186, highlight #a5aeb4).
+    Theme {
+        fg:            Color::Rgb(0xca, 0xcc, 0xcc),
+        bg:            Color::Rgb(0x10, 0x13, 0x15),
+        selection_bg:  Color::Rgb(0x38, 0x3c, 0x3e),
+        line_number:   Style::new().fg(Color::Rgb(0x4b, 0x4e, 0x55)),
+        tilde:         Style::new().fg(Color::Rgb(0x30, 0x33, 0x38)),
+        status_bg:     Color::Rgb(0x0b, 0x0d, 0x0f),
+        status_fg:     Color::Rgb(0xca, 0xcc, 0xcc),
+        border:        Color::Rgb(0x9f, 0xa5, 0xa9),
+        keyword:       fg_bold(Color::Rgb(0x79, 0x81, 0x86)),
+        builtin:       fg(Color::Rgb(0xa5, 0xae, 0xb4)),
+        rstype:        fg_bold(Color::Rgb(0xa5, 0xae, 0xb4)),
+        function:      fg(Color::Rgb(0x95, 0x9b, 0x9e)),
+        lifetime:      fg_italic(Color::Rgb(0x4b, 0x4e, 0x55)),
+        string:        fg_italic(Color::Rgb(0xaf, 0xb6, 0xbb)),
+        fstring_prefix:fg_bold(Color::Rgb(0xaf, 0xb6, 0xbb)),
+        comment:       fg_italic(Color::Rgb(0x4b, 0x4e, 0x55)),
+        number:        fg(Color::Rgb(0x8f, 0x98, 0x9d)),
+        constant:      fg_bold(Color::Rgb(0x85, 0x8c, 0x90)),
+        decorator:     fg_italic(Color::Rgb(0x93, 0x9c, 0xa2)),
+        property:      fg(Color::Rgb(0xbb, 0xbe, 0xc0)),
+        operator:      fg(Color::Rgb(0x9f, 0xa5, 0xa9)),
+        punctuation:   fg(Color::Rgb(0x9c, 0x9e, 0x9e)),
+    }
+}
+fn sunset() -> Theme {
+    // Synced from the kshell "Sunset" theme (accent #6ba3ff, highlight #f5c842).
+    Theme {
+        fg:            Color::Rgb(0xe8, 0xf0, 0xf8),
+        bg:            Color::Rgb(0x0e, 0x14, 0x19),
+        selection_bg:  Color::Rgb(0x4f, 0x46, 0x24),
+        line_number:   Style::new().fg(Color::Rgb(0x8b, 0xa0, 0xb0)),
+        tilde:         Style::new().fg(Color::Rgb(0x53, 0x61, 0x6c)),
+        status_bg:     Color::Rgb(0x0a, 0x0e, 0x12),
+        status_fg:     Color::Rgb(0xe8, 0xf0, 0xf8),
+        border:        Color::Rgb(0xf5, 0xc8, 0x42),
+        keyword:       fg_bold(Color::Rgb(0x6b, 0xa3, 0xff)),
+        builtin:       fg(Color::Rgb(0xf5, 0xc8, 0x42)),
+        rstype:        fg_bold(Color::Rgb(0xf5, 0xc8, 0x42)),
+        function:      fg(Color::Rgb(0x97, 0xbe, 0xfd)),
+        lifetime:      fg_italic(Color::Rgb(0x8b, 0xa0, 0xb0)),
+        string:        fg_italic(Color::Rgb(0xf1, 0xd3, 0x75)),
+        fstring_prefix:fg_bold(Color::Rgb(0xf1, 0xd3, 0x75)),
+        comment:       fg_italic(Color::Rgb(0x8b, 0xa0, 0xb0)),
+        number:        fg(Color::Rgb(0xb0, 0xb6, 0xa0)),
+        constant:      fg_bold(Color::Rgb(0x7e, 0xaf, 0xfe)),
+        decorator:     fg_italic(Color::Rgb(0xbe, 0xb9, 0x8e)),
+        property:      fg(Color::Rgb(0xed, 0xe2, 0xb8)),
+        operator:      fg(Color::Rgb(0xf5, 0xc8, 0x42)),
+        punctuation:   fg(Color::Rgb(0xb2, 0xb9, 0xc0)),
+    }
+}
+fn vantablack() -> Theme {
+    // Synced from the kshell "Vantablack" theme (accent #8d8d8d, highlight #cecece).
+    Theme {
+        fg:            Color::Rgb(0xff, 0xff, 0xff),
+        bg:            Color::Rgb(0x00, 0x00, 0x00),
+        selection_bg:  Color::Rgb(0x31, 0x31, 0x31),
+        line_number:   Style::new().fg(Color::Rgb(0x7a, 0x7a, 0x7a)),
+        tilde:         Style::new().fg(Color::Rgb(0x43, 0x43, 0x43)),
+        status_bg:     Color::Rgb(0x00, 0x00, 0x00),
+        status_fg:     Color::Rgb(0xff, 0xff, 0xff),
+        border:        Color::Rgb(0xb0, 0xb0, 0xb0),
+        keyword:       fg_bold(Color::Rgb(0x8d, 0x8d, 0x8d)),
+        builtin:       fg(Color::Rgb(0xce, 0xce, 0xce)),
+        rstype:        fg_bold(Color::Rgb(0xce, 0xce, 0xce)),
+        function:      fg(Color::Rgb(0xb5, 0xb5, 0xb5)),
+        lifetime:      fg_italic(Color::Rgb(0x7a, 0x7a, 0x7a)),
+        string:        fg_italic(Color::Rgb(0xdc, 0xdc, 0xdc)),
+        fstring_prefix:fg_bold(Color::Rgb(0xdc, 0xdc, 0xdc)),
+        comment:       fg_italic(Color::Rgb(0x7a, 0x7a, 0x7a)),
+        number:        fg(Color::Rgb(0xae, 0xae, 0xae)),
+        constant:      fg_bold(Color::Rgb(0x9e, 0x9e, 0x9e)),
+        decorator:     fg_italic(Color::Rgb(0xb4, 0xb4, 0xb4)),
+        property:      fg(Color::Rgb(0xe3, 0xe3, 0xe3)),
+        operator:      fg(Color::Rgb(0xb0, 0xb0, 0xb0)),
+        punctuation:   fg(Color::Rgb(0xbf, 0xbf, 0xbf)),
+    }
+}
+fn vice_city() -> Theme {
+    // Synced from the kshell "Vice City" theme (accent #ff6ec7, highlight #00ffff).
+    Theme {
+        fg:            Color::Rgb(0xf7, 0x93, 0xd9),
+        bg:            Color::Rgb(0x0a, 0x0a, 0x14),
+        selection_bg:  Color::Rgb(0x07, 0x36, 0x56),
+        line_number:   Style::new().fg(Color::Rgb(0x8a, 0x6a, 0x9a)),
+        tilde:         Style::new().fg(Color::Rgb(0x50, 0x3f, 0x5e)),
+        status_bg:     Color::Rgb(0x07, 0x07, 0x0e),
+        status_fg:     Color::Rgb(0xf7, 0x93, 0xd9),
+        border:        Color::Rgb(0x00, 0xa8, 0xff),
+        keyword:       fg_bold(Color::Rgb(0xff, 0x6e, 0xc7)),
+        builtin:       fg(Color::Rgb(0x00, 0xff, 0xff)),
+        rstype:        fg_bold(Color::Rgb(0x00, 0xff, 0xff)),
+        function:      fg(Color::Rgb(0xfc, 0x7b, 0xcd)),
+        lifetime:      fg_italic(Color::Rgb(0x8a, 0x6a, 0x9a)),
+        string:        fg_italic(Color::Rgb(0x45, 0xe1, 0xf4)),
+        fstring_prefix:fg_bold(Color::Rgb(0x45, 0xe1, 0xf4)),
+        comment:       fg_italic(Color::Rgb(0x8a, 0x6a, 0x9a)),
+        number:        fg(Color::Rgb(0x80, 0xb6, 0xe3)),
+        constant:      fg_bold(Color::Rgb(0xfe, 0x74, 0xca)),
+        decorator:     fg_italic(Color::Rgb(0x66, 0xc5, 0xe9)),
+        property:      fg(Color::Rgb(0xa1, 0x9a, 0xe6)),
+        operator:      fg(Color::Rgb(0x00, 0xa8, 0xff)),
+        punctuation:   fg(Color::Rgb(0xbc, 0x71, 0xa8)),
+    }
+}
+fn void() -> Theme {
+    // Synced from the kshell "Void" theme (accent #bb9af7, highlight #a6b8ff).
+    Theme {
+        fg:            Color::Rgb(0xff, 0xff, 0xff),
+        bg:            Color::Rgb(0x05, 0x01, 0x0c),
+        selection_bg:  Color::Rgb(0x36, 0x2c, 0x49),
+        line_number:   Style::new().fg(Color::Rgb(0x6b, 0x57, 0x8f)),
+        tilde:         Style::new().fg(Color::Rgb(0x3d, 0x30, 0x54)),
+        status_bg:     Color::Rgb(0x04, 0x01, 0x08),
+        status_fg:     Color::Rgb(0xff, 0xff, 0xff),
+        border:        Color::Rgb(0xb4, 0x9a, 0xe6),
+        keyword:       fg_bold(Color::Rgb(0xbb, 0x9a, 0xf7)),
+        builtin:       fg(Color::Rgb(0xa6, 0xb8, 0xff)),
+        rstype:        fg_bold(Color::Rgb(0xa6, 0xb8, 0xff)),
+        function:      fg(Color::Rgb(0xd3, 0xbd, 0xfa)),
+        lifetime:      fg_italic(Color::Rgb(0x6b, 0x57, 0x8f)),
+        string:        fg_italic(Color::Rgb(0xbf, 0xcc, 0xff)),
+        fstring_prefix:fg_bold(Color::Rgb(0xbf, 0xcc, 0xff)),
+        comment:       fg_italic(Color::Rgb(0x6b, 0x57, 0x8f)),
+        number:        fg(Color::Rgb(0xb0, 0xa9, 0xfb)),
+        constant:      fg_bold(Color::Rgb(0xc5, 0xa9, 0xf8)),
+        decorator:     fg_italic(Color::Rgb(0xae, 0xac, 0xfc)),
+        property:      fg(Color::Rgb(0xe5, 0xdc, 0xf6)),
+        operator:      fg(Color::Rgb(0xb4, 0x9a, 0xe6)),
+        punctuation:   fg(Color::Rgb(0xc0, 0xc0, 0xc2)),
+    }
+}
+
+fn macos_dark() -> Theme {
+    // macOS dark mode, monochrome: windowBackgroundColor #1E1E1E, labelColor at
+    // 85%, and a lightness ramp for syntax. systemGreen #30D158 marks keywords
+    // and nothing else — the one hue in the scheme, so a screen of code reads as
+    // grey with a green thread through it. Same numbers as kitty and nvim.
+    Theme {
+        fg:            Color::Rgb(0xdf, 0xdf, 0xe0),
+        bg:            Color::Rgb(0x1e, 0x1e, 0x1e),
+        selection_bg:  Color::Rgb(0x3a, 0x3a, 0x3a),
+        line_number:   Style::new().fg(Color::Rgb(0x7f, 0x7f, 0x7f)),
+        tilde:         Style::new().fg(Color::Rgb(0x35, 0x35, 0x35)),
+        status_bg:     Color::Rgb(0x28, 0x28, 0x28),
+        status_fg:     Color::Rgb(0xdf, 0xdf, 0xe0),
+        border:        Color::Rgb(0x8c, 0x8c, 0x8c),
+        keyword:       fg_bold(Color::Rgb(0x30, 0xd1, 0x58)),
+        builtin:       fg(Color::Rgb(0xc8, 0xc8, 0xc8)),
+        rstype:        fg_bold(Color::Rgb(0xc8, 0xc8, 0xc8)),
+        function:      fg(Color::Rgb(0xe8, 0xe8, 0xe8)),
+        lifetime:      fg_italic(Color::Rgb(0x7f, 0x7f, 0x7f)),
+        string:        fg(Color::Rgb(0xb8, 0xb8, 0xb8)),
+        fstring_prefix:fg_bold(Color::Rgb(0xb8, 0xb8, 0xb8)),
+        comment:       fg_italic(Color::Rgb(0x7f, 0x7f, 0x7f)),
+        number:        fg(Color::Rgb(0xa0, 0xa0, 0xa0)),
+        constant:      fg_bold(Color::Rgb(0xa0, 0xa0, 0xa0)),
+        decorator:     fg_italic(Color::Rgb(0x9a, 0x9a, 0x9a)),
+        property:      fg(Color::Rgb(0xdf, 0xdf, 0xe0)),
+        operator:      fg(Color::Rgb(0x9a, 0x9a, 0x9a)),
+        punctuation:   fg(Color::Rgb(0x7f, 0x7f, 0x7f)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1260,7 +2024,7 @@ mod tests {
 
     #[test]
     fn every_theme_is_constructible_and_named() {
-        assert_eq!(ThemeKind::all().len(), 31);
+        assert_eq!(ThemeKind::all().len(), 54);
         for k in ThemeKind::all() {
             let _ = k.theme();
             assert_eq!(ThemeKind::from_str(k.name()), Some(*k), "{}", k.name());
@@ -1317,7 +2081,11 @@ mod tests {
             ThemeKind::GithubLight,
             ThemeKind::TokyoNightDay,
             ThemeKind::RosePineDawn,
-            ThemeKind::EverforestLight,
+            ThemeKind::Alabaster,
+            ThemeKind::AyuLight,
+            ThemeKind::FlexokiLight,
+            ThemeKind::Lupine,
+            ThemeKind::MonochromeLight,
         ] {
             let t = k.theme();
             if let Color::Rgb(r, g, b) = t.bg {

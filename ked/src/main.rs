@@ -24,6 +24,7 @@ mod editor;
 mod filetree;
 mod finder;
 mod graphics;
+mod hermes;
 mod highlight;
 mod keymap;
 mod memory;
@@ -32,6 +33,7 @@ mod shell;
 mod theme;
 
 use std::io;
+use std::io::Write;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -167,6 +169,9 @@ impl Drop for TuiGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
         let mut out = io::stdout();
+        // A frame is always closed, but a panic between the two markers would
+        // leave the terminal holding every repaint — release it first.
+        let _ = out.write_all(b"\x1b[?2026l");
         let _ = execute!(out, DisableBracketedPaste);
         let _ = execute!(out, PopKeyboardEnhancementFlags);
         let _ = execute!(out, LeaveAlternateScreen);
@@ -303,6 +308,69 @@ fn cursor_style_code(s: crossterm::cursor::SetCursorStyle) -> u8 {
     }
 }
 
+/// Everything a frame draws lands here, so exactly one `write` reaches the
+/// terminal per frame.
+///
+/// ratatui ends a frame with `show_cursor` and then `MoveTo`, and crossterm
+/// flushes each of those on its own — so a frame reaches the terminal as three
+/// writes: the diff, then the cursor show, then the cursor move. A real
+/// terminal coalesces them into one refresh, but tmux repaints after each write,
+/// which briefly shows the cursor wherever the last changed cell left it. While
+/// scrolling that is a different place every frame, so the cursor appears to
+/// flash around the buffer. Queueing the frame and writing it once removes the
+/// intermediate position entirely.
+#[derive(Clone, Default)]
+struct FrameSink(std::rc::Rc<std::cell::RefCell<Vec<u8>>>);
+
+impl std::io::Write for FrameSink {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.borrow_mut().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Hand everything queued in the sink to the terminal in a single write, wrapped
+/// in DEC 2026 (synchronized output).
+///
+/// One write is not enough on its own: a pty hands tmux a frame in ~1 KiB bites,
+/// so a frame bigger than that still arrives as several reads. Small frames —
+/// short lines, only the leading columns change on a scroll — fit and stopped
+/// flickering, but once the file has long lines every column of every row
+/// changes, the diff is tens of kilobytes, and tmux repaints between reads with
+/// the cursor visible wherever the last changed cell left it. The sync markers
+/// make tmux hold the whole frame until the end marker, so only the final cursor
+/// position is ever painted, whatever the frame size. Terminals without support
+/// ignore the markers; tmux ≥ 3.4 and kitty implement them.
+const SYNC_ON: &[u8] = b"\x1b[?2026h";
+const SYNC_OFF: &[u8] = b"\x1b[?2026l";
+
+/// The bytes one frame occupies on the wire, sync markers included.
+fn framed(sink: &FrameSink) -> Vec<u8> {
+    let buf = sink.0.borrow();
+    let mut frame = Vec::with_capacity(buf.len() + SYNC_ON.len() + SYNC_OFF.len());
+    frame.extend_from_slice(SYNC_ON);
+    frame.extend_from_slice(&buf);
+    frame.extend_from_slice(SYNC_OFF);
+    frame
+}
+
+/// Hand everything queued in the sink to the terminal in a single write.
+fn write_sink(sink: &FrameSink) -> std::io::Result<()> {
+    if sink.0.borrow().is_empty() {
+        return Ok(());
+    }
+    let frame = framed(sink);
+    let mut out = io::stdout().lock();
+    out.write_all(&frame)?;
+    out.flush()?;
+    sink.0.borrow_mut().clear();
+    Ok(())
+}
+
 fn run_tui(editor: &mut editor::Editor) -> Result<()> {
     enable_raw_mode()?;
     // From here on, any `?` (or panic) restores the terminal.
@@ -320,7 +388,8 @@ fn run_tui(editor: &mut editor::Editor) -> Result<()> {
     // Bracketed paste: terminal pastes arrive as a single Paste event
     // instead of a burst of keystrokes.
     execute!(stdout, EnableBracketedPaste)?;
-    let backend = CrosstermBackend::new(stdout);
+    let sink = FrameSink::default();
+    let backend = CrosstermBackend::new(sink.clone());
     let mut terminal = Terminal::new(backend)?;
 
     // ---- panic hook: restore terminal even on crashes ----
@@ -340,6 +409,7 @@ fn run_tui(editor: &mut editor::Editor) -> Result<()> {
     // echo the probe bytes, and `terminal.clear()` wipes that.
     editor.set_graphics(graphics::detect());
     terminal.clear()?;
+    write_sink(&sink)?;
 
     // ---- main event loop ----
     // Track the last cursor shape so it is only sent when it changes.
@@ -355,9 +425,13 @@ fn run_tui(editor: &mut editor::Editor) -> Result<()> {
         // end of draw().  Do NOT hide it here every frame: the
         // hide/show toggle at ~60 fps is what made the cursor flicker.
         terminal.draw(|f| editor.render(f))?;
-        // Flush kitty-graphics placements queued during render, then
-        // restore the cursor (the placement commands move it around).
-        editor.flush_graphics()?;
+        // The frame is queued, not written. Append the kitty-graphics
+        // placements (they already end with a cursor move) and hand the whole
+        // frame to the terminal in one write, so tmux never sees an
+        // intermediate cursor position.
+        let graphics = editor.take_graphics();
+        sink.0.borrow_mut().extend_from_slice(&graphics);
+        write_sink(&sink)?;
         // Apply the cursor shape only when the mode/state changed.
         let style = editor.cursor_style;
         let code = cursor_style_code(style);
@@ -453,5 +527,47 @@ mod tests {
             parse_cli(&argv(&["ked", "--", "--weird-name"])),
             Ok(Cli::Run(Some("--weird-name".into())))
         );
+    }
+
+    #[test]
+    fn a_frame_and_its_cursor_move_share_one_buffer() {
+        // ratatui ends a frame by writing the diff, then `show_cursor`, then
+        // `MoveTo` — three separate writes through a real stdout, which tmux
+        // repaints between. The sink must hold all three so the loop can hand
+        // the terminal one write, with no intermediate cursor position.
+        use ratatui::backend::Backend;
+        use ratatui::layout::Position;
+
+        let sink = FrameSink::default();
+        let mut backend = CrosstermBackend::new(sink.clone());
+        backend.show_cursor().unwrap();
+        backend.set_cursor_position(Position::new(3, 1)).unwrap();
+        Backend::flush(&mut backend).unwrap();
+
+        let bytes = sink.0.borrow().clone();
+        assert_eq!(
+            String::from_utf8_lossy(&bytes),
+            "\x1b[?25h\x1b[2;4H",
+            "show + move must be queued, not written, and flush must not drop them"
+        );
+    }
+
+    #[test]
+    fn draining_the_sink_empties_it() {
+        let sink = FrameSink::default();
+        sink.clone().write_all(b"frame").unwrap();
+        assert_eq!(sink.0.borrow().as_slice(), b"frame");
+        sink.0.borrow_mut().clear();
+        assert!(sink.0.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_frame_is_wrapped_in_a_synchronized_update() {
+        // Without the DEC 2026 wrapper a frame larger than a pty read is
+        // repainted by tmux in pieces, with the cursor visible in between —
+        // which is what long lines triggered.
+        let sink = FrameSink::default();
+        sink.clone().write_all(b"hello").unwrap();
+        assert_eq!(framed(&sink), b"\x1b[?2026hhello\x1b[?2026l".to_vec());
     }
 }
