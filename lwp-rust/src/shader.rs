@@ -208,10 +208,10 @@ fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]])
     float fine = smoothstep(0.465, 0.500, max(gf.x, gf.y));
     float2 gc = abs(fract(p * 0.8) - 0.5);
     float coarse = smoothstep(0.482, 0.500, max(gc.x, gc.y));
-    float gridFade = 1.0 - smoothstep(0.25, 1.45, r);
+    float gridFade = 1.0 - smoothstep(1.55, 2.60, r);
     float gridPulse = 0.85 + 0.15 * sin(t * 0.5 - r * 3.0);
-    col += float3(0.030, 0.105, 0.150) * fine * gridFade * 0.85 * gridPulse;
-    col += float3(0.055, 0.170, 0.230) * coarse * gridFade * 0.75 * gridPulse;
+    col += float3(0.030, 0.105, 0.150) * fine * gridFade * 1.60 * gridPulse;
+    col += float3(0.055, 0.170, 0.230) * coarse * gridFade * 1.30 * gridPulse;
 
     // ---- rotor: coils and inner plates turn, the housing stays put
     float rot = t * 0.045;
@@ -223,11 +223,11 @@ fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]])
     float gap = 1.0 - smoothstep(0.008, 0.030, abs(fract(a / seg + 0.5) - 0.5) * seg);
 
     // ---- machined steel housing: a solid plate with three raised rims
-    float plate = smoothstep(0.665, 0.685, r) * (1.0 - smoothstep(1.00, 1.02, r));
+    float plate = smoothstep(0.630, 0.650, r) * (1.0 - smoothstep(0.855, 0.875, r));
 
-    float h1 = 1.0 - smoothstep(0.0, 0.014, abs(r - 0.94));
-    float h2 = 1.0 - smoothstep(0.0, 0.020, abs(r - 0.86));
-    float h3 = 1.0 - smoothstep(0.0, 0.016, abs(r - 0.74));
+    float h1 = 1.0 - smoothstep(0.0, 0.014, abs(r - 0.830));
+    float h2 = 1.0 - smoothstep(0.0, 0.020, abs(r - 0.770));
+    float h3 = 1.0 - smoothstep(0.0, 0.016, abs(r - 0.690));
 
     // brushed metal: the sheen turns with the angle, the segment gaps go dark
     float3 steel = mix(float3(0.030, 0.037, 0.047), float3(0.20, 0.235, 0.275),
@@ -238,6 +238,9 @@ fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]])
     col = mix(col, steel * 1.35, h3 * 0.9);
     col = mix(col, steel * 1.55, h2);
     col = mix(col, steel * 1.15, h1 * 0.9);
+
+    // contact shadow so the disc sits on the grid instead of floating
+    col *= 1.0 - 0.45 * exp(-pow((r - 0.90) * 22.0, 2.0));
 
     // ---- ten copper coils, turning with the rotor
     float idx  = floor((ra + 3.14159265) / seg);
