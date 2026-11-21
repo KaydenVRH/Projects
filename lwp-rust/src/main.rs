@@ -8,6 +8,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 mod tui;
+mod shader;
 mod wallpaper;
 
 // ---- state ----------------------------------------------------------------
@@ -86,6 +87,9 @@ fn icons_hidden() -> bool {
 struct Config {
     last_video: String,
     hide_icons: bool,
+    /// "video" (default), "shader" or "builtin"
+    #[serde(default)]
+    last_kind: Option<String>,
 }
 
 fn config_path() -> PathBuf {
@@ -93,12 +97,13 @@ fn config_path() -> PathBuf {
     PathBuf::from(home).join(HOME_CONFIG_DIR).join("config.json")
 }
 
-fn save_config(video: &str, hide: bool) {
+fn save_config(video: &str, hide: bool, kind: Option<&str>) {
     let p = config_path();
     fs::create_dir_all(p.parent().unwrap()).ok();
     if let Ok(json) = serde_json::to_string(&Config {
         last_video: video.to_string(),
         hide_icons: hide,
+        last_kind: kind.map(|k| k.to_string()),
     }) {
         fs::write(&p, &json).ok();
     }
@@ -120,7 +125,7 @@ pub fn cmd_set_inner(path: &str) -> String {
     stop_wallpaper();
     let vp = abs.to_string_lossy().to_string();
     fs::write(VIDEO_PATH, &vp).ok();
-    save_config(&vp, icons_hidden());
+    save_config(&vp, icons_hidden(), None);
 
     let exe = std::env::current_exe().unwrap();
     let (log_out, log_err) = worker_log();
@@ -139,6 +144,36 @@ pub fn cmd_set_inner(path: &str) -> String {
     let pid = child.id();
     fs::write(PID_PATH, pid.to_string()).ok();
     format!("wallpaper started (pid: {pid})")
+}
+
+fn spawn_worker(args: &[String], label: &str) -> String {
+    let exe = std::env::current_exe().unwrap();
+    let (log_out, log_err) = worker_log();
+    let mut cmd = Command::new(&exe);
+    for a in args {
+        cmd.arg(a);
+    }
+    let child = cmd
+        .stdout(log_out)
+        .stderr(log_err)
+        .stdin(Stdio::null())
+        .spawn()
+        .unwrap_or_else(|e| {
+            eprintln!("error: failed to spawn wallpaper process: {e}");
+            std::process::exit(1);
+        });
+    let pid = child.id();
+    fs::write(PID_PATH, pid.to_string()).ok();
+    format!("{label} started (pid: {pid})")
+}
+
+fn resolve(path: &str) -> PathBuf {
+    let p = PathBuf::from(path);
+    if p.is_relative() {
+        std::env::current_dir().unwrap_or_default().join(&p)
+    } else {
+        p
+    }
 }
 
 fn cmd_set(path: &str, hide_icons: bool) {
@@ -161,7 +196,7 @@ fn cmd_set(path: &str, hide_icons: bool) {
     }
     let vp = abs.to_string_lossy().to_string();
     fs::write(VIDEO_PATH, &vp).ok();
-    save_config(&vp, hide_icons);
+    save_config(&vp, hide_icons, None);
 
     let exe = std::env::current_exe().unwrap();
     let (log_out, log_err) = worker_log();
@@ -222,6 +257,137 @@ fn cmd_status() {
 
 fn cmd_run(path: &str, hide_icons: bool) {
     wallpaper::run(path, hide_icons);
+}
+
+
+// ---- shader wallpapers ----------------------------------------------------
+
+fn cmd_shaders() {
+    println!("built-in shaders:");
+    for name in shader::builtin_names() {
+        println!("  {name}");
+    }
+    println!("\nuse: lwp set-builtin <name>   or   lwp set-shader <file.metal>");
+}
+
+fn cmd_shader_check(path: Option<&str>, builtin: Option<&str>, size: &str) -> String {
+    let src = match (path, builtin) {
+        (_, Some(name)) => match shader::builtin_source(name) {
+            Some(s) => s.to_string(),
+            None => return format!("error: no built-in shader named '{name}'"),
+        },
+        (Some(p), None) => {
+            let abs = resolve(p);
+            match fs::read_to_string(&abs) {
+                Ok(s) => s,
+                Err(e) => return format!("error: cannot read {}: {e}", abs.display()),
+            }
+        }
+        (None, None) => return "error: give a shader path or --builtin <name>".to_string(),
+    };
+    let (w, h) = match size.split_once('x') {
+        Some((w, h)) => match (w.parse::<u32>(), h.parse::<u32>()) {
+            (Ok(w), Ok(h)) => (w, h),
+            _ => return format!("error: bad size '{size}', expected WxH"),
+        },
+        None => return format!("error: bad size '{size}', expected WxH"),
+    };
+    match shader::check(&src, w, h) {
+        Ok(msg) => msg,
+        Err(e) => format!("error: {e}"),
+    }
+}
+
+fn cmd_set_shader(path: &str, hide_icons: bool) {
+    let abs = resolve(path);
+    let src = match fs::read_to_string(&abs) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: cannot read {}: {e}", abs.display());
+            std::process::exit(1);
+        }
+    };
+    // Compile before tearing down whatever is already playing.
+    if let Err(e) = shader::check(&src, 64, 64) {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    }
+    ensure_state_dir();
+    stop_wallpaper();
+    if hide_icons {
+        hide_desktop_icons();
+    } else if icons_hidden() {
+        show_desktop_icons();
+    }
+    let p = abs.to_string_lossy().to_string();
+    fs::write(VIDEO_PATH, format!("shader: {p}")).ok();
+    save_config(&p, hide_icons, Some("shader"));
+
+    let mut args: Vec<String> = vec!["run-shader".into(), "--path".into(), p];
+    if hide_icons {
+        args.push("--hide-icons".into());
+    }
+    println!("{}", spawn_worker(&args, "shader wallpaper"));
+}
+
+fn cmd_set_builtin(name: &str, hide_icons: bool) {
+    let src = match shader::builtin_source(name) {
+        Some(s) => s,
+        None => {
+            eprintln!(
+                "error: no built-in shader named '{name}' (have: {})",
+                shader::builtin_names().join(", ")
+            );
+            std::process::exit(1);
+        }
+    };
+    if let Err(e) = shader::check(src, 64, 64) {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    }
+    ensure_state_dir();
+    stop_wallpaper();
+    if hide_icons {
+        hide_desktop_icons();
+    } else if icons_hidden() {
+        show_desktop_icons();
+    }
+    fs::write(VIDEO_PATH, format!("builtin: {name}")).ok();
+    save_config(name, hide_icons, Some("builtin"));
+
+    let mut args: Vec<String> = vec!["run-builtin".into(), "--name".into(), name.into()];
+    if hide_icons {
+        args.push("--hide-icons".into());
+    }
+    println!("{}", spawn_worker(&args, "shader wallpaper"));
+}
+
+fn cmd_run_shader(path: &str, hide_icons: bool) {
+    let src = match fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("shader error: cannot read {path}: {e}");
+            std::process::exit(1);
+        }
+    };
+    if let Err(e) = shader::run(&src, hide_icons) {
+        eprintln!("shader error: {e}");
+        std::process::exit(1);
+    }
+}
+
+fn cmd_run_builtin(name: &str, hide_icons: bool) {
+    let src = match shader::builtin_source(name) {
+        Some(s) => s,
+        None => {
+            eprintln!("shader error: no built-in shader named '{name}'");
+            std::process::exit(1);
+        }
+    };
+    if let Err(e) = shader::run(src, hide_icons) {
+        eprintln!("shader error: {e}");
+        std::process::exit(1);
+    }
 }
 
 // ---- autostart ------------------------------------------------------------
@@ -316,8 +482,18 @@ fn cmd_autostart_status() {
 
 fn cmd_autostart_run() {
     if let Some(cfg) = load_config() {
-        if PathBuf::from(&cfg.last_video).is_file() {
-            wallpaper::run(&cfg.last_video, cfg.hide_icons);
+        match cfg.last_kind.as_deref() {
+            Some("shader") => {
+                if PathBuf::from(&cfg.last_video).is_file() {
+                    cmd_run_shader(&cfg.last_video, cfg.hide_icons);
+                }
+            }
+            Some("builtin") => cmd_run_builtin(&cfg.last_video, cfg.hide_icons),
+            _ => {
+                if PathBuf::from(&cfg.last_video).is_file() {
+                    wallpaper::run(&cfg.last_video, cfg.hide_icons);
+                }
+            }
         }
     }
 }
@@ -360,6 +536,47 @@ enum Commands {
     /// Internal: run from autostart
     #[command(hide = true)]
     AutostartRun,
+    /// Set a Metal shader (.metal) as the wallpaper
+    #[command(name = "set-shader")]
+    SetShader {
+        path: String,
+        #[arg(long)]
+        hide_icons: bool,
+    },
+    /// Set a built-in shader as the wallpaper
+    #[command(name = "set-builtin")]
+    SetBuiltin {
+        name: String,
+        #[arg(long)]
+        hide_icons: bool,
+    },
+    /// List built-in shaders
+    Shaders,
+    /// Compile a shader and render one frame offscreen to prove it works
+    #[command(name = "shader-check")]
+    ShaderCheck {
+        path: Option<String>,
+        #[arg(long)]
+        builtin: Option<String>,
+        #[arg(long, default_value = "320x200")]
+        size: String,
+    },
+    /// Internal: shader wallpaper worker
+    #[command(name = "run-shader", hide = true)]
+    RunShader {
+        #[arg(long)]
+        path: String,
+        #[arg(long)]
+        hide_icons: bool,
+    },
+    /// Internal: built-in shader worker
+    #[command(name = "run-builtin", hide = true)]
+    RunBuiltin {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        hide_icons: bool,
+    },
     /// Interactive TUI
     #[command(name = "interactive", aliases = ["tui", "i"])]
     Interactive,
@@ -376,6 +593,14 @@ fn main() {
         Commands::AutostartStatus => cmd_autostart_status(),
         Commands::AutostartRun => cmd_autostart_run(),
         Commands::Run { path, hide_icons } => cmd_run(&path, hide_icons),
+        Commands::SetShader { path, hide_icons } => cmd_set_shader(&path, hide_icons),
+        Commands::SetBuiltin { name, hide_icons } => cmd_set_builtin(&name, hide_icons),
+        Commands::Shaders => cmd_shaders(),
+        Commands::ShaderCheck { path, builtin, size } => {
+            println!("{}", cmd_shader_check(path.as_deref(), builtin.as_deref(), &size))
+        }
+        Commands::RunShader { path, hide_icons } => cmd_run_shader(&path, hide_icons),
+        Commands::RunBuiltin { name, hide_icons } => cmd_run_builtin(&name, hide_icons),
         Commands::Interactive => tui::run().unwrap_or_else(|e| eprintln!("tui error: {e}")),
     }
 }

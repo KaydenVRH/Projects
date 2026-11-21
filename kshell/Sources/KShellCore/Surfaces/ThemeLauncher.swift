@@ -54,9 +54,12 @@ public enum ThemeApplier {
             }
         }
 
-        // A live wallpaper plays on top of the still image. Themes without one
-        // tear down whatever is running so the still image is what shows.
-        if let live = theme.liveWallpaper, !live.isEmpty,
+        // A shader wallpaper replaces the desktop entirely — no video file, the
+        // GPU draws it every frame.
+        if let shader = theme.shader, !shader.isEmpty {
+            Shell.run("lwp set-builtin \(shader)")
+            result.changed.append("shader wallpaper")
+        } else if let live = theme.liveWallpaper, !live.isEmpty,
            FileManager.default.fileExists(atPath: KShellPaths.resolve(live).path) {
             setWallpaper(KShellPaths.resolve(live))
             result.changed.append("live wallpaper")

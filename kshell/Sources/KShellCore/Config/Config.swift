@@ -63,6 +63,8 @@ public struct ThemeDefinition {
     public var wallpaper: String?
     /// Optional live wallpaper played *on top of* `wallpaper` (via `lwp`).
     public var liveWallpaper: String?
+    /// Optional built-in Metal shader wallpaper (`lwp set-builtin <name>`).
+    public var shader: String?
     public var accent: String?
     public var highlight: String?
     public var foreground: String?
@@ -80,6 +82,7 @@ public struct ThemeDefinition {
         nvim: String? = nil,
         wallpaper: String? = nil,
         liveWallpaper: String? = nil,
+        shader: String? = nil,
         accent: String? = nil,
         highlight: String? = nil,
         foreground: String? = nil,
@@ -94,6 +97,7 @@ public struct ThemeDefinition {
         self.nvim = nvim
         self.wallpaper = wallpaper
         self.liveWallpaper = liveWallpaper
+        self.shader = shader
         self.accent = accent
         self.highlight = highlight
         self.foreground = foreground
@@ -388,6 +392,7 @@ public struct ShellConfig {
                         nvim: table.string("nvim"),
                         wallpaper: table.string("wallpaper"),
                         liveWallpaper: table.string("live_wallpaper"),
+                        shader: table.string("shader"),
                         accent: table.string("accent"),
                         highlight: table.string("highlight"),
                         foreground: table.string("foreground"),

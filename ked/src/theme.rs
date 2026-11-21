@@ -99,6 +99,7 @@ pub enum ThemeKind {
     ViceCity,
     Void,
     MacosDark,
+    Stark,
 }
 
 impl ThemeKind {
@@ -159,6 +160,7 @@ impl ThemeKind {
             ThemeKind::ViceCity => vice_city(),
             ThemeKind::Void => void(),
             ThemeKind::MacosDark => macos_dark(),
+            ThemeKind::Stark => stark(),
         }
     }
 
@@ -219,6 +221,7 @@ impl ThemeKind {
             ThemeKind::ViceCity => "vice-city",
             ThemeKind::Void => "void",
             ThemeKind::MacosDark => "macos-dark",
+            ThemeKind::Stark => "stark",
         }
     }
 
@@ -279,6 +282,7 @@ impl ThemeKind {
             ThemeKind::EverforestLight,
             ThemeKind::Void,
             ThemeKind::MacosDark,
+            ThemeKind::Stark,
         ]
     }
 
@@ -373,6 +377,7 @@ impl ThemeKind {
                 Some(ThemeKind::Void),
             "macos-dark" | "macosdark" | "macos_dark" | "macos dark" | "macos" =>
                 Some(ThemeKind::MacosDark),
+            "stark" | "ironman" | "iron-man" | "iron_man" => Some(ThemeKind::Stark),
             _            => None,
         }
     }
@@ -2024,7 +2029,7 @@ mod tests {
 
     #[test]
     fn every_theme_is_constructible_and_named() {
-        assert_eq!(ThemeKind::all().len(), 54);
+        assert_eq!(ThemeKind::all().len(), 55);
         for k in ThemeKind::all() {
             let _ = k.theme();
             assert_eq!(ThemeKind::from_str(k.name()), Some(*k), "{}", k.name());
@@ -2108,5 +2113,35 @@ mod tests {
         assert_eq!(contrast_fg(Color::Rgb(0x88, 0x39, 0xef)), light);
         // Solarized olive (mid-light accent) -> dark text.
         assert_eq!(contrast_fg(Color::Rgb(0x85, 0x99, 0x00)), dark);
+    }
+}
+
+fn stark() -> Theme {
+    // Iron Man holographic: near-black blue field, reactor cyan for anything
+    // that moves, arc gold for numbers, red left for errors. Same palette as
+    // kitty and nvim, so a ked buffer next to a terminal reads as one surface.
+    Theme {
+        fg:            Color::Rgb(0xcf, 0xe9, 0xf7),
+        bg:            Color::Rgb(0x05, 0x09, 0x0f),
+        selection_bg:  Color::Rgb(0x10, 0x30, 0x3c),
+        line_number:   Style::new().fg(Color::Rgb(0x4a, 0x6b, 0x7c)),
+        tilde:         Style::new().fg(Color::Rgb(0x14, 0x22, 0x2c)),
+        status_bg:     Color::Rgb(0x0b, 0x14, 0x1c),
+        status_fg:     Color::Rgb(0xcf, 0xe9, 0xf7),
+        border:        Color::Rgb(0x37, 0xd8, 0xff),
+        keyword:       fg_bold(Color::Rgb(0x37, 0xd8, 0xff)),
+        builtin:       fg(Color::Rgb(0x8f, 0xb6, 0xc9)),
+        rstype:        fg_bold(Color::Rgb(0xb6, 0xd6, 0xe6)),
+        function:      fg(Color::Rgb(0xe6, 0xf6, 0xff)),
+        lifetime:      fg_italic(Color::Rgb(0x4a, 0x6b, 0x7c)),
+        string:        fg(Color::Rgb(0x7f, 0xa8, 0xb8)),
+        fstring_prefix:fg_bold(Color::Rgb(0xa8, 0xcb, 0xd8)),
+        comment:       fg_italic(Color::Rgb(0x4a, 0x6b, 0x7c)),
+        number:        fg(Color::Rgb(0xff, 0xc2, 0x4b)),
+        constant:      fg_bold(Color::Rgb(0xff, 0xd9, 0x8a)),
+        decorator:     fg_italic(Color::Rgb(0x6e, 0x93, 0xa6)),
+        property:      fg(Color::Rgb(0xcf, 0xe9, 0xf7)),
+        operator:      fg(Color::Rgb(0x8f, 0xb6, 0xc9)),
+        punctuation:   fg(Color::Rgb(0x4a, 0x6b, 0x7c)),
     }
 }
