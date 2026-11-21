@@ -162,166 +162,106 @@ fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]])
     (
         "stark",
         r#"
-// Stark — an arc reactor. Not a diagram: a machined steel housing with segment
-// gaps, ten copper coils on a slowly turning rotor, a containment ring, and a
-// plasma core with bloom and an anamorphic streak. Everything is procedural.
+// Stark — a hologram, not a machine. Thin glowing wireframe rings with a
+// chromatic edge, a tick ring, a radar sweep, crosshairs, corner brackets and
+// data bars, all projected on a dim grid and washed with scanlines.
 static float hash21(float2 p) {
     return fract(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
-}
-static float noise2(float2 p) {
-    float2 i = floor(p);
-    float2 f = fract(p);
-    float2 w = f * f * (3.0 - 2.0 * f);
-    float a = hash21(i);
-    float b = hash21(i + float2(1.0, 0.0));
-    float c = hash21(i + float2(0.0, 1.0));
-    float d = hash21(i + float2(1.0, 1.0));
-    return mix(mix(a, b, w.x), mix(c, d, w.x), w.y);
-}
-static float sdRoundBox(float2 p, float2 b, float r) {
-    float2 q = abs(p) - b + r;
-    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
 }
 
 fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]]) {
     float2 res = u.resolution;
-    float2 p = (in.uv - 0.5) * float2(res.x / max(res.y, 1.0), 1.0) * 2.0;
-    float t = u.time;
-
-    // heat shimmer: the air above the core bends what is behind it
-    float2 pw = p + exp(-length(p) * 3.2) * 0.010 *
-                    float2(sin(p.y * 15.0 + t * 1.9), cos(p.x * 13.0 + t * 1.4));
-    p = pw;
+    float2 uv  = in.uv;
+    float2 p   = (uv - 0.5) * float2(res.x / max(res.y, 1.0), 1.0) * 2.0;
+    float t    = u.time;
 
     float r = length(p);
     float a = atan2(p.y, p.x);
 
-    // ---- backdrop: cold blue-black, lifted slightly around the core
-    float3 col = mix(float3(0.008, 0.013, 0.020),
-                     float3(0.030, 0.050, 0.066),
-                     1.0 - smoothstep(0.20, 1.40, r));
-    col += float3(0.018, 0.045, 0.062) * noise2(p * 16.0) * 0.5;
+    float3 cyan = float3(0.22, 0.82, 1.00);
+    float3 ice  = float3(0.88, 0.97, 1.00);
 
-    // ---- engineering grid on the backdrop: fine cells plus a coarse ruling,
-    // fading out before it reaches the housing
-    float2 gf = abs(fract(p * 3.2) - 0.5);
-    float fine = smoothstep(0.465, 0.500, max(gf.x, gf.y));
-    float2 gc = abs(fract(p * 0.8) - 0.5);
-    float coarse = smoothstep(0.482, 0.500, max(gc.x, gc.y));
-    float gridFade = 1.0 - smoothstep(1.55, 2.60, r);
-    float gridPulse = 0.85 + 0.15 * sin(t * 0.5 - r * 3.0);
-    col += float3(0.030, 0.105, 0.150) * fine * gridFade * 1.60 * gridPulse;
-    col += float3(0.055, 0.170, 0.230) * coarse * gridFade * 1.30 * gridPulse;
+    float3 col = float3(0.004, 0.009, 0.015);
 
-    // ---- rotor: coils and inner plates turn, the housing stays put
-    float rot = t * 0.045;
-    float2 rp = float2(cos(rot) * p.x - sin(rot) * p.y,
-                       sin(rot) * p.x + cos(rot) * p.y);
-    float ra = atan2(rp.y, rp.x);
+    // projection flicker: two detuned sines, so it never repeats visibly
+    float flick = 0.93 + 0.07 * sin(t * 6.7) * sin(t * 2.3);
 
-    float seg = 6.2831853 / 10.0;
-    float gap = 1.0 - smoothstep(0.008, 0.030, abs(fract(a / seg + 0.5) - 0.5) * seg);
+    // ---- projection grid
+    float2 gf = abs(fract(p * 4.0) - 0.5);
+    float grid = smoothstep(0.480, 0.500, max(gf.x, gf.y));
+    col += float3(0.030, 0.100, 0.140) * grid * (1.0 - smoothstep(0.2, 1.9, r)) * 1.25;
 
-    // ---- machined steel housing: a solid plate with three raised rims
-    float plate = smoothstep(0.630, 0.650, r) * (1.0 - smoothstep(0.855, 0.875, r));
-
-    float h1 = 1.0 - smoothstep(0.0, 0.014, abs(r - 0.830));
-    float h2 = 1.0 - smoothstep(0.0, 0.020, abs(r - 0.770));
-    float h3 = 1.0 - smoothstep(0.0, 0.016, abs(r - 0.690));
-
-    // brushed metal: the sheen turns with the angle, the segment gaps go dark
-    float3 steel = mix(float3(0.030, 0.037, 0.047), float3(0.20, 0.235, 0.275),
-                       0.5 + 0.5 * sin(a * 2.0 + 1.1));
-    steel *= 0.45 + 0.55 * (1.0 - gap);
-
-    col = mix(col, steel * 0.85, plate);
-    col = mix(col, steel * 1.35, h3 * 0.9);
-    col = mix(col, steel * 1.55, h2);
-    col = mix(col, steel * 1.15, h1 * 0.9);
-
-    // contact shadow so the disc sits on the grid instead of floating
-    col *= 1.0 - 0.45 * exp(-pow((r - 0.90) * 22.0, 2.0));
-
-    // ---- ten copper coils, turning with the rotor
-    float idx  = floor((ra + 3.14159265) / seg);
-    float mid  = (idx + 0.5) * seg - 3.14159265;
-    float2 dir = float2(cos(mid), sin(mid));
-    float2 side = float2(-dir.y, dir.x);
-    float2 local = float2(dot(rp, dir) - 0.545, dot(rp, side));
-
-    float d    = sdRoundBox(local, float2(0.088, 0.031), 0.026);
-    float coil = 1.0 - smoothstep(0.0, 0.004, d);
-    float rim  = 1.0 - smoothstep(0.0, 0.012, abs(d));
-
-    // copper, lit from the core end (local.x < 0 faces inward)
-    float3 copper = mix(float3(0.46, 0.20, 0.085), float3(1.00, 0.55, 0.22),
-                        1.0 - smoothstep(-0.10, 0.10, local.x));
-    copper += float3(0.65, 0.34, 0.13) * rim;
-    copper += float3(0.55, 0.27, 0.10) * (1.0 - smoothstep(0.0, 0.010, abs(local.y - 0.031)));
-
-    col = mix(col, copper, coil * 0.95);
-
-    // warm bounce: the coils light the steel around them
-    col += float3(0.16, 0.065, 0.020) * exp(-abs(r - 0.545) * 16.0) * 0.9;
-
-    // ---- containment rings
-    float ring1 = 1.0 - smoothstep(0.0, 0.0045, abs(r - 0.42));
-    float ring2 = 1.0 - smoothstep(0.0, 0.0028, abs(r - 0.30));
-    col += float3(0.10, 0.55, 0.85) * ring1 * 0.85;
-    col += float3(0.14, 0.70, 1.00) * ring2 * 0.75;
-
-    // ---- plasma core
-    float breath = 0.92 + 0.08 * sin(t * 0.85);
-    float arc    = smoothstep(0.985, 1.0, noise2(float2(t * 0.7, 3.1))) * 0.35;
-    float flick  = (0.90 + 0.10 * noise2(float2(a * 4.0, t * 2.2))) * breath + arc;
-    float core  = 1.0 - smoothstep(0.0, 0.255, r);
-    float3 hot  = float3(0.90, 0.98, 1.00);
-    float3 cool = float3(0.12, 0.62, 0.95);
-    float3 coreCol = mix(cool, hot, 1.0 - smoothstep(0.02, 0.20, r));
-    col += coreCol * core * 1.45 * flick;
-
-    // ---- bloom: tight hot falloff plus a wide dim halo
-    col += float3(0.16, 0.62, 0.95) * (exp(-r * 4.2) * 0.85 + exp(-r * 1.35) * 0.16);
-
-    // ---- god rays: the core seen through the gap between the coils
-    float rays = pow(0.5 + 0.5 * sin(a * 18.0 + t * 0.45), 8.0) * 0.65
-               + 0.35 * noise2(float2(a * 9.0, t * 0.35));
-    col += float3(0.045, 0.20, 0.32) * rays * exp(-r * 2.1) * 0.50;
-
-    // ---- energy pulse: a ring released every few seconds, fading as it goes
-    float ph = fract(t * 0.16);
-    float pulse = exp(-pow((r - ph * 1.15) * 16.0, 2.0)) * (1.0 - ph);
-    col += float3(0.10, 0.46, 0.66) * pulse * 0.30;
-
-    // ---- dust in the light, three parallax layers drifting up
-    float dust = 0.0;
-    for (int i = 0; i < 3; i++) {
+    // ---- wireframe rings; each channel samples a slightly different radius,
+    // which is what gives a projector its colour fringe
+    for (int i = 0; i < 4; i++) {
         float fi = float(i);
-        float2 q = p * (7.0 + fi * 3.5) + float2(fi * 13.0, t * (0.13 + fi * 0.05));
-        float2 cell = floor(q);
-        float2 f = fract(q) - 0.5;
-        float h = hash21(cell + fi * 17.0);
-        float2 off = float2(hash21(cell + 1.3), hash21(cell + 7.7)) - 0.5;
-        dust += (1.0 - smoothstep(0.0, 0.05, length(f - off * 0.7))) * step(0.93, h);
+        float R  = 0.20 + fi * 0.135;
+        float w  = 0.0034 + fi * 0.0010;
+        float lr = 1.0 - smoothstep(0.0, w, abs(r * 1.0025 - R));
+        float lg = 1.0 - smoothstep(0.0, w, abs(r         - R));
+        float lb = 1.0 - smoothstep(0.0, w, abs(r * 0.9975 - R));
+        col += float3(lr, lg, lb) * cyan * 0.95;
+        col += cyan * exp(-abs(r - R) * 34.0) * 0.55;
     }
-    col += float3(0.30, 0.62, 0.82) * dust * 0.18 * (1.0 - smoothstep(0.25, 1.30, r));
 
-    // ---- specular sweep travelling around the housing
-    float specA = fract(a / 6.2831853 - t * 0.045);
-    float spec  = exp(-pow((specA - 0.5) * 14.0, 2.0));
-    col += float3(0.06, 0.09, 0.11) * spec * smoothstep(0.60, 0.75, r);
+    // ambient bloom: the projection lights the air around itself
+    col += cyan * exp(-r * 2.2) * 0.055;
 
-    // ---- anamorphic streak, the giveaway of a very bright source
-    float streak = exp(-abs(p.y) * 70.0) * exp(-abs(p.x) * 2.0);
-    col += float3(0.30, 0.62, 0.85) * streak * 0.45;
+    // ---- tick ring
+    float segA = 6.2831853 / 64.0;
+    float ta   = floor(a / segA + 0.5) * segA;
+    float arc  = abs(a - ta) * max(r, 1e-4);
+    float tick = 1.0 - smoothstep(0.0, 0.0085, arc);
+    float band = smoothstep(0.470, 0.490, r) * (1.0 - smoothstep(0.520, 0.540, r));
+    col += cyan * tick * band * 0.55;
 
-    // ---- glass sheen across the face
-    float sheen = smoothstep(0.72, 1.0, 1.0 - abs(dot(normalize(p + 1e-5), float2(-0.6, 0.8))));
-    col += float3(0.05, 0.08, 0.10) * sheen * (1.0 - smoothstep(0.6, 1.1, r));
+    float segB = 6.2831853 / 12.0;
+    float tb   = floor(a / segB + 0.5) * segB;
+    float arcB = abs(a - tb) * max(r, 1e-4);
+    float tickB = 1.0 - smoothstep(0.0, 0.011, arcB);
+    float bandB = smoothstep(0.600, 0.620, r) * (1.0 - smoothstep(0.660, 0.680, r));
+    col += cyan * tickB * bandB * 0.40;
 
-    // ---- grain + vignette
-    col += (noise2(in.uv * res * 0.5 + t) - 0.5) * 0.006;
-    col *= 1.0 - smoothstep(0.80, 1.75, r);
+    // ---- radar sweep
+    float sw = fract(t * 0.09) * 6.2831853 - 3.14159;
+    float da = abs(atan2(sin(a - sw), cos(a - sw)));
+    col += cyan * exp(-da * 5.0) * smoothstep(0.62, 0.10, r) * 0.16;
+
+    // ---- crosshair
+    col += cyan * exp(-abs(p.y) * 240.0) * smoothstep(0.95, 0.25, r) * 0.40;
+    col += cyan * exp(-abs(p.x) * 240.0) * smoothstep(0.95, 0.25, r) * 0.40;
+
+    // ---- core
+    col += ice  * exp(-r * 26.0) * 1.15;
+    col += cyan * exp(-r * 6.0)  * 0.22;
+
+    // ---- data bars, right side
+    for (int i = 0; i < 5; i++) {
+        float fi = float(i);
+        float y  = -0.50 + fi * 0.075;
+        float x1 = 0.60 + 0.22 * (0.35 + 0.65 * hash21(float2(fi, floor(t * 0.4))));
+        float bar = smoothstep(0.600, 0.605, p.x) * (1.0 - smoothstep(x1, x1 + 0.005, p.x))
+                  * smoothstep(y, y + 0.006, p.y) * (1.0 - smoothstep(y + 0.018, y + 0.024, p.y));
+        col += cyan * bar * 0.30;
+    }
+
+    // ---- corner brackets
+    float2 cq  = abs(p) - float2(1.05, 0.72);
+    float  adx = abs(cq.x);
+    float  ady = abs(cq.y);
+    float  armH = (1.0 - smoothstep(0.0, 0.006, ady)) * (1.0 - smoothstep(0.18, 0.19, adx));
+    float  armV = (1.0 - smoothstep(0.0, 0.006, adx)) * (1.0 - smoothstep(0.10, 0.11, ady));
+    col += cyan * (armH + armV) * 0.45;
+
+    // ---- a scan band travelling down the projection
+    float scan = exp(-pow((uv.y - fract(t * 0.05)) * 26.0, 2.0));
+    col += cyan * scan * 0.05 * (1.0 - smoothstep(0.9, 1.6, r));
+
+    // ---- scanlines, grain, vignette
+    col *= 0.90 + 0.10 * sin(uv.y * res.y * 1.2);
+    col += (hash21(uv * res + t) - 0.5) * 0.010;
+    col *= 1.0 - smoothstep(0.85, 1.90, r);
+    col *= flick;
 
     return float4(col, 1.0);
 }
