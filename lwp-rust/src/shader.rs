@@ -188,6 +188,11 @@ fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]])
     float2 p = (in.uv - 0.5) * float2(res.x / max(res.y, 1.0), 1.0) * 2.0;
     float t = u.time;
 
+    // heat shimmer: the air above the core bends what is behind it
+    float2 pw = p + exp(-length(p) * 3.2) * 0.010 *
+                    float2(sin(p.y * 15.0 + t * 1.9), cos(p.x * 13.0 + t * 1.4));
+    p = pw;
+
     float r = length(p);
     float a = atan2(p.y, p.x);
 
@@ -252,7 +257,9 @@ fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]])
     col += float3(0.14, 0.70, 1.00) * ring2 * 0.75;
 
     // ---- plasma core
-    float flick = 0.90 + 0.10 * noise2(float2(a * 4.0, t * 2.2));
+    float breath = 0.92 + 0.08 * sin(t * 0.85);
+    float arc    = smoothstep(0.985, 1.0, noise2(float2(t * 0.7, 3.1))) * 0.35;
+    float flick  = (0.90 + 0.10 * noise2(float2(a * 4.0, t * 2.2))) * breath + arc;
     float core  = 1.0 - smoothstep(0.0, 0.255, r);
     float3 hot  = float3(0.90, 0.98, 1.00);
     float3 cool = float3(0.12, 0.62, 0.95);
@@ -261,6 +268,34 @@ fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]])
 
     // ---- bloom: tight hot falloff plus a wide dim halo
     col += float3(0.16, 0.62, 0.95) * (exp(-r * 4.2) * 0.85 + exp(-r * 1.35) * 0.16);
+
+    // ---- god rays: the core seen through the gap between the coils
+    float rays = pow(0.5 + 0.5 * sin(a * 18.0 + t * 0.45), 8.0) * 0.65
+               + 0.35 * noise2(float2(a * 9.0, t * 0.35));
+    col += float3(0.045, 0.20, 0.32) * rays * exp(-r * 2.1) * 0.50;
+
+    // ---- energy pulse: a ring released every few seconds, fading as it goes
+    float ph = fract(t * 0.16);
+    float pulse = exp(-pow((r - ph * 1.15) * 16.0, 2.0)) * (1.0 - ph);
+    col += float3(0.10, 0.46, 0.66) * pulse * 0.30;
+
+    // ---- dust in the light, three parallax layers drifting up
+    float dust = 0.0;
+    for (int i = 0; i < 3; i++) {
+        float fi = float(i);
+        float2 q = p * (7.0 + fi * 3.5) + float2(fi * 13.0, t * (0.13 + fi * 0.05));
+        float2 cell = floor(q);
+        float2 f = fract(q) - 0.5;
+        float h = hash21(cell + fi * 17.0);
+        float2 off = float2(hash21(cell + 1.3), hash21(cell + 7.7)) - 0.5;
+        dust += (1.0 - smoothstep(0.0, 0.05, length(f - off * 0.7))) * step(0.93, h);
+    }
+    col += float3(0.30, 0.62, 0.82) * dust * 0.18 * (1.0 - smoothstep(0.25, 1.30, r));
+
+    // ---- specular sweep travelling around the housing
+    float specA = fract(a / 6.2831853 - t * 0.045);
+    float spec  = exp(-pow((specA - 0.5) * 14.0, 2.0));
+    col += float3(0.06, 0.09, 0.11) * spec * smoothstep(0.60, 0.75, r);
 
     // ---- anamorphic streak, the giveaway of a very bright source
     float streak = exp(-abs(p.y) * 70.0) * exp(-abs(p.x) * 2.0);
