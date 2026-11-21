@@ -202,6 +202,17 @@ fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]])
                      1.0 - smoothstep(0.20, 1.40, r));
     col += float3(0.018, 0.045, 0.062) * noise2(p * 16.0) * 0.5;
 
+    // ---- engineering grid on the backdrop: fine cells plus a coarse ruling,
+    // fading out before it reaches the housing
+    float2 gf = abs(fract(p * 3.2) - 0.5);
+    float fine = smoothstep(0.465, 0.500, max(gf.x, gf.y));
+    float2 gc = abs(fract(p * 0.8) - 0.5);
+    float coarse = smoothstep(0.482, 0.500, max(gc.x, gc.y));
+    float gridFade = 1.0 - smoothstep(0.25, 1.45, r);
+    float gridPulse = 0.85 + 0.15 * sin(t * 0.5 - r * 3.0);
+    col += float3(0.030, 0.105, 0.150) * fine * gridFade * 0.85 * gridPulse;
+    col += float3(0.055, 0.170, 0.230) * coarse * gridFade * 0.75 * gridPulse;
+
     // ---- rotor: coils and inner plates turn, the housing stays put
     float rot = t * 0.045;
     float2 rp = float2(cos(rot) * p.x - sin(rot) * p.y,
