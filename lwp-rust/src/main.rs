@@ -270,31 +270,55 @@ fn cmd_shaders() {
     println!("\nuse: lwp set-builtin <name>   or   lwp set-shader <file.metal>");
 }
 
-fn cmd_shader_check(path: Option<&str>, builtin: Option<&str>, size: &str) -> String {
+fn cmd_shader_check(path: Option<&str>, builtin: Option<&str>, size: &str, ascii: bool) {
     let src = match (path, builtin) {
         (_, Some(name)) => match shader::builtin_source(name) {
             Some(s) => s.to_string(),
-            None => return format!("error: no built-in shader named '{name}'"),
+            None => {
+                println!("error: no built-in shader named '{name}'");
+                return;
+            }
         },
         (Some(p), None) => {
             let abs = resolve(p);
             match fs::read_to_string(&abs) {
                 Ok(s) => s,
-                Err(e) => return format!("error: cannot read {}: {e}", abs.display()),
+                Err(e) => {
+                    println!("error: cannot read {}: {e}", abs.display());
+                    return;
+                }
             }
         }
-        (None, None) => return "error: give a shader path or --builtin <name>".to_string(),
+        (None, None) => {
+            println!("error: give a shader path or --builtin <name>");
+            return;
+        }
     };
+
     let (w, h) = match size.split_once('x') {
         Some((w, h)) => match (w.parse::<u32>(), h.parse::<u32>()) {
             (Ok(w), Ok(h)) => (w, h),
-            _ => return format!("error: bad size '{size}', expected WxH"),
+            _ => {
+                println!("error: bad size '{size}', expected WxH");
+                return;
+            }
         },
-        None => return format!("error: bad size '{size}', expected WxH"),
+        None => {
+            println!("error: bad size '{size}', expected WxH");
+            return;
+        }
     };
-    match shader::check(&src, w, h) {
-        Ok(msg) => msg,
-        Err(e) => format!("error: {e}"),
+
+    match shader::check_with_pixels(&src, w, h) {
+        Ok((msg, px)) => {
+            println!("{msg}");
+            if ascii {
+                let cols = 96u32;
+                let rows = (cols * h / w.max(1) / 2).max(8);
+                print!("{}", shader::ascii_frame(&px, w, h, cols, rows));
+            }
+        }
+        Err(e) => println!("error: {e}"),
     }
 }
 
@@ -560,6 +584,9 @@ enum Commands {
         builtin: Option<String>,
         #[arg(long, default_value = "320x200")]
         size: String,
+        /// Print a coarse luminance map of the frame
+        #[arg(long)]
+        ascii: bool,
     },
     /// Internal: shader wallpaper worker
     #[command(name = "run-shader", hide = true)]
@@ -596,8 +623,8 @@ fn main() {
         Commands::SetShader { path, hide_icons } => cmd_set_shader(&path, hide_icons),
         Commands::SetBuiltin { name, hide_icons } => cmd_set_builtin(&name, hide_icons),
         Commands::Shaders => cmd_shaders(),
-        Commands::ShaderCheck { path, builtin, size } => {
-            println!("{}", cmd_shader_check(path.as_deref(), builtin.as_deref(), &size))
+        Commands::ShaderCheck { path, builtin, size, ascii } => {
+            cmd_shader_check(path.as_deref(), builtin.as_deref(), &size, ascii)
         }
         Commands::RunShader { path, hide_icons } => cmd_run_shader(&path, hide_icons),
         Commands::RunBuiltin { name, hide_icons } => cmd_run_builtin(&name, hide_icons),

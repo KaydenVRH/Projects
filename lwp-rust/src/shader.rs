@@ -162,51 +162,117 @@ fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]])
     (
         "stark",
         r#"
-// Stark — holographic arc reactor. Cyan rings on a dark grid, gold core,
-// slow sweep. Built for the Iron Man theme; reads well as a background.
+// Stark — an arc reactor. Not a diagram: a machined steel housing with segment
+// gaps, ten copper coils on a slowly turning rotor, a containment ring, and a
+// plasma core with bloom and an anamorphic streak. Everything is procedural.
+static float hash21(float2 p) {
+    return fract(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
+}
+static float noise2(float2 p) {
+    float2 i = floor(p);
+    float2 f = fract(p);
+    float2 w = f * f * (3.0 - 2.0 * f);
+    float a = hash21(i);
+    float b = hash21(i + float2(1.0, 0.0));
+    float c = hash21(i + float2(0.0, 1.0));
+    float d = hash21(i + float2(1.0, 1.0));
+    return mix(mix(a, b, w.x), mix(c, d, w.x), w.y);
+}
+static float sdRoundBox(float2 p, float2 b, float r) {
+    float2 q = abs(p) - b + r;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+
 fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]]) {
     float2 res = u.resolution;
-    float2 uv  = in.uv;
-    float2 p   = (uv - 0.5) * float2(res.x / max(res.y, 1.0), 1.0);
-    float  t   = u.time;
-
-    float3 col = float3(0.012, 0.020, 0.030);
-
-    // faint engineering grid
-    float2 g = abs(fract(p * 12.0) - 0.5);
-    float grid = smoothstep(0.470, 0.500, max(g.x, g.y));
-    col += float3(0.020, 0.090, 0.130) * grid * 0.55;
+    float2 p = (in.uv - 0.5) * float2(res.x / max(res.y, 1.0), 1.0) * 2.0;
+    float t = u.time;
 
     float r = length(p);
     float a = atan2(p.y, p.x);
 
-    // reactor core
-    float core = exp(-r * 9.0);
-    col += float3(0.55, 0.42, 0.12) * core * 1.55;
-    col += float3(0.10, 0.55, 0.75) * exp(-r * 3.2) * 0.50;
+    // ---- backdrop: cold blue-black, lifted slightly around the core
+    float3 col = mix(float3(0.008, 0.013, 0.020),
+                     float3(0.030, 0.050, 0.066),
+                     1.0 - smoothstep(0.20, 1.40, r));
+    col += float3(0.018, 0.045, 0.062) * noise2(p * 16.0) * 0.5;
 
-    // concentric rings, each on its own slow pulse
-    for (int i = 0; i < 4; i++) {
-        float fi = float(i);
-        float rr = 0.155 + fi * 0.085;
-        float w  = 0.0035 + 0.0015 * fi;
-        float ring = smoothstep(w, 0.0, abs(r - rr));
-        float pulse = 0.55 + 0.45 * sin(t * (1.1 + fi * 0.35) - fi);
-        col += float3(0.10, 0.62, 0.85) * ring * pulse * (1.0 - fi * 0.15);
-    }
+    // ---- rotor: coils and inner plates turn, the housing stays put
+    float rot = t * 0.045;
+    float2 rp = float2(cos(rot) * p.x - sin(rot) * p.y,
+                       sin(rot) * p.x + cos(rot) * p.y);
+    float ra = atan2(rp.y, rp.x);
 
-    // rotating spokes between core and first ring
-    float spokes = pow(max(0.0, cos(a * 10.0 + t * 0.35)), 12.0);
-    spokes *= smoothstep(0.62, 0.18, r) * smoothstep(0.10, 0.18, r);
-    col += float3(0.08, 0.45, 0.65) * spokes * 0.55;
+    float seg = 6.2831853 / 10.0;
+    float gap = 1.0 - smoothstep(0.008, 0.030, abs(fract(a / seg + 0.5) - 0.5) * seg);
 
-    // scan sweep
-    float sweep = exp(-pow((uv.y - fract(t * 0.08)) * 40.0, 2.0));
-    col += float3(0.05, 0.25, 0.35) * sweep * 0.35;
+    // ---- machined steel housing: a solid plate with three raised rims
+    float plate = smoothstep(0.665, 0.685, r) * (1.0 - smoothstep(1.00, 1.02, r));
 
-    // scanlines + vignette
-    col *= 0.92 + 0.08 * sin(uv.y * res.y * 1.4);
-    col *= 1.0 - smoothstep(0.55, 1.15, length((uv - 0.5) * 1.25));
+    float h1 = 1.0 - smoothstep(0.0, 0.014, abs(r - 0.94));
+    float h2 = 1.0 - smoothstep(0.0, 0.020, abs(r - 0.86));
+    float h3 = 1.0 - smoothstep(0.0, 0.016, abs(r - 0.74));
+
+    // brushed metal: the sheen turns with the angle, the segment gaps go dark
+    float3 steel = mix(float3(0.030, 0.037, 0.047), float3(0.20, 0.235, 0.275),
+                       0.5 + 0.5 * sin(a * 2.0 + 1.1));
+    steel *= 0.45 + 0.55 * (1.0 - gap);
+
+    col = mix(col, steel * 0.85, plate);
+    col = mix(col, steel * 1.35, h3 * 0.9);
+    col = mix(col, steel * 1.55, h2);
+    col = mix(col, steel * 1.15, h1 * 0.9);
+
+    // ---- ten copper coils, turning with the rotor
+    float idx  = floor((ra + 3.14159265) / seg);
+    float mid  = (idx + 0.5) * seg - 3.14159265;
+    float2 dir = float2(cos(mid), sin(mid));
+    float2 side = float2(-dir.y, dir.x);
+    float2 local = float2(dot(rp, dir) - 0.545, dot(rp, side));
+
+    float d    = sdRoundBox(local, float2(0.088, 0.031), 0.026);
+    float coil = 1.0 - smoothstep(0.0, 0.004, d);
+    float rim  = 1.0 - smoothstep(0.0, 0.012, abs(d));
+
+    // copper, lit from the core end (local.x < 0 faces inward)
+    float3 copper = mix(float3(0.46, 0.20, 0.085), float3(1.00, 0.55, 0.22),
+                        1.0 - smoothstep(-0.10, 0.10, local.x));
+    copper += float3(0.65, 0.34, 0.13) * rim;
+    copper += float3(0.55, 0.27, 0.10) * (1.0 - smoothstep(0.0, 0.010, abs(local.y - 0.031)));
+
+    col = mix(col, copper, coil * 0.95);
+
+    // warm bounce: the coils light the steel around them
+    col += float3(0.16, 0.065, 0.020) * exp(-abs(r - 0.545) * 16.0) * 0.9;
+
+    // ---- containment rings
+    float ring1 = 1.0 - smoothstep(0.0, 0.0045, abs(r - 0.42));
+    float ring2 = 1.0 - smoothstep(0.0, 0.0028, abs(r - 0.30));
+    col += float3(0.10, 0.55, 0.85) * ring1 * 0.85;
+    col += float3(0.14, 0.70, 1.00) * ring2 * 0.75;
+
+    // ---- plasma core
+    float flick = 0.90 + 0.10 * noise2(float2(a * 4.0, t * 2.2));
+    float core  = 1.0 - smoothstep(0.0, 0.255, r);
+    float3 hot  = float3(0.90, 0.98, 1.00);
+    float3 cool = float3(0.12, 0.62, 0.95);
+    float3 coreCol = mix(cool, hot, 1.0 - smoothstep(0.02, 0.20, r));
+    col += coreCol * core * 1.45 * flick;
+
+    // ---- bloom: tight hot falloff plus a wide dim halo
+    col += float3(0.16, 0.62, 0.95) * (exp(-r * 4.2) * 0.85 + exp(-r * 1.35) * 0.16);
+
+    // ---- anamorphic streak, the giveaway of a very bright source
+    float streak = exp(-abs(p.y) * 70.0) * exp(-abs(p.x) * 2.0);
+    col += float3(0.30, 0.62, 0.85) * streak * 0.45;
+
+    // ---- glass sheen across the face
+    float sheen = smoothstep(0.72, 1.0, 1.0 - abs(dot(normalize(p + 1e-5), float2(-0.6, 0.8))));
+    col += float3(0.05, 0.08, 0.10) * sheen * (1.0 - smoothstep(0.6, 1.1, r));
+
+    // ---- grain + vignette
+    col += (noise2(in.uv * res * 0.5 + t) - 0.5) * 0.006;
+    col *= 1.0 - smoothstep(0.80, 1.75, r);
 
     return float4(col, 1.0);
 }
@@ -304,6 +370,16 @@ unsafe fn encode_frame(
 /// Render exactly one frame offscreen and report what came back, so a shader
 /// can be verified without looking at the screen.
 pub fn check(source: &str, width: u32, height: u32) -> Result<String, String> {
+    let (msg, _buf) = check_with_pixels(source, width, height)?;
+    Ok(msg)
+}
+
+/// Same as `check`, plus the raw BGRA pixels so a caller can look at the frame.
+pub fn check_with_pixels(
+    source: &str,
+    width: u32,
+    height: u32,
+) -> Result<(String, Vec<u8>), String> {
     let gpu = build_gpu(source)?;
     unsafe {
         let desc = objc2_metal::MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
@@ -363,7 +439,7 @@ pub fn check(source: &str, width: u32, height: u32) -> Result<String, String> {
             sum[1] / n.max(1),
             sum[2] / n.max(1),
         ];
-        Ok(format!(
+        Ok((format!(
             "ok  {}x{}  mean rgb({},{},{})  min({},{},{})  max({},{},{})",
             width,
             height,
@@ -376,8 +452,39 @@ pub fn check(source: &str, width: u32, height: u32) -> Result<String, String> {
             max[2],
             max[1],
             max[0]
-        ))
+        ), buf))
     }
+}
+
+/// Coarse luminance map, for looking at a shader without a screenshot.
+pub fn ascii_frame(pixels: &[u8], width: u32, height: u32, cols: u32, rows: u32) -> String {
+    const RAMP: &[u8] = b" .:-=+*#%@";
+    let mut out = String::new();
+    for ry in 0..rows {
+        for rx in 0..cols {
+            let x0 = rx * width / cols;
+            let x1 = ((rx + 1) * width / cols).max(x0 + 1);
+            let y0 = ry * height / rows;
+            let y1 = ((ry + 1) * height / rows).max(y0 + 1);
+            let mut sum = 0u32;
+            let mut n = 0u32;
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let i = ((y * width + x) * 4) as usize;
+                    let lum = (pixels[i + 2] as u32 * 30
+                        + pixels[i + 1] as u32 * 59
+                        + pixels[i] as u32 * 11)
+                        / 100;
+                    sum += lum;
+                    n += 1;
+                }
+            }
+            let lum = (sum / n.max(1)) as usize * (RAMP.len() - 1) / 255;
+            out.push(RAMP[lum] as char);
+        }
+        out.push('\n');
+    }
+    out
 }
 
 // ---- live wallpaper -------------------------------------------------------
