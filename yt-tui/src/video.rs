@@ -74,10 +74,15 @@ impl Decoder {
         let stderr = child.stderr.take().unwrap();
         let err = error.clone();
         std::thread::spawn(move || {
+            // ffmpeg ends on a generic line ("Invalid data found…"); an HTTP
+            // failure before it is the actual cause, so that one sticks.
+            let mut found_cause = false;
             for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                if !line.trim().is_empty() {
-                    *err.lock().unwrap() = line;
+                if line.trim().is_empty() || found_cause {
+                    continue;
                 }
+                found_cause = line.contains("HTTP error") || line.contains("Server returned");
+                *err.lock().unwrap() = line;
             }
         });
 

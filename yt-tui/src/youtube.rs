@@ -129,11 +129,15 @@ pub fn lookup(url: &str) -> Result<Video> {
 /// frame rate, then h264, which every Mac decodes in hardware.
 pub fn resolve(video: &Video, max_height: u32, max_fps: u32, audio_only: bool) -> Result<Stream> {
     let (format, sort) = if audio_only {
-        ("ba/b".to_string(), "acodec:aac".to_string())
+        ("ba/b".to_string(), "proto:https,acodec:aac".to_string())
     } else {
         (
             format!("bv*[height<={max_height}]+ba/b[height<={max_height}]/bv*+ba/b"),
-            format!("res:{max_height},fps:{max_fps},vcodec:h264,acodec:aac"),
+            // proto: direct https before HLS. Logged in, YouTube also offers
+            // HLS (format 301 and friends), whose segments fail often enough
+            // that ffmpeg gives up with "Invalid data found when processing
+            // input". Live streams only come as HLS, so they still get it.
+            format!("res:{max_height},proto:https,fps:{max_fps},vcodec:h264,acodec:aac"),
         )
     };
     let output = ytdlp()
