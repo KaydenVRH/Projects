@@ -83,6 +83,9 @@ yt-dlp ──► stream URLs ──┬─► ffmpeg ──► RGB frames ──�
   then h264, which decodes in hardware on every Mac. yt-tui asks for
   yt-dlp's default player clients, so a `player_client` in your yt-dlp
   config can't leave it with storyboards only.
+- **Logged in**, the streams come from YouTube's TV client and stay
+  locked (403 Forbidden) for the few seconds a TV would spend on an ad;
+  yt-tui waits that out, as yt-dlp does, before it starts playing.
 - **Downloads** go in 10 MB range requests, as yt-dlp does. YouTube throttles
   a single long download to roughly playback speed, which made long videos
   stutter.

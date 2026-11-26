@@ -150,7 +150,26 @@ pub fn resolve(video: &Video, max_height: u32, max_fps: u32, audio_only: bool) -
     }
     let info: Info = serde_json::from_slice(&output.stdout)
         .context("yt-dlp returned something unexpected")?;
+    wait_until_available(&info);
     stream_from_info(info, audio_only)
+}
+
+/// Logged in, yt-dlp gets streams from YouTube's TV client, whose URLs
+/// answer 403 Forbidden until a few seconds after they are handed out (the
+/// length of the ad a TV would show first). yt-dlp's own downloader waits
+/// for `available_at`; ffmpeg and mpv don't know to, so we do it here.
+fn wait_until_available(info: &Info) {
+    let formats = info.requested_formats.iter().flatten().chain([&info.format]);
+    let Some(at) = formats.filter_map(|f| f.available_at).reduce(f64::max) else { return };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64());
+    // A little slack for clock skew; never hang on a bogus timestamp.
+    let wait = (at - now + 0.5).clamp(0.0, 30.0);
+    if wait > 0.0 {
+        crate::log!("streams available in {wait:.1}s");
+        std::thread::sleep(std::time::Duration::from_secs_f64(wait));
+    }
 }
 
 #[derive(Deserialize)]
@@ -180,6 +199,9 @@ struct Format {
     fps: Option<f64>,
     #[serde(default)]
     http_headers: Option<std::collections::HashMap<String, String>>,
+    /// Unix time before which the URL answers 403 (see wait_until_available).
+    #[serde(default)]
+    available_at: Option<f64>,
 }
 
 impl Format {
