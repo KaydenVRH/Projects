@@ -530,8 +530,10 @@ ked is one binary with no runtime dependencies beyond the OS.
   ~60 fps loop: poll keys → mutate state → render a frame with ratatui.
   The kitty keyboard protocol is pushed at startup (that's what makes
   `Ctrl+M` usable).
-- **Editor core** (`src/editor.rs`) — one `Editor` struct owns
-  everything: buffers, modes, overlays, undo, theme, stats. The active
+- **Editor core** (`src/editor/`) — one `Editor` struct owns
+  everything: buffers, modes, overlays, undo, theme, stats. Its
+  methods are split by concern across the module's files (modes,
+  overlays, rendering, commands, …), each adding its own `impl Editor`. The active
   buffer's fields are mirrored onto the editor and swapped out when
   you switch tabs, so each tab keeps its own cursor, scroll, and
   undo history.
@@ -562,7 +564,23 @@ ked is one binary with no runtime dependencies beyond the OS.
 ```
 src/
   main.rs       entry point: terminal setup, event loop, kitty protocol
-  editor.rs     editor core: modes, key handling, render, undo, scrolling
+  editor/       editor core, one `impl Editor` per concern:
+    mod.rs        the Editor struct, buffers, key dispatch, undo, scrolling
+    modes.rs      normal / insert / visual mode keys
+    overlays.rs   search, `:` prompt, finder, music, theme, file-tree keys
+    commands.rs   `:` commands, saving, running the file (Ctrl+E)
+    render.rs     main view: buffer, tab bar, status line, preview, tree
+    panels.rs     popup panels: music, themes, :sys, help, run output
+    chrome.rs     shared modal sizing, borders and colour blending
+    planner.rs    memories, quick notes, planner and reminders
+    hermes_pane.rs  the Hermes chat pane
+    pty.rs        shell popup: key → byte encoding and drawing
+    images.rs     kitty graphics for markdown and pasted images
+    markdown.rs   markdown preview and concealed-syntax columns
+    cells.rs      terminal-cell widths, clipping, wrapping, line diffs
+    prompt.rs     single-line prompt editing
+    sysstats.rs   CPU / memory / battery collection
+    tests.rs      editor tests
   highlight.rs  tree-sitter highlighting + language detection
   theme.rs      53 themes + HSL hue rotation for colour FX
   keymap.rs     configurable key bindings (layers, defaults, :keys)
