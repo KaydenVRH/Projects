@@ -2,17 +2,18 @@
 
 A scriptable, moldable desktop shell for macOS — the closest thing to
 [Quickshell](https://quickshell.org) that macOS allows. Written in **Swift**
-(AppKit + SwiftUI), configured with **TOML**, scriptable with **JavaScriptCore**
-(coming).
+(AppKit + SwiftUI), configured with **TOML**, scriptable with **JavaScriptCore**.
 
 The goal is a shell you own: bars, widgets, panels and launchers that you
 describe in a config file and drive with scripts — not a fixed status bar.
 
 ## Status
 
-Early. Today it renders a top bar with a set of built-in widgets, live-reloads
-its config, and mirrors a typical sketchybar layout. It is intended to
-eventually replace sketchybar.
+In daily use as a full sketchybar replacement: one bar per display with
+built-in and JavaScript widgets, live-reloading config, overlay panels and
+launchers (apps, themes, wallpapers), a music player with playlists, a
+Bluetooth menu, a media island and a notification centre that agents post to.
+What is left is packaging — see the roadmap.
 
 ## Build & run
 
@@ -628,7 +629,7 @@ Sources/kshell/main.swift        entry point
 
 ## Roadmap
 
-- **M1** bar + widgets + live reload 
+- **M1** bar + widgets + live reload (done)
 - **M2** click actions, `kshell trigger` IPC event bus, overlay panels + app launcher (done)
 - **M3** native system widgets (volume, bluetooth) + live aerospace workspace discovery (done)
 - **M4** JavaScriptCore widget scripting with hot reload (done)

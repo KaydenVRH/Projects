@@ -22,6 +22,28 @@ cd ked && cargo build --release
 
 ---
 
+## kshell
+
+A scriptable desktop shell for macOS — bars, widgets, panels and
+launchers described in TOML and driven by scripts. Written in **Swift**
+(AppKit + SwiftUI) with **JavaScriptCore** widgets. It replaces
+sketchybar.
+
+- One bar per display, live-reloading `~/.config/kshell/config.toml`
+- Native widgets (workspaces via aerospace, volume, Bluetooth, clock) and
+  user JavaScript widgets with hot reload
+- App, theme and wallpaper launchers; music player with playlists
+- Notification centre with a `kshell notify` CLI, used by coding agents
+- `kshell trigger` IPC event bus
+
+```sh
+cd kshell && ./scripts/run.sh
+```
+
+[kshell/README.md](kshell/README.md)
+
+---
+
 ## lwp-rust
 
 A live video wallpaper engine for macOS, written in **Rust** using
@@ -46,8 +68,8 @@ Requires macOS (AVFoundation, AppKit, Quartz).
 
 ## lwp
 
-The original **Python** wallpaper engine — the proof of concept that
-lwp-rust was ported from. Uses PyObjC to reach AVFoundation/AppKit
+*Superseded by lwp-rust; kept for reference.* The original **Python**
+wallpaper engine — the proof of concept that lwp-rust was ported from. Uses PyObjC to reach AVFoundation/AppKit
 and Python's built‑in curses for the TUI browser.
 
 - Same feature set as lwp-rust
@@ -62,6 +84,13 @@ pip install PyObjC
 ```
 
 [lwp/README.md](lwp/README.md)
+
+---
+
+## yt-tui
+
+An early prototype of a terminal YouTube browser (yt-dlp + kitty
+graphics). Not tracked in git yet.
 
 ---
 
