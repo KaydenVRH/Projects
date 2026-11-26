@@ -62,6 +62,13 @@ fn ytdlp() -> Command {
     let mut cmd = Command::new("yt-dlp");
     cmd.args(["--no-warnings", "--no-playlist", "--extractor-args"])
         .arg(format!("youtube:player_client={client}"));
+    // "Sign in to confirm you're not a bot": borrow a browser's YouTube
+    // login, e.g. YT_TUI_COOKIES_FROM_BROWSER=firefox.
+    if let Ok(browser) = std::env::var("YT_TUI_COOKIES_FROM_BROWSER") {
+        if !browser.is_empty() {
+            cmd.args(["--cookies-from-browser", &browser]);
+        }
+    }
     cmd
 }
 

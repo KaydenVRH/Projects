@@ -32,7 +32,7 @@ pub struct Audio {
 }
 
 impl Audio {
-    pub fn spawn(url: &str, user_agent: &str, start: f64, volume: f64) -> Result<Self> {
+    pub fn spawn(url: &str, user_agent: &str, start: f64, volume: f64, live: bool) -> Result<Self> {
         let path = std::env::temp_dir().join(format!("yt-tui-{}.sock", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let mut cmd = Command::new("mpv");
@@ -42,6 +42,10 @@ impl Audio {
             .arg(format!("--volume={volume}"))
             .arg("--cache=yes")
             .arg("--demuxer-max-bytes=64MiB");
+        if !live {
+            // Same throttling dodge as the video decoder (see video.rs).
+            cmd.arg(format!("--stream-lavf-o=request_size={},multiple_requests=1", crate::video::CHUNK));
+        }
         if start > 0.0 {
             cmd.arg(format!("--start={start:.3}"));
         }

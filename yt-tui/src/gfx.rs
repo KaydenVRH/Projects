@@ -74,6 +74,11 @@ impl Graphics {
         Some(Graphics { tmux, transfer, seq: 0, handed_out: VecDeque::new() })
     }
 
+    #[cfg(test)]
+    pub fn for_tests() -> Graphics {
+        Graphics { tmux: false, transfer: Transfer::Direct, seq: 0, handed_out: VecDeque::new() }
+    }
+
     /// Transmit an RGB image and give it a virtual placement of
     /// `cols`×`rows` cells. Re-sending the same id replaces the picture
     /// in place, so the placeholder cells never need redrawing.
@@ -238,6 +243,11 @@ fn terminal_supports_kitty(tmux: bool) -> bool {
 }
 
 /// Draws the placeholder cells for a virtual placement of `id`.
+///
+/// `area` is where the whole picture sits; only the part that is on screen
+/// is drawn. Right after the window shrinks, the picture can still be the
+/// old, larger size for a moment (the decoder restarts once the size
+/// settles), and those cells fall off the edge.
 pub struct Placeholder {
     pub id: u32,
 }
@@ -245,14 +255,23 @@ pub struct Placeholder {
 impl Widget for Placeholder {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let fg = Color::Rgb((self.id >> 16) as u8, (self.id >> 8) as u8, self.id as u8);
+        let visible = area.intersection(buf.area);
         let mut sym = String::with_capacity(12);
-        for row in 0..area.height.min(MAX_CELLS) {
-            for col in 0..area.width.min(MAX_CELLS) {
+        for y in visible.top()..visible.bottom() {
+            let row = y - area.y;
+            if row >= MAX_CELLS {
+                break;
+            }
+            for x in visible.left()..visible.right() {
+                let col = x - area.x;
+                if col >= MAX_CELLS {
+                    break;
+                }
                 sym.clear();
                 sym.push(PLACEHOLDER);
                 sym.push(DIACRITICS[row as usize]);
                 sym.push(DIACRITICS[col as usize]);
-                buf[(area.x + col, area.y + row)].set_symbol(&sym).set_fg(fg);
+                buf[(x, y)].set_symbol(&sym).set_fg(fg);
             }
         }
     }
@@ -334,6 +353,18 @@ mod tests {
         assert_eq!(set.len(), 297);
         assert_eq!(DIACRITICS[0], '\u{0305}');
         assert_eq!(DIACRITICS[296], '\u{1D244}');
+    }
+
+    #[test]
+    fn a_placement_larger_than_the_screen_is_clipped() {
+        // The window shrank below the picture: draw what fits, keep the
+        // grid numbering of the full picture, and don't panic.
+        let screen = Rect::new(0, 0, 10, 4);
+        let mut buf = Buffer::empty(screen);
+        Placeholder { id: VIDEO_ID }.render(Rect::new(2, 1, 40, 20), &mut buf);
+        let chars: Vec<char> = buf[(9, 3)].symbol().chars().collect();
+        assert_eq!(chars, vec![PLACEHOLDER, DIACRITICS[2], DIACRITICS[7]]);
+        assert_eq!(buf[(1, 1)].symbol(), " ", "left of the picture is untouched");
     }
 
     #[test]

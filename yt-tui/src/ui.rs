@@ -462,3 +462,71 @@ fn truncate(s: &str, width: usize) -> String {
     out.push('…');
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::Settings;
+    use crate::gfx::Graphics;
+    use crate::player::{Limits, Placement, Player};
+    use crate::youtube::Stream;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    fn video(n: usize) -> Video {
+        serde_json::from_value(serde_json::json!({
+            "id": format!("vid{n:08}"), "title": format!("A rather long video title number {n} that will not fit"),
+            "channel": "Channel", "duration": 3725.0, "view_count": 1234567, "description": "line one\nline two"
+        }))
+        .unwrap()
+    }
+
+    fn app() -> App {
+        let settings = Settings { max_height: 1080, limits: Limits { max_width: 1920, max_fps: 30 }, results: 30, volume: 0.0 };
+        let mut app = App::new(Some(Graphics::for_tests()), settings);
+        app.results = (0..30).map(video).collect();
+        app.list.select(Some(3));
+        app
+    }
+
+    fn draw_everywhere(app: &mut App) {
+        for w in 1..=120u16 {
+            for h in (1..=50u16).step_by(7) {
+                let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+                term.draw(|f| render(f, app)).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn browsing_draws_at_every_size() {
+        let mut app = app();
+        draw_everywhere(&mut app);
+        app.help = true;
+        draw_everywhere(&mut app);
+    }
+
+    #[test]
+    fn the_player_survives_the_window_shrinking_below_the_picture() {
+        let mut app = app();
+        let stream = Stream {
+            video_url: Some("http://127.0.0.1:9/none".into()),
+            audio_url: "http://127.0.0.1:9/none".into(),
+            user_agent: "test".into(),
+            width: 1920,
+            height: 1080,
+            fps: 30.0,
+            duration: Some(600.0),
+            live: false,
+            title: "t".into(),
+        };
+        let mut player = Player::start(video(1), stream, 0.0, app.settings.limits);
+        // The picture as it was sized for a big window, before the resize
+        // settles and the decoder restarts.
+        player.placement = Some(Placement { area: Rect::new(0, 1, 160, 43), width: 1600, height: 900 });
+        player.frames_shown = 1;
+        app.player = Some(player);
+        draw_everywhere(&mut app);
+        app.chrome = false;
+        draw_everywhere(&mut app);
+    }
+}

@@ -41,6 +41,8 @@ environment:
   YT_TUI_GRAPHICS=on|off      force kitty graphics on or off
   YT_TUI_TRANSFER=shm|direct  how pixels reach the terminal
   YT_TUI_PLAYER_CLIENT=name   yt-dlp player client (default: yt-dlp's own)
+  YT_TUI_COOKIES_FROM_BROWSER=firefox
+                              use a browser's YouTube login (for bot checks)
 ";
 
 fn main() -> Result<()> {

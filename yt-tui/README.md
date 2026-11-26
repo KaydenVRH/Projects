@@ -47,6 +47,7 @@ the progress bar to seek.
 | `YT_TUI_GRAPHICS=on\|off` | force kitty graphics on or off |
 | `YT_TUI_TRANSFER=shm\|direct` | how pixels reach the terminal (direct is automatic over SSH) |
 | `YT_TUI_PLAYER_CLIENT=name` | yt-dlp player client (default: yt-dlp's own choice) |
+| `YT_TUI_COOKIES_FROM_BROWSER=name` | use a browser's YouTube login when YouTube asks to "confirm you're not a bot" (firefox, chrome, safari…) |
 | `YT_TUI_LOG=path` | write a debug log |
 
 ## How it works
@@ -62,6 +63,9 @@ yt-dlp ──► stream URLs ──┬─► ffmpeg ──► RGB frames ──�
   then h264, which decodes in hardware on every Mac. yt-tui asks for
   yt-dlp's default player clients, so a `player_client` in your yt-dlp
   config can't leave it with storyboards only.
+- **Downloads** go in 10 MB range requests, as yt-dlp does. YouTube throttles
+  a single long download to roughly playback speed, which made long videos
+  stutter.
 - **ffmpeg** decodes with VideoToolbox and scales each frame to the exact
   pixel size of the picture on screen (capped by `--max-width`; kitty
   upscales the rest on the GPU).

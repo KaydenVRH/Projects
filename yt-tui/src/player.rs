@@ -51,7 +51,7 @@ pub struct Placement {
 
 impl Player {
     pub fn start(video: Video, stream: Stream, volume: f64, limits: Limits) -> Player {
-        let (audio, audio_error) = match Audio::spawn(&stream.audio_url, &stream.user_agent, 0.0, volume) {
+        let (audio, audio_error) = match Audio::spawn(&stream.audio_url, &stream.user_agent, 0.0, volume, stream.live) {
             Ok(a) => (Some(a), None),
             Err(e) => (None, Some(e.to_string())),
         };
@@ -298,6 +298,9 @@ impl Player {
 /// Fit a `w`×`h` picture into `area`, keeping its shape on cells that
 /// are `cell.0`×`cell.1` pixels, and centre it.
 pub fn fit(area: Rect, cell: (f64, f64), w: u32, h: u32) -> Rect {
+    if area.width == 0 || area.height == 0 {
+        return Rect { width: 0, height: 0, ..area };
+    }
     let aspect = w.max(1) as f64 / h.max(1) as f64;
     let max_cols = area.width.min(MAX_CELLS) as f64;
     let max_rows = area.height.min(MAX_CELLS) as f64;
@@ -402,6 +405,14 @@ mod tests {
         assert_eq!(r.height, 40);
         assert_eq!(r.width, 45); // 800 px * 9/16 = 450 px
         assert_eq!(r.x, (200 - 45) / 2);
+    }
+
+    #[test]
+    fn an_empty_area_fits_nothing() {
+        let r = fit(Rect::new(3, 4, 0, 10), (10.0, 20.0), 1920, 1080);
+        assert_eq!((r.width, r.height), (0, 0));
+        let r = fit(Rect::new(3, 4, 10, 0), (10.0, 20.0), 1920, 1080);
+        assert_eq!((r.width, r.height), (0, 0));
     }
 
     #[test]

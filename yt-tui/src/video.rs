@@ -36,6 +36,9 @@ pub struct Decoder {
 /// at 30 fps without holding hundreds of megabytes.
 const QUEUE: usize = 24;
 
+/// Bytes per HTTP range request, for ffmpeg and mpv alike.
+pub const CHUNK: &str = "10485760";
+
 impl Decoder {
     pub fn spawn(stream: &Stream, url: &str, start: f64, width: u32, height: u32, fps: f64) -> Result<Self> {
         let mut cmd = Command::new("ffmpeg");
@@ -49,6 +52,12 @@ impl Decoder {
         }
         cmd.args(["-user_agent", &stream.user_agent]);
         cmd.args(["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "4"]);
+        if !stream.live {
+            // YouTube throttles one long download to about playback speed,
+            // which is what made long videos stutter; ranged requests of
+            // 10 MB (what yt-dlp itself uses) keep it at full speed.
+            cmd.args(["-request_size", CHUNK, "-multiple_requests", "1"]);
+        }
         cmd.args(["-i", url, "-an", "-sn", "-dn"]);
         // fps first so scaling only touches frames that will be shown.
         cmd.args(["-vf", &format!("fps={fps},scale={width}:{height}:flags=bilinear")]);
