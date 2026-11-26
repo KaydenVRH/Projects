@@ -1,7 +1,7 @@
 //! Drawing. Every function here is pure layout + widgets; the rectangles
 //! that input and graphics need are recorded in `app.layout`.
 
-use crate::app::{App, Focus};
+use crate::app::{App, Focus, Source};
 use crate::gfx::{Placeholder, THUMB_ID, VIDEO_ID};
 use crate::player::Player;
 use crate::youtube::{format_duration, format_views, Video};
@@ -35,9 +35,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
 // ── browse ──────────────────────────────────────────────────────────
 
 fn render_browse(f: &mut Frame, app: &mut App) {
-    let [header, search, body, footer] = Layout::vertical([
+    let [header, search, tabs, body, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(3),
+        Constraint::Length(1),
         Constraint::Min(4),
         Constraint::Length(1),
     ])
@@ -45,6 +46,7 @@ fn render_browse(f: &mut Frame, app: &mut App) {
 
     render_header(f, app, header);
     render_search(f, app, search);
+    render_tabs(f, app, tabs);
 
     let wide = body.width >= 90;
     let [list_area, preview_area] = if wide {
@@ -61,9 +63,13 @@ fn render_browse(f: &mut Frame, app: &mut App) {
 
 fn render_header(f: &mut Frame, app: &App, area: Rect) {
     let mut left = vec![Span::styled(" ▶ ", Style::new().fg(Color::White).bg(ACCENT).bold()), " yt-tui".bold()];
-    if let Some((query, since, _)) = &app.searching {
+    if let Some((source, since, _)) = &app.fetching {
+        let what = match source {
+            Source::Search(q) => format!("searching “{q}”"),
+            feed => format!("loading {}", feed.title()),
+        };
         left.push(Span::styled(
-            format!("   {} searching “{}” {:.1}s", app.spinner(), query, since.elapsed().as_secs_f32()),
+            format!("   {} {what} {:.1}s", app.spinner(), since.elapsed().as_secs_f32()),
             Style::new().fg(DIM),
         ));
     }
@@ -106,13 +112,47 @@ fn render_search(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(line).block(block).scroll((0, scroll)), area);
 }
 
+/// Your feeds and the last search, numbered for the 1–5 keys.
+fn render_tabs(f: &mut Frame, app: &mut App, area: Rect) {
+    let mut x = area.x + 1;
+    for (i, tab) in app.tabs().into_iter().enumerate() {
+        let on = tab == app.source;
+        let loading = app.fetching.as_ref().is_some_and(|(s, _, _)| *s == tab);
+        let mut title = tab.title();
+        if title.chars().count() > 24 {
+            title = format!("{}…", title.chars().take(23).collect::<String>());
+        }
+        let mark = if loading { app.spinner().to_string() } else { (i + 1).to_string() };
+        let label = format!(" {mark} {title} ");
+        let width = (label.chars().count() as u16).min(area.right().saturating_sub(x));
+        if width == 0 {
+            break;
+        }
+        let r = Rect { x, y: area.y, width, height: 1 };
+        let style = if on {
+            Style::new().fg(Color::White).bg(SELECTED_BG).bold()
+        } else {
+            Style::new().fg(DIM)
+        };
+        let number = if on { Style::new().fg(ACCENT).bg(SELECTED_BG).bold() } else { Style::new().fg(FAINT) };
+        let line = Line::from(vec![
+            Span::styled(format!(" {mark} "), number),
+            Span::styled(format!("{title} "), style),
+        ]);
+        f.render_widget(line, r);
+        app.layout.tabs.push((r, tab));
+        x += width + 1;
+    }
+}
+
 fn render_results(f: &mut Frame, app: &mut App, area: Rect) {
     app.layout.results = area;
     let focused = app.focus == Focus::Results;
+    let name = app.source.title();
     let title = match (app.results.len(), app.list.selected()) {
-        (0, _) => " Results ".to_string(),
-        (n, Some(i)) => format!(" Results {}/{} ", i + 1, n),
-        (n, None) => format!(" Results {n} "),
+        (0, _) => format!(" {name} "),
+        (n, Some(i)) => format!(" {name} {}/{} ", i + 1, n),
+        (n, None) => format!(" {name} {n} "),
     };
     let block = Block::new()
         .borders(Borders::ALL)
@@ -121,13 +161,33 @@ fn render_results(f: &mut Frame, app: &mut App, area: Rect) {
         .title(Span::styled(title, Style::new().fg(if focused { Color::White } else { DIM })));
 
     if app.results.is_empty() {
-        let hint = if app.searching.is_some() {
-            format!("{} searching…", app.spinner())
+        let dim = Style::new().fg(DIM);
+        let fetching = app.fetching.as_ref().is_some_and(|(s, _, _)| *s == app.source);
+        let lines = if fetching {
+            vec![Line::styled(format!("{} loading {}…", app.spinner(), name), dim)]
+        } else if !matches!(app.source, Source::Search(_)) && !app.logged_in {
+            vec![
+                Line::styled("Your feeds need your YouTube login.", Style::new().bold()),
+                Line::raw(""),
+                Line::from(vec![
+                    Span::styled("Add ", dim),
+                    Span::styled("cookies_from_browser = firefox", Style::new().fg(Color::White)),
+                    Span::styled(" (or chrome, safari…)", dim),
+                ]),
+                Line::from(vec![
+                    Span::styled("to ", dim),
+                    Span::styled("~/.config/yt-tui/config", Style::new().fg(Color::White)),
+                    Span::styled(" and restart. Search works without it.", dim),
+                ]),
+            ]
+        } else if matches!(app.source, Source::Search(_)) {
+            vec![Line::styled("Nothing found.", dim)]
         } else {
-            "Type a search and press Enter.".to_string()
+            vec![Line::styled("Nothing here — press r to reload.", dim)]
         };
-        let text = Text::from(vec![Line::raw(""), Line::styled(hint, Style::new().fg(DIM))]).centered();
-        f.render_widget(Paragraph::new(text).block(block), area);
+        let mut text = vec![Line::raw("")];
+        text.extend(lines);
+        f.render_widget(Paragraph::new(Text::from(text).centered()).wrap(Wrap { trim: true }).block(block), area);
         return;
     }
 
@@ -229,7 +289,8 @@ fn render_footer(f: &mut Frame, app: &App, area: Rect) {
             ("enter", "play"),
             ("a", "audio only"),
             ("/", "search"),
-            ("A", "autoplay"),
+            ("1-5", "tabs"),
+            ("r", "reload"),
             ("?", "help"),
             ("q", "quit"),
         ],
@@ -427,6 +488,8 @@ fn render_help(f: &mut Frame, in_player: bool) {
             ("g G", "top / bottom"),
             ("enter", "play"),
             ("a", "play audio only"),
+            ("1 – 5 / [ ]", "switch tab: feeds, search"),
+            ("r", "reload this tab"),
             ("A", "toggle autoplay"),
             ("q", "quit"),
         ]

@@ -11,9 +11,45 @@ use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::layout::{Position, Rect};
 use ratatui::widgets::ListState;
+use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
+
+/// Where the list of videos comes from: one of your feeds, or a search.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Source {
+    Home,
+    Subscriptions,
+    WatchLater,
+    History,
+    Search(String),
+}
+
+impl Source {
+    pub const FEEDS: [Source; 4] = [Source::Home, Source::Subscriptions, Source::WatchLater, Source::History];
+
+    pub fn title(&self) -> String {
+        match self {
+            Source::Home => "Home".into(),
+            Source::Subscriptions => "Subscriptions".into(),
+            Source::WatchLater => "Watch later".into(),
+            Source::History => "History".into(),
+            Source::Search(q) if youtube::looks_like_url(q) => "Link".into(),
+            Source::Search(q) => format!("“{q}”"),
+        }
+    }
+
+    fn feed_url(&self) -> Option<&'static str> {
+        match self {
+            Source::Home => Some(":ytrec"),
+            Source::Subscriptions => Some(":ytsubs"),
+            Source::WatchLater => Some(":ytwatchlater"),
+            Source::History => Some(":ythistory"),
+            Source::Search(_) => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Focus {
@@ -45,6 +81,7 @@ pub struct Status {
 #[derive(Default)]
 pub struct Layout {
     pub results: Rect,
+    pub tabs: Vec<(Rect, Source)>,
     pub thumb: Option<Rect>,
     pub video: Option<Rect>,
     pub progress: Option<Rect>,
@@ -53,9 +90,16 @@ pub struct Layout {
 pub struct App {
     pub query: String,
     pub focus: Focus,
+    /// The list on screen, and where it came from.
+    pub source: Source,
     pub results: Vec<Video>,
     pub list: ListState,
-    pub searching: Option<(String, Instant, Receiver<Result<Vec<Video>>>)>,
+    /// Lists of the other tabs, kept so switching back is instant.
+    lists: HashMap<Source, (Vec<Video>, Option<usize>)>,
+    pub last_search: Option<String>,
+    pub fetching: Option<(Source, Instant, Receiver<Result<Vec<Video>>>)>,
+    /// A browser login is configured, so the feeds can load.
+    pub logged_in: bool,
     pub loading: Option<Loading>,
     pub player: Option<Player>,
     pub status: Option<Status>,
@@ -84,9 +128,13 @@ impl App {
         App {
             query: String::new(),
             focus: Focus::Search,
+            source: Source::Home,
             results: Vec::new(),
             list: ListState::default(),
-            searching: None,
+            lists: HashMap::new(),
+            last_search: None,
+            fetching: None,
+            logged_in: youtube::logged_in(),
             loading: None,
             player: None,
             status: None,
@@ -130,7 +178,16 @@ impl App {
     }
 
     pub fn busy(&self) -> bool {
-        self.searching.is_some() || self.loading.is_some()
+        self.fetching.is_some() || self.loading.is_some()
+    }
+
+    /// The tabs above the list: your feeds, then the last search.
+    pub fn tabs(&self) -> Vec<Source> {
+        let mut tabs = Source::FEEDS.to_vec();
+        if let Some(q) = &self.last_search {
+            tabs.push(Source::Search(q.clone()));
+        }
+        tabs
     }
 
     // ── background work ────────────────────────────────────────────
@@ -140,19 +197,52 @@ impl App {
         if query.is_empty() {
             return;
         }
-        let (tx, rx) = mpsc::channel();
-        let q = query.clone();
-        if youtube::looks_like_url(&query) {
-            std::thread::spawn(move || {
-                let _ = tx.send(youtube::lookup(&q).map(|v| vec![v]));
-            });
-        } else {
-            let limit = self.settings.results;
-            std::thread::spawn(move || {
-                let _ = tx.send(youtube::search(&q, limit));
-            });
+        self.last_search = Some(query.clone());
+        let source = Source::Search(query);
+        self.lists.remove(&source);
+        self.open(source);
+    }
+
+    /// Show a tab: from the cache if it was loaded before, else fetch it.
+    pub fn open(&mut self, source: Source) {
+        if source != self.source {
+            let list = std::mem::take(&mut self.results);
+            self.lists.insert(self.source.clone(), (list, self.list.selected()));
+            self.source = source.clone();
+            self.list = ListState::default();
         }
-        self.searching = Some((query, Instant::now(), rx));
+        if let Some((videos, selected)) = self.lists.remove(&source) {
+            self.results = videos;
+            self.list.select(selected.or(Some(0)));
+            return;
+        }
+        self.results.clear();
+        self.fetch(source);
+    }
+
+    /// Fetch the current tab again.
+    pub fn refresh(&mut self) {
+        let source = self.source.clone();
+        self.lists.remove(&source);
+        self.fetch(source);
+    }
+
+    fn fetch(&mut self, source: Source) {
+        if source.feed_url().is_some() && !self.logged_in {
+            return; // the empty list explains how to log in
+        }
+        let (tx, rx) = mpsc::channel();
+        let limit = self.settings.results;
+        let s = source.clone();
+        std::thread::spawn(move || {
+            let result = match &s {
+                Source::Search(q) if youtube::looks_like_url(q) => youtube::lookup(q).map(|v| vec![v]),
+                Source::Search(q) => youtube::search(q, limit),
+                feed => youtube::feed(feed.feed_url().unwrap(), limit),
+            };
+            let _ = tx.send(result);
+        });
+        self.fetching = Some((source, Instant::now(), rx));
     }
 
     pub fn play(&mut self, video: Video, audio_only: bool) {
@@ -173,15 +263,22 @@ impl App {
     pub fn update(&mut self, out: &mut impl Write) -> io::Result<bool> {
         let mut changed = false;
 
-        if let Some((query, _, rx)) = &self.searching {
+        if let Some((source, _, rx)) = &self.fetching {
             if let Ok(result) = rx.try_recv() {
-                let query = query.clone();
-                self.searching = None;
+                let source = source.clone();
+                self.fetching = None;
                 changed = true;
                 match result {
-                    Ok(videos) if videos.is_empty() => self.say(format!("Nothing found for “{query}”"), true),
+                    Ok(videos) if videos.is_empty() => match &source {
+                        Source::Search(q) => self.say(format!("Nothing found for “{q}”"), true),
+                        feed => self.say(format!("{} is empty", feed.title()), false),
+                    },
+                    Ok(videos) if source != self.source => {
+                        // You switched tabs while it loaded; keep it for later.
+                        self.lists.insert(source, (videos, Some(0)));
+                    }
                     Ok(videos) => {
-                        let direct = youtube::looks_like_url(&query);
+                        let direct = matches!(&source, Source::Search(q) if youtube::looks_like_url(q));
                         self.results = videos;
                         self.list = ListState::default().with_selected(Some(0));
                         self.focus = Focus::Results;
@@ -191,7 +288,7 @@ impl App {
                             self.play(v, false);
                         }
                     }
-                    Err(e) => self.say(format!("Search failed: {e}"), true),
+                    Err(e) => self.say(format!("Couldn't load {}: {e}", source.title()), true),
                 }
             }
         }
@@ -324,6 +421,12 @@ impl App {
             }
             return;
         }
+        if let Some((_, tab)) = self.layout.tabs.iter().find(|(r, _)| r.contains(pos)) {
+            let tab = tab.clone();
+            self.focus = Focus::Results;
+            self.open(tab);
+            return;
+        }
         let r = self.layout.results;
         if r.contains(pos) && pos.y > r.y {
             // Rows are two lines plus a gap, under the border.
@@ -406,8 +509,23 @@ impl App {
                 self.say(format!("Autoplay {state}"), false);
             }
             KeyCode::Char('?') => self.help = true,
+            KeyCode::Char('r') => self.refresh(),
+            KeyCode::Char(c @ '1'..='5') => {
+                if let Some(tab) = self.tabs().get((c as u8 - b'1') as usize) {
+                    self.open(tab.clone());
+                }
+            }
+            KeyCode::Char(']') => self.cycle_tab(1),
+            KeyCode::Char('[') => self.cycle_tab(-1),
             _ => {}
         }
+    }
+
+    fn cycle_tab(&mut self, by: i64) {
+        let tabs = self.tabs();
+        let i = tabs.iter().position(|t| *t == self.source).unwrap_or(0) as i64;
+        let next = (i + by).rem_euclid(tabs.len() as i64) as usize;
+        self.open(tabs[next].clone());
     }
 
     fn play_selected(&mut self, audio_only: bool) {
@@ -489,5 +607,49 @@ pub fn cell_size() -> (f64, f64) {
         (ws.ws_xpixel as f64 / ws.ws_col as f64, ws.ws_ypixel as f64 / ws.ws_row as f64)
     } else {
         (10.0, 20.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn video(n: usize) -> Video {
+        serde_json::from_value(serde_json::json!({ "id": format!("vid{n:08}"), "title": format!("v{n}") })).unwrap()
+    }
+
+    fn app() -> App {
+        let settings = Settings { max_height: 1080, limits: Limits { max_width: 1920, max_fps: 30 }, results: 30, volume: 0.0 };
+        let mut app = App::new(None, settings);
+        app.logged_in = false; // no yt-dlp calls in tests
+        app
+    }
+
+    #[test]
+    fn tabs_keep_their_list_and_selection() {
+        let mut app = app();
+        app.results = (0..10).map(video).collect();
+        app.list.select(Some(5));
+        app.open(Source::WatchLater);
+        assert_eq!(app.source, Source::WatchLater);
+        assert!(app.results.is_empty());
+        assert!(app.fetching.is_none(), "feeds don't load without a login");
+        app.open(Source::Home);
+        assert_eq!(app.results.len(), 10);
+        assert_eq!(app.list.selected(), Some(5));
+    }
+
+    #[test]
+    fn a_search_adds_a_fifth_tab_and_tabs_cycle() {
+        let mut app = app();
+        assert_eq!(app.tabs().len(), 4);
+        app.last_search = Some("lofi".into());
+        // Cached, so switching to it doesn't run a real search.
+        app.lists.insert(Source::Search("lofi".into()), (vec![video(1)], Some(0)));
+        assert_eq!(app.tabs().last(), Some(&Source::Search("lofi".into())));
+        app.cycle_tab(-1);
+        assert_eq!(app.source, Source::Search("lofi".into()));
+        app.cycle_tab(1);
+        assert_eq!(app.source, Source::Home);
     }
 }

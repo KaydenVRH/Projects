@@ -76,12 +76,28 @@ fn ytdlp() -> Command {
     cmd
 }
 
+/// Whether yt-dlp is given a browser's YouTube login (needed for feeds).
+pub fn logged_in() -> bool {
+    std::env::var("YT_TUI_COOKIES_FROM_BROWSER").is_ok_and(|b| !b.trim().is_empty())
+}
+
 pub fn search(query: &str, limit: usize) -> Result<Vec<Video>> {
-    let output = ytdlp()
-        .args(["--flat-playlist", "--dump-json"])
-        .arg(format!("ytsearch{limit}:{query}"))
-        .output()
-        .context("couldn't run yt-dlp — is it installed?")?;
+    list(&format!("ytsearch{limit}:{query}"), None)
+}
+
+/// One of your feeds — yt-dlp's `:ytrec` (Home), `:ytsubs`,
+/// `:ytwatchlater`, `:ythistory`. These need the browser login.
+pub fn feed(url: &str, limit: usize) -> Result<Vec<Video>> {
+    list(url, Some(limit))
+}
+
+fn list(target: &str, limit: Option<usize>) -> Result<Vec<Video>> {
+    let mut cmd = ytdlp();
+    cmd.args(["--flat-playlist", "--dump-json"]);
+    if let Some(n) = limit {
+        cmd.args(["--playlist-end", &n.to_string()]);
+    }
+    let output = cmd.arg(target).output().context("couldn't run yt-dlp — is it installed?")?;
     if !output.status.success() {
         bail!("{}", last_error_line(&output.stderr));
     }

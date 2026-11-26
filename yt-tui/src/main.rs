@@ -2,6 +2,7 @@
 
 mod app;
 mod audio;
+mod config;
 mod gfx;
 mod log;
 mod player;
@@ -37,6 +38,10 @@ options:
   --volume N       starting volume, 0-100 (default 80)
   -h, --help       show this
 
+config file: ~/.config/yt-tui/config, e.g.
+  cookies_from_browser = firefox    your login: Home, Subscriptions, …
+  fps = 30 / quality = 1080 / max_width = 1920 / results = 30 / volume = 80
+
 environment:
   YT_TUI_GRAPHICS=on|off      force kitty graphics on or off
   YT_TUI_TRANSFER=shm|direct  how pixels reach the terminal
@@ -63,6 +68,9 @@ fn main() -> Result<()> {
     if let Some(q) = initial {
         app.query = q.clone();
         app.search(q);
+    } else if app.logged_in {
+        app.focus = app::Focus::Results;
+        app.open(app::Source::Home);
     }
     let result = run(&mut terminal, &mut app);
 
@@ -130,11 +138,21 @@ fn restore() -> Result<()> {
 }
 
 fn parse_args() -> Result<(Settings, Option<String>)> {
+    let file = config::load();
+    // The login for yt-dlp; the environment variable wins over the file.
+    if std::env::var_os("YT_TUI_COOKIES_FROM_BROWSER").is_none() {
+        if let Some(browser) = &file.cookies_from_browser {
+            std::env::set_var("YT_TUI_COOKIES_FROM_BROWSER", browser);
+        }
+    }
     let mut settings = Settings {
-        max_height: 1080,
-        limits: Limits { max_width: 1920, max_fps: 30 },
-        results: 30,
-        volume: 80.0,
+        max_height: file.quality.unwrap_or(1080),
+        limits: Limits {
+            max_width: file.max_width.unwrap_or(1920),
+            max_fps: file.fps.unwrap_or(30),
+        },
+        results: file.results.unwrap_or(30) as usize,
+        volume: file.volume.unwrap_or(80.0).clamp(0.0, 100.0),
     };
     let mut words = Vec::new();
     let mut args = std::env::args().skip(1);

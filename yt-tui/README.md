@@ -15,6 +15,20 @@ a terminal that speaks the kitty graphics protocol (kitty, Ghostty) for
 the picture. Works inside tmux with `set -g allow-passthrough on`.
 Anywhere else it plays audio only, with the same controls.
 
+## Your feeds
+
+With your YouTube login, yt-tui opens on **Home** — your recommendations —
+with tabs for **Subscriptions**, **Watch later** and **History**, plus your
+last search. The login is borrowed from a browser you're signed in to;
+put it in `~/.config/yt-tui/config`:
+
+```
+cookies_from_browser = firefox   # or chrome, safari, brave…
+```
+
+That also gets past YouTube's "confirm you're not a bot" checks. Without
+it, search still works.
+
 ## Keys
 
 | Results | | Player | |
@@ -26,6 +40,8 @@ Anywhere else it plays audio only, with the same controls.
 | `enter` | play | `↑` `↓` | volume |
 | `a` | play audio only | `m` | mute |
 | `A` | autoplay the next result | `f` | fullscreen |
+| `1`–`5` / `[` `]` | Home, Subscriptions, Watch later, History, search | | |
+| `r` | reload the tab | | |
 | `?` | help | `n` `p` | next / previous result |
 | `q` | quit | `q` / `esc` | back to results |
 
@@ -33,6 +49,9 @@ The mouse works too: scroll the results, click one to select it, click
 the progress bar to seek.
 
 ## Options
+
+All of these can also go in `~/.config/yt-tui/config` (`fps = 60`,
+`quality = 720`, `volume = 50`, …); options on the command line win.
 
 ```
 --fps N          highest frame rate to play (default 30)
@@ -99,6 +118,7 @@ src/
   audio.rs    mpv over its JSON IPC socket
   gfx.rs      kitty graphics: shm / chunked transfer, tmux, placeholders
   thumbs.rs   thumbnail fetching for the preview pane
+  config.rs   ~/.config/yt-tui/config
   log.rs      opt-in debug log
 ```
 
