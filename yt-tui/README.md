@@ -48,6 +48,7 @@ the progress bar to seek.
 | `YT_TUI_TRANSFER=shm\|direct` | how pixels reach the terminal (direct is automatic over SSH) |
 | `YT_TUI_PLAYER_CLIENT=name` | yt-dlp player client (default: yt-dlp's own choice) |
 | `YT_TUI_COOKIES_FROM_BROWSER=name` | use a browser's YouTube login when YouTube asks to "confirm you're not a bot" (firefox, chrome, safari…) |
+| `YT_TUI_YTDLP_ARGS="…"` | extra arguments for every yt-dlp call, e.g. `--remote-components ejs:github` |
 | `YT_TUI_LOG=path` | write a debug log |
 
 ## How it works

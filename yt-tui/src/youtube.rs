@@ -69,6 +69,10 @@ fn ytdlp() -> Command {
             cmd.args(["--cookies-from-browser", &browser]);
         }
     }
+    // Anything else yt-dlp should get, e.g. "--remote-components ejs:github".
+    if let Ok(extra) = std::env::var("YT_TUI_YTDLP_ARGS") {
+        cmd.args(extra.split_whitespace());
+    }
     cmd
 }
 
@@ -218,12 +222,26 @@ pub fn thumbnail_urls(id: &str) -> [String; 2] {
 
 fn last_error_line(stderr: &[u8]) -> String {
     let text = String::from_utf8_lossy(stderr);
-    text.lines()
+    let line = text
+        .lines()
         .rev()
         .find(|l| l.starts_with("ERROR"))
         .or_else(|| text.lines().rev().find(|l| !l.trim().is_empty()))
         .map(|l| l.trim_start_matches("ERROR: ").to_string())
-        .unwrap_or_else(|| "yt-dlp failed".into())
+        .unwrap_or_else(|| "yt-dlp failed".into());
+    explain(&line).map(str::to_string).unwrap_or(line)
+}
+
+/// yt-dlp's wording for the failures people actually hit, translated into
+/// what to do about them.
+fn explain(error: &str) -> Option<&'static str> {
+    if error.contains("confirm you") && error.contains("not a bot") {
+        Some("YouTube is rate-limiting this network. Wait a while, or set YT_TUI_COOKIES_FROM_BROWSER=firefox (or chrome, safari…) to use your login.")
+    } else if error.contains("Requested format is not available") {
+        Some("YouTube only offered preview images — it's rate-limiting, or yt-dlp needs an update (brew upgrade yt-dlp).")
+    } else {
+        None
+    }
 }
 
 pub fn format_duration(secs: f64) -> String {
@@ -287,6 +305,16 @@ mod tests {
         assert!(looks_like_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ"));
         assert!(looks_like_url("youtu.be/dQw4w9WgXcQ"));
         assert!(!looks_like_url("lofi hip hop"));
+    }
+
+    #[test]
+    fn common_yt_dlp_failures_are_explained() {
+        let bot = b"WARNING: x\nERROR: [youtube] abc: Sign in to confirm you\xe2\x80\x99re not a bot. This helps";
+        assert!(last_error_line(bot).contains("rate-limiting"));
+        let fmt = b"ERROR: [youtube] abc: Requested format is not available. Use --list-formats";
+        assert!(last_error_line(fmt).contains("preview images"));
+        let other = b"ERROR: [youtube] abc: Video unavailable";
+        assert_eq!(last_error_line(other), "[youtube] abc: Video unavailable");
     }
 
     #[test]
