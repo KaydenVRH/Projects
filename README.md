@@ -89,8 +89,23 @@ pip install PyObjC
 
 ## yt-tui
 
-An early prototype of a terminal YouTube browser (yt-dlp + kitty
-graphics). Not tracked in git yet.
+Search and watch YouTube in the terminal, written in **Rust** with
+ratatui: real video at the resolution of your window, with sound in sync.
+
+- ffmpeg decodes frames sized to the window; they reach kitty through
+  shared memory, so full resolution keeps full frame rate
+- Placed with kitty's Unicode placeholders, so it works inside tmux
+- mpv plays the audio and drives the clock: seek, pause, volume, live
+- Thumbnail previews, audio-only mode, autoplay, mouse support
+
+```sh
+cd yt-tui && cargo build --release
+./target/release/yt-tui lofi hip hop
+```
+
+Needs yt-dlp, ffmpeg and mpv; video needs kitty or Ghostty.
+
+[yt-tui/README.md](yt-tui/README.md)
 
 ---
 

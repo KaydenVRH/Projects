@@ -72,7 +72,8 @@ chmod +x ../ked-binaries/*/ked
 
 ## Other projects
 
-- `yt-tui/` — earlier/other project, untracked in git; don't touch
-  unless asked.  (`pked/` and `lked/` no longer exist.)
+- `yt-tui/` — terminal YouTube player (Rust). `cargo test` in `yt-tui/`;
+  `~/.local/bin/yt-tui` points at `yt-tui/target/release/yt-tui`, so
+  finish with `cargo build --release`.  (`pked/` and `lked/` no longer exist.)
 - The git repo is the whole workspace (remote:
   github.com/KaydenVRH/Projects, branch `main`).
