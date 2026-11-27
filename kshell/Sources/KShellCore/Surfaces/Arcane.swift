@@ -18,6 +18,9 @@ public enum Arcane {
     static var rose = NSColor(red: 1, green: 0.48, blue: 0.85, alpha: 1)
     static var spark = NSColor(red: 0.49, green: 0.94, blue: 1, alpha: 1)
 
+    /// How deep a panel's free corners are scooped (see `PanelStyle.notch`).
+    static let panelNotch: CGFloat = 18
+
     public static func isArcane(_ theme: Theme) -> Bool {
         theme.effects == "arcane" || theme.name?.lowercased() == "arcane"
     }
@@ -726,5 +729,71 @@ private struct ArcaneCastView: View {
                 withAnimation(.easeIn(duration: 0.9)) { gone = true }
             }
         }
+    }
+}
+
+// MARK: - ink
+
+/// Writes the text in as if by a glowing pen: it appears left to right behind
+/// a bright nib, the freshest ink still glowing. Played when it appears, a
+/// beat after its panel starts to open.
+struct InkWrite: ViewModifier {
+    let nib: Color
+    var delay: Double = 0.28
+    var duration: Double = 0.55
+
+    @State private var written: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        content
+            .modifier(InkMask(written: written, nib: nib))
+            .onAppear {
+                guard !Motion.reduced else {
+                    written = 1
+                    return
+                }
+                written = 0
+                withAnimation(.easeInOut(duration: duration).delay(delay)) { written = 1 }
+            }
+    }
+}
+
+/// The animatable part of `InkWrite`: the mask and the nib at `written`.
+private struct InkMask: ViewModifier, Animatable {
+    var written: CGFloat
+    let nib: Color
+
+    var animatableData: CGFloat {
+        get { written }
+        set { written = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        // the edge is soft: a little ink ahead of the nib, fading in
+        let edge: CGFloat = 0.08
+        let at = written * (1 + edge)
+        content
+            .mask {
+                LinearGradient(
+                    stops: [
+                        .init(color: .black, location: max(0, at - edge)),
+                        .init(color: .clear, location: min(1, max(0.0001, at))),
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            }
+            .overlay(alignment: .leading) {
+                GeometryReader { geo in
+                    Circle()
+                        .fill(RadialGradient(colors: [.white, nib, nib.opacity(0)], center: .center,
+                                             startRadius: 0, endRadius: 7))
+                        .frame(width: 14, height: 14)
+                        .position(x: geo.size.width * min(1, written), y: geo.size.height * 0.55)
+                        .opacity(written > 0.01 && written < 0.99 ? 1 : 0)
+                        .blendMode(.plusLighter)
+                }
+                .allowsHitTesting(false)
+            }
     }
 }

@@ -45,4 +45,17 @@ final class PanelGeometryTests: XCTestCase {
         XCTAssertFalse(path.boundingBox.isEmpty)
         XCTAssertLessThanOrEqual(path.boundingBox.height, 2)
     }
+
+    /// Arcane's corners are scooped: the corner point itself is outside the
+    /// panel, the edge beside it isn't, and the attached corners stay square.
+    func testNotchedCorners() {
+        let rect = CGRect(x: 0, y: 0, width: 400, height: 300)
+        let style = PanelStyle(radius: 22, filletRadius: 0, attachment: .bottom, notch: 18)
+        let path = PanelGeometry.path(in: rect, style: style)
+        XCTAssertFalse(path.contains(CGPoint(x: 3, y: 297)), "inside the top-leading scoop")
+        XCTAssertFalse(path.contains(CGPoint(x: 397, y: 297)), "inside the top-trailing scoop")
+        XCTAssertTrue(path.contains(CGPoint(x: 15, y: 290)), "a scoop is a quarter circle, not a cut")
+        XCTAssertTrue(path.contains(CGPoint(x: 200, y: 299)))
+        XCTAssertTrue(path.contains(CGPoint(x: 1, y: 1)), "attached corners stay square")
+    }
 }

@@ -37,17 +37,23 @@ public struct PanelStyle: Equatable, Sendable {
     /// — and meet the frame with straight flanges instead of curved fillets.
     /// 0 is the usual rounded panel.
     public var cut: CGFloat
+    /// Arcane: scoop the free corners out — a concave quarter-circle of this
+    /// radius, like an ornate charm — instead of rounding them. The corners
+    /// that meet the frame keep their curved fillets. 0 is the usual panel.
+    public var notch: CGFloat
 
     public init(
         radius: CGFloat = SheetShape.defaultRadius,
         filletRadius: CGFloat = 22,
         attachment: PanelAttachment = .none,
-        cut: CGFloat = 0
+        cut: CGFloat = 0,
+        notch: CGFloat = 0
     ) {
         self.radius = radius
         self.filletRadius = filletRadius
         self.attachment = attachment
         self.cut = cut
+        self.notch = notch
     }
 
     /// The big cut's corner: the one a reader's eye lands on first. The other
@@ -91,6 +97,7 @@ public struct PanelStyle: Equatable, Sendable {
 public enum PanelGeometry {
     public static func path(in rect: CGRect, style: PanelStyle) -> CGPath {
         if style.cut > 0 { return cutPath(in: rect, style: style) }
+        if style.notch > 0 { return notchPath(in: rect, style: style) }
         let radius = max(0, min(style.radius, min(rect.width, rect.height) / 2))
         let fillet = max(0, min(style.filletRadius, min(rect.width, rect.height) / 2))
         let convex = style.convexCorners
@@ -137,6 +144,51 @@ public enum PanelGeometry {
 
     private enum Corner {
         case topLeading, topTrailing, bottomLeading, bottomTrailing
+    }
+
+    /// The Arcane outline: each free corner scooped out with a concave arc,
+    /// attached ones meeting the frame in the usual curved fillets.
+    private static func notchPath(in rect: CGRect, style: PanelStyle) -> CGPath {
+        let limit = min(rect.width, rect.height) / 2
+        let convex = style.convexCorners
+        func size(_ corner: SheetShape.Corners) -> CGFloat {
+            convex.contains(corner) ? max(0, min(style.notch, limit)) : 0
+        }
+        let tl = size(.topLeading), tr = size(.topTrailing)
+        let bl = size(.bottomLeading), br = size(.bottomTrailing)
+
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY + bl))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - tl))
+        // each scoop is a quarter circle centred on the corner itself, so it
+        // bites into the panel
+        if tl > 0 {
+            path.addArc(center: CGPoint(x: rect.minX, y: rect.maxY), radius: tl,
+                        startAngle: -.pi / 2, endAngle: 0, clockwise: false)
+        }
+        path.addLine(to: CGPoint(x: rect.maxX - tr, y: rect.maxY))
+        if tr > 0 {
+            path.addArc(center: CGPoint(x: rect.maxX, y: rect.maxY), radius: tr,
+                        startAngle: .pi, endAngle: .pi * 1.5, clockwise: false)
+        }
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + br))
+        if br > 0 {
+            path.addArc(center: CGPoint(x: rect.maxX, y: rect.minY), radius: br,
+                        startAngle: .pi / 2, endAngle: .pi, clockwise: false)
+        }
+        path.addLine(to: CGPoint(x: rect.minX + bl, y: rect.minY))
+        if bl > 0 {
+            path.addArc(center: CGPoint(x: rect.minX, y: rect.minY), radius: bl,
+                        startAngle: 0, endAngle: .pi / 2, clockwise: false)
+        }
+        path.closeSubpath()
+
+        let fillet = max(0, min(style.filletRadius, limit))
+        guard fillet > 0 else { return path }
+        for corner in corners(of: style.filletCorners) {
+            path.addPath(filletPath(corner, in: rect, radius: fillet, attachment: style.attachment))
+        }
+        return path
     }
 
     /// The Neon outline: free corners cut off straight (one big, one small),

@@ -76,17 +76,16 @@ public final class OverlayPanel: NSPanel {
     private let fallbackStyle: PanelStyle
 
     /// The window's content: the panel (`container`, masked to its outline) and,
-    /// over it unmasked, the light Neon's motion throws.
+    /// over it unmasked, the light its theme's timeline throws.
     private let root = NSView()
     private let container = NSView()
     private let mask = CAShapeLayer()
-    /// Neon panels come and go on their own timeline (see `NeonPanelMotion`).
-    private lazy var neonMotion = NeonPanelMotion(screen: targetScreen)
-    private var neonLights: NeonPanelLights?
-    /// The picture running white as a Neon panel collapses, inside its outline.
+    /// Neon and Arcane panels come and go on their own timeline (see
+    /// `PanelTimeline`); made when the panel opens, so it follows the theme.
+    private var timeline: PanelTimeline?
+    /// A wash of colour over the content, inside the outline (a CRT running
+    /// white as it collapses, a spell glowing as it implodes).
     private let bloom = CALayer()
-    /// Whether this showing is on the Neon timeline rather than the springs.
-    private var neonDriven = false
     private weak var host: NSView?
     /// The Stark HUD's brackets and scanlines, over the content.
     private var chrome: ThemeChrome?
@@ -155,7 +154,8 @@ public final class OverlayPanel: NSPanel {
         self.takesKeyboard = takesKeyboard
         self.fallbackStyle = style
             ?? PanelStyle(radius: SheetShape.defaultRadius, filletRadius: 0, attachment: .none,
-                          cut: Neon.active ? Neon.panelCut : 0)
+                          cut: Neon.active ? Neon.panelCut : 0,
+                          notch: Arcane.active ? Arcane.panelNotch : 0)
 
         // A popup that doesn't take the keyboard must not activate the app when
         // clicked, or a stray notification would steal the front from a terminal.
@@ -219,17 +219,7 @@ public final class OverlayPanel: NSPanel {
         motion.onStep = { [weak self] pose in
             self?.apply(pose)
         }
-        neonMotion.onStep = { [weak self] frame in
-            self?.applyNeon(frame)
-        }
-        neonMotion.onSettle = { [weak self] open in
-            guard let self else { return }
-            if open {
-                self.setSlack(false)
-            } else if !self.isShown {
-                self.finishHide()
-            }
-        }
+
         motion.onSettle = { [weak self] open in
             guard let self else { return }
             if open {
@@ -253,9 +243,8 @@ public final class OverlayPanel: NSPanel {
     /// jelly — out from the edge, and a little on both sides along it.
     private var slackFrame: NSRect {
         var room = Jelly.slack(travel: travel)
-        if Neon.active {
-            // the landing overshoot (capped at 22 pt) and the lock-on jitter
-            room = (max(room.out, 30), max(room.side, 16))
+        if let extra = timeline?.slack ?? PanelTimelines.slack {
+            room = (max(room.out, extra.out), max(room.side, extra.side))
         }
         var frame = shownFrame
         switch edge {
@@ -279,7 +268,7 @@ public final class OverlayPanel: NSPanel {
         CATransaction.setDisableActions(true)
         setFrame(target, display: false)
         windowOrigin = target.origin
-        if neonDriven { applyNeon(neonMotion.frame) } else { apply(motion.pose) }
+        if timeline != nil { applyTimeline() } else { apply(motion.pose) }
         CATransaction.commit()
     }
 
@@ -358,14 +347,19 @@ public final class OverlayPanel: NSPanel {
         // window is first ordered front is skipped.
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isShown else { return }
-            if Neon.active, !Motion.reduced {
-                self.neonDriven = true
-                if self.neonLights == nil {
-                    let lights = NeonPanelLights()
-                    self.root.layer?.addSublayer(lights.layer)
-                    self.neonLights = lights
+            if let timeline = PanelTimelines.make(screen: self.targetScreen) {
+                self.timeline = timeline
+                self.root.layer?.addSublayer(timeline.lights)
+                timeline.onStep = { [weak self] in self?.applyTimeline() }
+                timeline.onSettle = { [weak self] open in
+                    guard let self else { return }
+                    if open {
+                        self.setSlack(false)
+                    } else if !self.isShown {
+                        self.finishHide()
+                    }
                 }
-                self.neonMotion.open()
+                timeline.open()
             } else {
                 self.motion.animate(open: true)
             }
@@ -387,15 +381,15 @@ public final class OverlayPanel: NSPanel {
         }
         // Interrupting an opening bounce: it may still be past the panel.
         setSlack(true)
-        if neonDriven {
-            neonMotion.close()
+        if let timeline {
+            timeline.close()
         } else {
             motion.animate(open: false)
         }
         chrome?.powerOff()
         // The spring hides it when it settles; this only covers a display that
         // stopped ticking (asleep, unplugged) half-way.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
             guard let self, !self.isShown, self.isVisible else { return }
             self.finishHide()
         }
@@ -449,9 +443,9 @@ public final class OverlayPanel: NSPanel {
         glass = nil
         orderOut(nil)
         // Back to the pill, off screen, ready for the next opening.
-        neonDriven = false
-        neonMotion.reset()
-        neonLights?.clear()
+        timeline?.reset()
+        timeline?.lights.removeFromSuperlayer()
+        timeline = nil
         bloom.opacity = 0
         motion.jump(open: false)
         setSlack(false)
@@ -485,54 +479,26 @@ public final class OverlayPanel: NSPanel {
         )
     }
 
-    /// Put the panel where Neon's timeline has it: a line along the edge
-    /// extruding out, jittering as it lands; or, closing, squashed into a line
-    /// and pinched to a dot.
-    private func applyNeon(_ frame: NeonPanelMotion.Frame) {
-        let full = shownFrame
-        let alongX = edge == .top || edge == .bottom
-        let fullLength = alongX ? full.width : full.height
-        let fullDepth = alongX ? full.height : full.width
-        let length = max(6, fullLength * frame.length)
-        // past 1 it overshoots, but never by more than the window's slack
-        let depth = max(2, min(fullDepth * frame.depth, fullDepth + 22))
-        var rect: NSRect
-        switch edge {
-        case .bottom: rect = NSRect(x: full.midX - length / 2, y: full.minY, width: length, height: depth)
-        case .top: rect = NSRect(x: full.midX - length / 2, y: full.maxY - depth, width: length, height: depth)
-        case .leading: rect = NSRect(x: full.minX, y: full.midY - length / 2, width: depth, height: length)
-        case .trailing: rect = NSRect(x: full.maxX - depth, y: full.midY - length / 2, width: depth, height: length)
-        }
-        if alongX { rect.origin.x += frame.jitter } else { rect.origin.y += frame.jitter }
-
-        var outline = style ?? fallbackStyle
-        if frame.closing {
-            // A CRT switching off: squashed toward the middle line, then the
-            // line pinched toward a dot. It has let go of the frame by now.
-            let height = max(2, rect.height * (1 - frame.collapse))
-            rect = NSRect(x: rect.minX, y: rect.midY - height / 2, width: rect.width, height: height)
-            let width = max(3, rect.width * (1 - frame.shrink))
-            rect = NSRect(x: rect.midX - width / 2, y: rect.minY, width: width, height: rect.height)
-            outline = PanelStyle(radius: outline.radius, filletRadius: 0, attachment: .none, cut: outline.cut)
-        }
-
-        let lit = Motion.ramp(frame.depth, from: 0.12, to: 0.7)
+    /// Put the panel where its theme's timeline has it.
+    private func applyTimeline() {
+        guard let timeline else { return }
+        let frame = timeline.layout(full: shownFrame, edge: edge, style: style ?? fallbackStyle)
         place(
-            rect,
-            style: outline,
-            squash: frame.closing,
+            frame.rect,
+            style: frame.style,
+            squash: frame.squash,
             drift: 0,
-            hostAlpha: frame.closing ? 1 - frame.shrink : lit,
-            glassFade: frame.closing ? 1 - frame.shrink : 1,
-            chromeAlpha: frame.closing ? 1 - frame.shrink : Motion.ramp(frame.depth, from: 0.05, to: 0.5)
+            hostAlpha: frame.hostAlpha,
+            glassFade: frame.glassFade,
+            chromeAlpha: frame.chromeAlpha
         )
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         bloom.frame = container.bounds
-        bloom.opacity = Float(frame.bloom * 0.55)
+        bloom.backgroundColor = frame.bloomColour.cgColor
+        bloom.opacity = Float(frame.bloom)
         CATransaction.commit()
-        let local = rect.offsetBy(dx: -windowOrigin.x, dy: -windowOrigin.y)
-        neonLights?.place(frame, rect: local, edge: edge)
+        timeline.placeLights(rect: frame.rect.offsetBy(dx: -windowOrigin.x, dy: -windowOrigin.y), edge: edge)
     }
 
     /// Put the panel's outline, content, chrome and glass at `rect`.

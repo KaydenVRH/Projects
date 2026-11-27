@@ -130,6 +130,7 @@ struct KitHeader<Trailing: View>: View {
                     .foregroundStyle(LinearGradient(colors: [palette.foreground, palette.highlight],
                                                     startPoint: .leading, endPoint: .trailing))
                     .shadow(color: palette.accent.opacity(0.8), radius: 8)
+                    .modifier(InkWrite(nib: palette.highlight))
                 if let subtitle {
                     Text("✦ " + subtitle)
                         .font(.custom(palette.font, size: 11).italic())

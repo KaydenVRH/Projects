@@ -248,9 +248,22 @@ especially). `Surfaces/Motion.swift` is the one place they are tuned:
   - **The pointer** sheds sparks as it moves, more the faster it goes, and none
     while it rests. The pointer position is sampled, so this needs no input
     monitoring or permissions.
-  - **Menus** open in a burst of sparks off their outline, keep a few motes
-    drifting up from their foot, and breathe a violet glow, with a shimmer
-    passing across now and then.
+  - **Panels have their own shape and motion.** Free corners are scooped out
+    in concave quarter-circles, like an ornate charm, while the corners that
+    meet the frame keep their curved fillets (`PanelStyle.notch`).
+  - **Opening is a summoning** (`ArcanePanelMotion`): a circle of runes — two
+    counter-turning dashed rings and a star — spins open where the panel will
+    stand, motes streaming into it. The panel materialises out of its heart as
+    an orb and swells a little past its size, unfurling into its scooped shape
+    (one corner value slides from round through square to the scoop, so it
+    never pops), and latches onto the frame only once it's whole. It appears
+    in place rather than growing out of its edge. Header titles write
+    themselves in behind a glowing nib.
+  - **Closing is a dispel:** the panel rounds back into an orb and implodes
+    through the circle as it tightens and spins harder, then bursts into
+    sparks that drift down as they fade.
+  - **Open menus** keep a few motes drifting up from their foot and breathe a
+    violet glow, with a shimmer passing across now and then.
   - **Inside menus:**
     - headers put their icon in a turning magic circle, with a gradient
       italic title and twinkling sparkles;
@@ -264,6 +277,10 @@ especially). `Surfaces/Motion.swift` is the one place they are tuned:
     a spectrum aura, and the play button is an orb of light.
   - **The wallpaper** is lwp's `arcane` shader: a summoning circle in
     perspective, a pillar of light, orbiting orbs and spiralling sparks.
+- Both Arcane's and Neon's motion are `PanelTimeline`s
+  (`Surfaces/PanelTimeline.swift`): each frame the timeline says where the
+  panel is, its outline and how its content is drawn, and places the light it
+  throws; `OverlayPanel` and `MediaIsland` just apply that, glass included.
 - **Neon** (`Surfaces/Neon.swift`) is the third trademark theme: a cyberpunk
   city on tape, with neon tubes and tape glitches where Stark has holograms and
   Arcane has particles. It turns on for the theme named Neon, or

@@ -28,15 +28,14 @@ public final class MediaIslandPanel: NSPanel {
     private let makeGlass: ((NSScreen) -> SurfaceGlass?)?
 
     /// The window's content: the island (`container`, masked to its outline)
-    /// and, unmasked over it, the light Neon's motion throws.
+    /// and, unmasked over it, the light its theme's timeline throws.
     private let root = NSView()
     private let container = NSView()
     private let host: NSHostingView<MediaIslandView>
-    /// Neon islands come and go on their own timeline (see `NeonPanelMotion`).
-    private lazy var neonMotion = NeonPanelMotion(screen: targetScreen)
-    private var neonLights: NeonPanelLights?
+    /// Neon and Arcane islands come and go on their own timeline (see
+    /// `PanelTimeline`); made when it opens, so it follows the theme.
+    private var timeline: PanelTimeline?
     private let bloom = CALayer()
-    private var neonDriven = false
     private let island: MediaIslandState
     private var glass: SurfaceGlass?
     private var localGlass: NSVisualEffectView?
@@ -186,13 +185,6 @@ public final class MediaIslandPanel: NSPanel {
             guard let self else { return }
             if open { self.setSlack(false) } else if !self.isShown { self.finishHide() }
         }
-        neonMotion.onStep = { [weak self] frame in
-            self?.applyNeon(frame)
-        }
-        neonMotion.onSettle = { [weak self] open in
-            guard let self else { return }
-            if open { self.setSlack(false) } else if !self.isShown { self.finishHide() }
-        }
         apply(.closed)
     }
 
@@ -203,7 +195,9 @@ public final class MediaIslandPanel: NSPanel {
     /// little either side.
     private var slackFrame: NSRect {
         var room = Jelly.slack(travel: travel)
-        if Neon.active { room = (max(room.out, 30), max(room.side, 16)) }
+        if let extra = timeline?.slack ?? PanelTimelines.slack {
+            room = (max(room.out, extra.out), max(room.side, extra.side))
+        }
         var frame = expanded.insetBy(dx: -room.side, dy: 0)
         frame.size.height += room.out
         if growsDown { frame.origin.y -= room.out }
@@ -219,7 +213,7 @@ public final class MediaIslandPanel: NSPanel {
         CATransaction.setDisableActions(true)
         setFrame(target, display: false)
         windowOrigin = target.origin
-        if neonDriven { applyNeon(neonMotion.frame) } else { apply(motion.pose) }
+        if timeline != nil { applyTimeline() } else { apply(motion.pose) }
         CATransaction.commit()
     }
 
@@ -270,14 +264,15 @@ public final class MediaIslandPanel: NSPanel {
         // window is first ordered front gets skipped.
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isShown else { return }
-            if Neon.active, !Motion.reduced {
-                self.neonDriven = true
-                if self.neonLights == nil {
-                    let lights = NeonPanelLights()
-                    self.root.layer?.addSublayer(lights.layer)
-                    self.neonLights = lights
+            if let timeline = PanelTimelines.make(screen: self.targetScreen) {
+                self.timeline = timeline
+                self.root.layer?.addSublayer(timeline.lights)
+                timeline.onStep = { [weak self] in self?.applyTimeline() }
+                timeline.onSettle = { [weak self] open in
+                    guard let self else { return }
+                    if open { self.setSlack(false) } else if !self.isShown { self.finishHide() }
                 }
-                self.neonMotion.open()
+                timeline.open()
             } else {
                 self.motion.animate(open: true)
             }
@@ -297,11 +292,11 @@ public final class MediaIslandPanel: NSPanel {
             return
         }
         setSlack(true)
-        if neonDriven { neonMotion.close() } else { motion.animate(open: false) }
+        if let timeline { timeline.close() } else { motion.animate(open: false) }
         chrome?.powerOff()
         // The spring hides it when it settles; this covers a display that
         // stopped ticking half-way.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
             guard let self, !self.isShown, self.isVisible else { return }
             self.finishHide()
         }
@@ -314,9 +309,9 @@ public final class MediaIslandPanel: NSPanel {
         glass?.park()
         glass = nil
         orderOut(nil)
-        neonDriven = false
-        neonMotion.reset()
-        neonLights?.clear()
+        timeline?.reset()
+        timeline?.lights.removeFromSuperlayer()
+        timeline = nil
         bloom.opacity = 0
         motion.jump(open: false)
         setSlack(false)
@@ -349,39 +344,27 @@ public final class MediaIslandPanel: NSPanel {
     /// The pill's radius is already the panel's: a 44pt pill at radius 22 is a
     /// capsule, and the same radius at full height is the panel's corner.
     private var outline: PanelStyle {
-        PanelStyle(radius: radius, filletRadius: 0, attachment: .none, cut: Neon.active ? Neon.panelCut * 0.7 : 0)
+        PanelStyle(radius: radius, filletRadius: 0, attachment: .none,
+                   cut: Neon.active ? Neon.panelCut * 0.7 : 0,
+                   notch: Arcane.active ? Arcane.panelNotch * 0.8 : 0)
     }
 
-    /// Neon's way: a line igniting under the bar, extruding away from it and
-    /// jittering as it locks on; closing, a CRT squashed to a line and a dot.
-    private func applyNeon(_ frame: NeonPanelMotion.Frame) {
-        let width = max(6, expanded.width * frame.length)
-        let height = max(2, min(expanded.height * frame.depth, expanded.height + 22))
-        var rect = NSRect(
-            x: expanded.midX - width / 2 + frame.jitter,
-            y: growsDown ? expanded.maxY - height : expanded.minY,
-            width: width,
-            height: height
-        )
-        if frame.closing {
-            let squashed = max(2, rect.height * (1 - frame.collapse))
-            rect = NSRect(x: rect.minX, y: rect.midY - squashed / 2, width: rect.width, height: squashed)
-            let pinched = max(3, rect.width * (1 - frame.shrink))
-            rect = NSRect(x: rect.midX - pinched / 2, y: rect.minY, width: pinched, height: rect.height)
-        }
-        place(rect, outline: outline, squash: frame.closing, pinned: !frame.closing,
-              // the full centre throughout, revealed by the outline
-              progress: 1,
-              glassFade: frame.closing ? 1 - frame.shrink : 1,
-              chromeAlpha: frame.closing ? 1 - frame.shrink : Motion.ramp(frame.depth, from: 0.05, to: 0.5))
+    /// Put the island where its theme's timeline has it. Revealed (not
+    /// squashed), the content keeps the full centre's layout, hung off the bar.
+    private func applyTimeline() {
+        guard let timeline else { return }
+        let edge: OverlayEdge = growsDown ? .top : .bottom
+        let frame = timeline.layout(full: expanded, edge: edge, style: outline)
+        place(frame.rect, outline: frame.style, squash: frame.squash, pinned: !frame.squash,
+              progress: 1, glassFade: frame.glassFade, chromeAlpha: frame.chromeAlpha)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         bloom.frame = container.bounds
-        bloom.opacity = Float(frame.bloom * 0.55)
-        host.alphaValue = frame.closing ? 1 - frame.shrink : 1
+        bloom.backgroundColor = frame.bloomColour.cgColor
+        bloom.opacity = Float(frame.bloom)
+        host.alphaValue = frame.hostAlpha
         CATransaction.commit()
-        neonLights?.place(frame, rect: rect.offsetBy(dx: -windowOrigin.x, dy: -windowOrigin.y),
-                          edge: growsDown ? .top : .bottom)
+        timeline.placeLights(rect: frame.rect.offsetBy(dx: -windowOrigin.x, dy: -windowOrigin.y), edge: edge)
     }
 
     /// Put the island, its outline and its glass at `rect`.

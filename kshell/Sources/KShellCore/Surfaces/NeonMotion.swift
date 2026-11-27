@@ -12,7 +12,7 @@ import QuartzCore
 ///
 /// Stepped every display frame like `PanelMotion`, for the same reason: the
 /// panel's glass lives in the frame's window and follows model geometry only.
-final class NeonPanelMotion {
+final class NeonPanelMotion: PanelTimeline {
     struct Frame: Equatable {
         /// 0…1 along the edge.
         var length: CGFloat = 0
@@ -40,9 +40,14 @@ final class NeonPanelMotion {
     static let closeDuration: Double = 0.36
 
     private(set) var frame = Frame()
-    var onStep: ((Frame) -> Void)?
+    var onStep: (() -> Void)?
     /// Once it has landed (true) or gone (false).
     var onSettle: ((Bool) -> Void)?
+    private let neonLights = NeonPanelLights()
+    var lights: CALayer { neonLights.layer }
+    /// The landing overshoot (capped at 22 pt) and the lock-on jitter.
+    static let slack: (out: CGFloat, side: CGFloat) = (30, 16)
+    var slack: (out: CGFloat, side: CGFloat) { Self.slack }
 
     private var clock: FrameClock?
     private var opening = false
@@ -79,6 +84,49 @@ final class NeonPanelMotion {
     func reset() {
         clock?.stop()
         frame = Frame()
+        neonLights.clear()
+    }
+
+    func layout(full: NSRect, edge: OverlayEdge, style: PanelStyle) -> PanelTimelineLayout {
+        let alongX = edge == .top || edge == .bottom
+        let fullLength = alongX ? full.width : full.height
+        let fullDepth = alongX ? full.height : full.width
+        let length = max(6, fullLength * frame.length)
+        // past 1 it overshoots, but never by more than the window's slack
+        let depth = max(2, min(fullDepth * frame.depth, fullDepth + 22))
+        var rect: NSRect
+        switch edge {
+        case .bottom: rect = NSRect(x: full.midX - length / 2, y: full.minY, width: length, height: depth)
+        case .top: rect = NSRect(x: full.midX - length / 2, y: full.maxY - depth, width: length, height: depth)
+        case .leading: rect = NSRect(x: full.minX, y: full.midY - length / 2, width: depth, height: length)
+        case .trailing: rect = NSRect(x: full.maxX - depth, y: full.midY - length / 2, width: depth, height: length)
+        }
+        if alongX { rect.origin.x += frame.jitter } else { rect.origin.y += frame.jitter }
+
+        var outline = style
+        if frame.closing {
+            // A CRT switching off: squashed toward the middle line, then the
+            // line pinched toward a dot. It has let go of the frame by now.
+            let height = max(2, rect.height * (1 - frame.collapse))
+            rect = NSRect(x: rect.minX, y: rect.midY - height / 2, width: rect.width, height: height)
+            let width = max(3, rect.width * (1 - frame.shrink))
+            rect = NSRect(x: rect.midX - width / 2, y: rect.minY, width: width, height: rect.height)
+            outline = PanelStyle(radius: style.radius, filletRadius: 0, attachment: .none, cut: style.cut)
+        }
+        let gone = 1 - frame.shrink
+        return PanelTimelineLayout(
+            rect: rect,
+            style: outline,
+            squash: frame.closing,
+            hostAlpha: frame.closing ? gone : Motion.ramp(frame.depth, from: 0.12, to: 0.7),
+            glassFade: frame.closing ? gone : 1,
+            chromeAlpha: frame.closing ? gone : Motion.ramp(frame.depth, from: 0.05, to: 0.5),
+            bloom: frame.bloom * 0.55
+        )
+    }
+
+    func placeLights(rect: CGRect, edge: OverlayEdge) {
+        neonLights.place(frame, rect: rect, edge: edge)
     }
 
     private static func clamp(_ x: Double) -> Double { min(1, max(0, x)) }
@@ -123,7 +171,7 @@ final class NeonPanelMotion {
             if done { f = Frame() }
         }
         frame = f
-        onStep?(f)
+        onStep?()
         if done { onSettle?(opening) }
         return !done
     }
