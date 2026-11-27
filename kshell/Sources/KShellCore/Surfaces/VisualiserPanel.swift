@@ -136,37 +136,85 @@ public final class VisualiserPanel: NSPanel {
 
 // MARK: - the bars
 
-/// Draws the bars with CoreGraphics, as few passes over the whole strip rather
-/// than one per bar: a single path holds every bar, so the gradient fill, the
-/// glow and the reflection are three draws in total, however many bars there
-/// are. The levels arrive at the tap's rate, which is the animation — there is
-/// nothing on a timer here.
+/// The bars, drawn by the GPU.
+///
+/// One gradient layer is masked to a single path holding every bar, so a new
+/// set of levels is one path handed to Core Animation — the render server
+/// rasterises and composites it. Drawing them with CoreGraphics in `draw(_:)`
+/// (as this used to) filled, stroked and clipped every bar on the main thread
+/// for every update, on every screen, which is what made the whole shell lag
+/// while music played.
 final class VisualiserBarsView: NSView {
     private var config = VisualiserConfig()
     private var base: NSColor = .white
     private var tip: NSColor = .white
-    private var bands: [Float] = []
+
+    private let fill = CAGradientLayer()
+    private let barsMask = CAShapeLayer()
+    private let reflection = CAGradientLayer()
+    private let reflectionMask = CAShapeLayer()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        fill.mask = barsMask
+        reflection.mask = reflectionMask
+        layer?.addSublayer(reflection)
+        layer?.addSublayer(fill)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var isOpaque: Bool { false }
+    /// Bottom-left origin: bars grow up from the baseline, reflections below it.
+    override var isFlipped: Bool { false }
+    override var wantsUpdateLayer: Bool { true }
 
     func apply(config: VisualiserConfig, theme: Theme) {
         self.config = config
         base = theme.accent?.nsColor ?? .controlAccentColor
         tip = theme.highlight?.nsColor ?? base
-        needsDisplay = true
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer?.opacity = Float(config.opacity)
+        // The theme's accent along the body, running to the highlight at the
+        // tips, so a pink→cyan theme doesn't blend through grey.
+        fill.colors = [base.withAlphaComponent(0.30).cgColor, base.cgColor, tip.cgColor]
+        fill.locations = [0, 0.55, 1]
+        fill.startPoint = CGPoint(x: 0.5, y: 0)
+        fill.endPoint = CGPoint(x: 0.5, y: 1)
+        reflection.colors = [tip.withAlphaComponent(0.30).cgColor, base.withAlphaComponent(0.04).cgColor]
+        reflection.startPoint = CGPoint(x: 0.5, y: 1)
+        reflection.endPoint = CGPoint(x: 0.5, y: 0)
+        reflection.isHidden = config.mirror <= 0
+        CATransaction.commit()
+        layoutLayers()
     }
 
     func setBands(_ values: [Float]) {
-        bands = values
-        needsDisplay = true
+        rebuild(values)
     }
 
-    override var isOpaque: Bool { false }
-    /// Bottom-left origin: bars grow up from the baseline, reflections below it.
-    override var isFlipped: Bool { false }
+    override func layout() {
+        super.layout()
+        layoutLayers()
+    }
 
-    override func draw(_ dirtyRect: NSRect) {
-        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+    private func layoutLayers() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         let size = bounds.size
-        let values = bands
+        let baseline = size.height * (config.mirror > 0 ? 0.22 : 0)
+        fill.frame = CGRect(x: 0, y: baseline, width: size.width, height: size.height - baseline)
+        barsMask.frame = fill.bounds
+        reflection.frame = CGRect(x: 0, y: 0, width: size.width, height: baseline)
+        reflectionMask.frame = reflection.bounds
+        CATransaction.commit()
+    }
+
+    private func rebuild(_ values: [Float]) {
+        let size = bounds.size
         guard !values.isEmpty, size.width > 0, size.height > 0 else { return }
 
         // Centred: every band is drawn twice, mirrored about the middle, so the
@@ -176,12 +224,10 @@ final class VisualiserBarsView: NSView {
         let slots = centred ? values.count * 2 : values.count
         let gap = CGFloat(config.gap)
         let barWidth = max((size.width - gap * CGFloat(slots - 1)) / CGFloat(slots), 1)
-        let baselineFraction: CGFloat = config.mirror > 0 ? 0.22 : 0
-        let baseline = size.height * baselineFraction
-        let maxBar = size.height * (1 - baselineFraction)
+        let baseline = size.height * (config.mirror > 0 ? 0.22 : 0)
+        let maxBar = size.height - baseline
         let radius = min(barWidth / 2, 3)
 
-        /// Which band a slot draws: the innermost slot is the lowest band.
         func band(_ slot: Int) -> Int {
             guard centred else { return slot }
             return slot < values.count ? values.count - 1 - slot : slot - values.count
@@ -193,74 +239,20 @@ final class VisualiserBarsView: NSView {
             let level = CGFloat(values[band(slot)])
             let height = max(maxBar * level, 2)
             let x = CGFloat(slot) * (barWidth + gap)
-            bars.addPath(CGPath(
-                roundedRect: CGRect(x: x, y: baseline, width: barWidth, height: height),
-                cornerWidth: radius, cornerHeight: radius, transform: nil
-            ))
-            guard config.mirror > 0 else { continue }
-            let mirrored = height * CGFloat(config.mirror)
-            reflections.addPath(CGPath(
-                roundedRect: CGRect(x: x, y: baseline - mirrored, width: barWidth, height: mirrored),
-                cornerWidth: radius, cornerHeight: radius, transform: nil
-            ))
+            bars.addRoundedRect(in: CGRect(x: x, y: 0, width: barWidth, height: height),
+                                cornerWidth: radius, cornerHeight: radius)
+            if config.mirror > 0 {
+                let mirrored = min(height * CGFloat(config.mirror), baseline)
+                reflections.addRoundedRect(in: CGRect(x: x, y: baseline - mirrored, width: barWidth, height: mirrored),
+                                           cornerWidth: min(radius, mirrored / 2), cornerHeight: min(radius, mirrored / 2))
+            }
         }
 
-        ctx.saveGState()
-        ctx.setAlpha(CGFloat(config.opacity))
-        ctx.setShouldAntialias(true)
-
-        // Glow: a couple of soft outlines around the whole path. A blurred shadow
-        // pass looks marginally softer but costs several times as much per frame,
-        // and at this size the two are indistinguishable.
-        for (width, alpha) in [(9.0, 0.05), (4.0, 0.09)] {
-            ctx.setStrokeColor(base.withAlphaComponent(alpha).cgColor)
-            ctx.setLineWidth(width)
-            ctx.addPath(bars)
-            ctx.strokePath()
-        }
-
-        // Reflections, fading away from the baseline.
-        if config.mirror > 0, let gradient = gradient([
-            tip.withAlphaComponent(0.30), base.withAlphaComponent(0.04),
-        ], locations: [0, 1]) {
-            ctx.saveGState()
-            ctx.addPath(reflections)
-            ctx.clip()
-            ctx.drawLinearGradient(
-                gradient,
-                start: CGPoint(x: 0, y: baseline),
-                end: CGPoint(x: 0, y: baseline - maxBar * CGFloat(config.mirror)),
-                options: []
-            )
-            ctx.restoreGState()
-        }
-
-        // The bars themselves: the theme's accent along the body, running to the
-        // highlight at the tips, so a pink→cyan theme doesn't blend through grey.
-        if let gradient = gradient([
-            base.withAlphaComponent(0.30), base, tip,
-        ], locations: [0, 0.55, 1]) {
-            ctx.saveGState()
-            ctx.addPath(bars)
-            ctx.clip()
-            ctx.drawLinearGradient(
-                gradient,
-                start: CGPoint(x: 0, y: baseline),
-                end: CGPoint(x: 0, y: baseline + maxBar),
-                options: []
-            )
-            ctx.restoreGState()
-        }
-
-        ctx.restoreGState()
-    }
-
-    private func gradient(_ colors: [NSColor], locations: [CGFloat]) -> CGGradient? {
-        CGGradient(
-            colorsSpace: CGColorSpaceCreateDeviceRGB(),
-            colors: colors.map(\.cgColor) as CFArray,
-            locations: locations
-        )
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        barsMask.path = bars
+        if config.mirror > 0 { reflectionMask.path = reflections }
+        CATransaction.commit()
     }
 }
 

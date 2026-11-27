@@ -1,6 +1,7 @@
 import AVFoundation
 import Accelerate
 import Foundation
+import QuartzCore
 
 /// Turns the player's audio into the cava-style bands the visualiser draws.
 ///
@@ -51,6 +52,8 @@ public final class AudioSpectrum: ObservableObject {
     /// Bin-space positions to sample per band (lowest to highest within it).
     private var bandSamples: [[Float]] = []
     private var sampleRate: Double = 44100
+    /// When the bands were last handed to the main thread.
+    private var lastPublish: CFTimeInterval = 0
 
     /// -60 dB … 0 dB mapped onto the bars.
     private let floorDB: Float = 60
@@ -165,6 +168,13 @@ public final class AudioSpectrum: ObservableObject {
                 : previous + (level - previous) * 0.19
         }
 
+        // The smoothing runs on every callback, so the response stays quick,
+        // but the main thread hears about it at most 45 times a second: every
+        // publish wakes the main thread and every observer redraws, and the
+        // tap's ~86 a second was twice what any screen can show of it.
+        let now = CACurrentMediaTime()
+        guard now - lastPublish >= 1.0 / 45 else { return }
+        lastPublish = now
         let snapshot = smoothed
         DispatchQueue.main.async { [weak self] in
             self?.bands = snapshot

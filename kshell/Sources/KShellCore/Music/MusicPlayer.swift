@@ -273,6 +273,20 @@ public final class MusicPlayer: NSObject, ObservableObject {
 
     /// Publish to the system, so the media keys and the Control Centre panel
     /// follow this player rather than whatever was playing before.
+    /// The cover for the system's now-playing info, made once per track:
+    /// re-reading and re-encoding it on every update was most of what playback
+    /// cost the shell.
+    private var nowPlayingArtwork: (path: String, artwork: MPMediaItemArtwork)?
+
+    private func artwork(for path: String?) -> MPMediaItemArtwork? {
+        guard let path else { return nil }
+        if let cached = nowPlayingArtwork, cached.path == path { return cached.artwork }
+        guard let image = NSImage(contentsOfFile: path) else { return nil }
+        let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        nowPlayingArtwork = (path, artwork)
+        return artwork
+    }
+
     private func publishNowPlaying() {
         let centre = MPNowPlayingInfoCenter.default()
         guard let current else {
@@ -288,8 +302,8 @@ public final class MusicPlayer: NSObject, ObservableObject {
         ]
         if !current.album.isEmpty { info[MPMediaItemPropertyAlbumTitle] = current.album }
         if duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = duration }
-        if let path = current.artworkPath, let image = NSImage(contentsOfFile: path) {
-            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        if let artwork = artwork(for: current.artworkPath) {
+            info[MPMediaItemPropertyArtwork] = artwork
         }
         centre.nowPlayingInfo = info
         centre.playbackState = isPlaying ? .playing : .paused
@@ -540,7 +554,9 @@ public final class MusicPlayer: NSObject, ObservableObject {
         timer.setEventHandler { [weak self] in
             guard let self, let file = self.file else { return }
             self.position = self.currentPosition(of: file)
-            self.writeSidecar()
+            // The system's now-playing clock runs itself from the rate given
+            // when playback changed; only the bar's sidecar needs the tick.
+            self.writeSidecar(publish: false)
         }
         timer.resume()
         ticker = timer
@@ -560,7 +576,7 @@ public final class MusicPlayer: NSObject, ObservableObject {
     // MARK: - sidecar
 
     /// Mirrors the state to `now-playing.json` for the bar's script widgets.
-    private func writeSidecar() {
+    private func writeSidecar(publish: Bool = true) {
         let payload: [String: Any] = [
             "source": "kshell",
             "title": current?.displayTitle ?? "",
@@ -578,6 +594,6 @@ public final class MusicPlayer: NSObject, ObservableObject {
             withIntermediateDirectories: true
         )
         try? data.write(to: url)
-        publishNowPlaying()
+        if publish { publishNowPlaying() }
     }
 }
