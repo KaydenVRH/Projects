@@ -13,6 +13,10 @@ struct KitPalette {
     let font: String
     /// The Stark HUD: brackets, hexagons and hard edges instead of soft cards.
     let hud: Bool
+    /// The Arcane theme: glow, gradients and sparkles.
+    let arcane: Bool
+    /// The theme's second colour (rose, for Arcane).
+    let highlight: Color
 
     init(theme: Theme, bar: BarConfig) {
         self.init(theme: theme, font: bar.fontFamily)
@@ -24,6 +28,8 @@ struct KitPalette {
         dim = (theme.dim ?? theme.foreground)?.color ?? .gray
         self.font = font
         hud = Hud.isHud(theme)
+        arcane = !hud && Arcane.isArcane(theme)
+        highlight = theme.highlight?.color ?? accent
     }
 }
 
@@ -41,7 +47,51 @@ struct KitHeader<Trailing: View>: View {
     @State private var arrived = false
 
     var body: some View {
-        if palette.hud { hudBody } else { softBody }
+        if palette.hud { hudBody } else if palette.arcane { arcaneBody } else { softBody }
+    }
+
+    /// Arcane: the icon at the heart of a turning magic circle, the title lit
+    /// with a violet-to-rose gradient, sparkles winking around it.
+    private var arcaneBody: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                MagicCircle(violet: palette.accent, rose: palette.highlight, lineWidth: 1, period: 12)
+                    .frame(width: 44, height: 44)
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(LinearGradient(colors: [palette.highlight, palette.accent],
+                                                    startPoint: .top, endPoint: .bottom))
+                    .shadow(color: palette.accent, radius: 6)
+                    .symbolEffect(.bounce, value: arrived)
+            }
+            .frame(width: 44, height: 44)
+            .scaleEffect(arrived ? 1 : 0.2)
+            .rotationEffect(.degrees(arrived ? 0 : -120))
+            .opacity(arrived ? 1 : 0)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.custom(palette.font, size: 19).italic())
+                    .foregroundStyle(LinearGradient(colors: [palette.foreground, palette.highlight],
+                                                    startPoint: .leading, endPoint: .trailing))
+                    .shadow(color: palette.accent.opacity(0.8), radius: 8)
+                if let subtitle {
+                    Text("✦ " + subtitle)
+                        .font(.custom(palette.font, size: 11).italic())
+                        .foregroundColor(palette.foreground.opacity(0.6))
+                        .contentTransition(.numericText())
+                }
+            }
+            Spacer(minLength: 8)
+            trailing
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 16)
+        .padding(.bottom, 12)
+        .background(Twinkles(colours: [palette.highlight, palette.accent, .white], count: 5).opacity(0.8))
+        .onAppear {
+            withAnimation(.kBouncy.delay(0.08)) { arrived = true }
+        }
     }
 
     /// Stark: the icon in a hexagon inside a turning dashed ring, the title in
@@ -170,6 +220,30 @@ struct KeyHints: View {
             }
             .font(.system(size: 9.5, weight: .medium, design: .monospaced))
             .lineLimit(1)
+        } else if palette.arcane {
+            // Arcane: glowing runestones and italic labels.
+            HStack(spacing: 12) {
+                ForEach(Array(hints.enumerated()), id: \.offset) { _, hint in
+                    HStack(spacing: 5) {
+                        Text(hint.key)
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundColor(palette.foreground)
+                            .padding(.horizontal, 7)
+                            .frame(minHeight: 18)
+                            .background(
+                                Capsule()
+                                    .fill(LinearGradient(colors: [palette.accent.opacity(0.35), palette.highlight.opacity(0.2)],
+                                                         startPoint: .leading, endPoint: .trailing))
+                                    .overlay(Capsule().stroke(palette.accent.opacity(0.6), lineWidth: 0.8))
+                                    .shadow(color: palette.accent.opacity(0.6), radius: 4)
+                            )
+                        Text(hint.label)
+                            .font(.custom(palette.font, size: 11).italic())
+                            .foregroundColor(palette.foreground.opacity(0.6))
+                    }
+                }
+            }
+            .lineLimit(1)
         } else {
             softBody
         }
@@ -243,7 +317,43 @@ struct KitCard: ViewModifier {
     var radius: CGFloat = 14
 
     func body(content: Content) -> some View {
-        if palette.hud { hudBody(content) } else { softBody(content) }
+        if palette.hud { hudBody(content) } else if palette.arcane { arcaneBody(content) } else { softBody(content) }
+    }
+
+    /// Arcane: the armed row is wrapped in a glowing violet-to-rose aura that
+    /// glides between rows, with a sparkle twinkling at its corner.
+    private func arcaneBody(_ content: Content) -> some View {
+        content
+            .background {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(palette.accent.opacity(hovered ? 0.12 : 0.045))
+                    if selected {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(LinearGradient(colors: [palette.accent.opacity(0.36), palette.highlight.opacity(0.18)],
+                                                 startPoint: .leading, endPoint: .trailing))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .stroke(LinearGradient(colors: [palette.highlight, palette.accent.opacity(0.4)],
+                                                           startPoint: .topLeading, endPoint: .bottomTrailing),
+                                            lineWidth: 1.2)
+                            )
+                            .shadow(color: palette.accent.opacity(0.7), radius: 12)
+                            .overlay(alignment: .topTrailing) {
+                                Image(systemName: "sparkle")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.white)
+                                    .shadow(color: palette.highlight, radius: 4)
+                                    .symbolEffect(.pulse)
+                                    .offset(x: 3, y: -4)
+                            }
+                            .matchedGeometryEffect(id: "kit-armed", in: highlight)
+                    }
+                }
+            }
+            .scaleEffect(selected ? 1.015 : (hovered ? 1.008 : 1))
+            .animation(.kSelect, value: selected)
+            .animation(.kHover, value: hovered)
     }
 
     /// Stark: hard-edged cells with cut corners; the armed one is locked on by a
@@ -342,7 +452,33 @@ struct IconBubble: View {
     @State private var pulse = false
 
     var body: some View {
-        if palette.hud { hudBody } else { softBody }
+        if palette.hud { hudBody } else if palette.arcane { arcaneBody } else { softBody }
+    }
+
+    /// Arcane: a glowing orb, with a spark orbiting it while live.
+    private var arcaneBody: some View {
+        ZStack {
+            Circle()
+                .fill(active
+                      ? AnyShapeStyle(RadialGradient(colors: [palette.highlight, palette.accent, palette.accent.opacity(0.4)],
+                                                      center: .topLeading, startRadius: 1, endRadius: size))
+                      : AnyShapeStyle(palette.accent.opacity(0.1)))
+                .overlay(Circle().stroke(palette.accent.opacity(active ? 0.9 : 0.3), lineWidth: 1))
+                .shadow(color: palette.accent.opacity(active ? 0.9 : 0), radius: 8)
+            if active {
+                Spinning(period: 2.6) {
+                    Circle().fill(Color.white).frame(width: 4, height: 4)
+                        .shadow(color: palette.highlight, radius: 4)
+                        .offset(y: -size / 2 - 3)
+                }
+            }
+            Image(systemName: symbol)
+                .font(.system(size: size * 0.38, weight: .medium))
+                .foregroundColor(active ? .white : palette.foreground.opacity(0.75))
+                .symbolEffect(.bounce, value: active)
+        }
+        .frame(width: size + 8, height: size + 8)
+        .animation(.kBouncy, value: active)
     }
 
     /// Stark: a hexagon, lit and ringed by a turning dashed circle when live.
@@ -429,6 +565,23 @@ struct KitToggle: View {
                 }
                 .frame(width: 46, height: 22)
                 .contentShape(Rectangle())
+            } else if palette.arcane {
+                // Arcane: a glowing track and a knob of light.
+                ZStack(alignment: isOn ? .trailing : .leading) {
+                    Capsule()
+                        .fill(isOn
+                              ? AnyShapeStyle(LinearGradient(colors: [palette.accent, palette.highlight],
+                                                             startPoint: .leading, endPoint: .trailing))
+                              : AnyShapeStyle(palette.accent.opacity(0.15)))
+                        .shadow(color: isOn ? palette.accent : .clear, radius: 10)
+                    Circle()
+                        .fill(Color.white)
+                        .shadow(color: isOn ? palette.highlight : .clear, radius: 6)
+                        .frame(width: travelling ? 22 : 16, height: 16)
+                        .padding(3)
+                }
+                .frame(width: 42, height: 22)
+                .contentShape(Capsule())
             } else {
                 ZStack(alignment: isOn ? .trailing : .leading) {
                     Capsule()
@@ -461,6 +614,23 @@ struct StatusPill: View {
                 .foregroundColor(lit ? palette.accent : palette.dim)
                 .shadow(color: lit ? palette.accent.opacity(0.8) : .clear, radius: 4)
                 .animation(.kBouncy, value: lit)
+        } else if palette.arcane {
+            HStack(spacing: 4) {
+                Image(systemName: lit ? "sparkles" : "moon.stars")
+                    .font(.system(size: 8.5))
+                Text(text).font(.custom(palette.font, size: 10).italic())
+            }
+            .foregroundColor(lit ? .white : palette.dim)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule().fill(lit
+                    ? AnyShapeStyle(LinearGradient(colors: [palette.accent.opacity(0.7), palette.highlight.opacity(0.5)],
+                                                   startPoint: .leading, endPoint: .trailing))
+                    : AnyShapeStyle(palette.accent.opacity(0.08)))
+            )
+            .shadow(color: lit ? palette.accent.opacity(0.7) : .clear, radius: 6)
+            .animation(.kBouncy, value: lit)
         } else {
             softBody
         }
@@ -500,6 +670,11 @@ struct KitEmpty: View {
                     SpinningRing(colour: palette.accent.opacity(0.35), dash: [24, 10], width: 1, period: 11, clockwise: false)
                         .frame(width: 140, height: 140)
                     HexagonShape().stroke(palette.accent.opacity(0.7), lineWidth: 1.2).frame(width: 84, height: 74)
+                } else if palette.arcane {
+                    MagicCircle(violet: palette.accent, rose: palette.highlight, lineWidth: 1.4, period: 18)
+                        .frame(width: 130, height: 130)
+                    Twinkles(colours: [palette.highlight, palette.accent, .white], count: 7)
+                        .frame(width: 170, height: 150)
                 } else {
                     Circle().fill(palette.accent.opacity(0.1)).frame(width: 84, height: 84)
                     Circle().stroke(palette.accent.opacity(0.18), lineWidth: 1).frame(width: 110, height: 110)

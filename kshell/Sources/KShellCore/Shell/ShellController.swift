@@ -26,6 +26,9 @@ public final class ShellController {
     private var borders: [ScreenBorderPanel] = []
     /// The Stark HUD's brackets and running light over each frame.
     private var hudFrames: [HudFramePanel] = []
+    /// The Arcane theme's glowing frame and the sparks trailing the pointer.
+    private var arcaneFrames: [ArcaneFramePanel] = []
+    private var cursorTrail: ArcaneCursorTrail?
     private var visualisers: [VisualiserPanel] = []
     private var playingObserver: AnyCancellable?
     private var manualHidden = false
@@ -121,6 +124,10 @@ public final class ShellController {
         bars.removeAll()
         for hud in hudFrames { hud.orderOut(nil) }
         hudFrames.removeAll()
+        for frame in arcaneFrames { frame.orderOut(nil) }
+        arcaneFrames.removeAll()
+        cursorTrail?.stop()
+        cursorTrail = nil
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -185,6 +192,8 @@ public final class ShellController {
         })
         // Replay the Stark HUD's boot sequence.
         eventTokens.append(bus.observe("hud_boot") { _ in HudBoot.play() })
+        // Replay the Arcane theme's casting.
+        eventTokens.append(bus.observe("arcane_cast") { _ in ArcaneCast.play() })
         eventTokens.append(bus.observe("visualiser_toggle") { [weak self] _ in
             guard let self else { return }
             self.setVisualiserEnabled(!self.visualiserEnabled)
@@ -438,6 +447,16 @@ public final class ShellController {
                 hud.orderFrontRegardless()
             }
         }
+        for frame in arcaneFrames {
+            if fullscreenDisplays.contains(FullscreenWatch.displayID(frame.frameScreen) ?? 0) {
+                frame.orderOut(nil)
+            } else {
+                frame.orderFrontRegardless()
+            }
+        }
+        for screen in NSScreen.screens {
+            cursorTrail?.setHidden(fullscreenDisplays.contains(FullscreenWatch.displayID(screen) ?? 0), on: screen)
+        }
         for panel in visualisers {
             if fullscreenDisplays.contains(FullscreenWatch.displayID(panel.visualiserScreen) ?? 0) {
                 panel.dismiss()
@@ -577,6 +596,10 @@ public final class ShellController {
         for border in borders { border.orderOut(nil) }
         for hud in hudFrames { hud.orderOut(nil) }
         hudFrames.removeAll()
+        for frame in arcaneFrames { frame.orderOut(nil) }
+        arcaneFrames.removeAll()
+        cursorTrail?.stop()
+        cursorTrail = nil
 
         let screens: [NSScreen]
         if viewModel.appearance.display == "main" {
@@ -636,6 +659,20 @@ public final class ShellController {
                 hud.orderFrontRegardless()
                 return hud
             }
+        }
+
+        // Arcane: a breathing violet edge with motes rising off it, and sparks
+        // trailing the pointer (the trail needs no frame).
+        if Arcane.active {
+            if usesSurface {
+                let inset = CGFloat(borderConfig.inset + borderConfig.thickness)
+                arcaneFrames = screens.map { screen in
+                    let frame = ArcaneFramePanel(screen: screen, inset: inset, radius: CGFloat(borderConfig.radius))
+                    frame.orderFrontRegardless()
+                    return frame
+                }
+            }
+            cursorTrail = ArcaneCursorTrail()
         }
 
         if manualHidden {

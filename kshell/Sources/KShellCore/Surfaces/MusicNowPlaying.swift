@@ -130,6 +130,9 @@ struct NowPlayingCard: View {
             Group {
                 if Hud.isHud(theme) {
                     HudCover(player: player, path: path, tint: tint)
+                } else if Arcane.isArcane(theme) {
+                    ArcaneCover(player: player, path: path, tint: tint,
+                                rose: theme.highlight?.color ?? tint)
                 } else {
                     ArtworkHero(player: player, path: path, tint: tint, dim: dim)
                 }
@@ -191,7 +194,8 @@ struct NowPlayingCard: View {
             SkipButton(symbol: "backward.fill", colour: foreground) { player.previous() }
                 .disabled(!player.hasTrack)
             Spacer(minLength: 0)
-            PlayButton(playing: player.isPlaying, tint: tint, tintColour: tintColour, hud: Hud.isHud(theme)) { player.toggle() }
+            PlayButton(playing: player.isPlaying, tint: tint, tintColour: tintColour,
+                       hud: Hud.isHud(theme), arcane: Arcane.isArcane(theme)) { player.toggle() }
             Spacer(minLength: 0)
             SkipButton(symbol: "forward.fill", colour: foreground) { player.next() }
                 .disabled(!player.hasTrack)
@@ -509,6 +513,8 @@ struct PlayButton: View {
     let tintColour: NSColor?
     /// Stark: a hexagon in a turning ring.
     var hud = false
+    /// Arcane: an orb of light with a halo.
+    var arcane = false
     let action: () -> Void
 
     @State private var hovering = false
@@ -516,7 +522,17 @@ struct PlayButton: View {
     var body: some View {
         Button(action: action) {
             ZStack {
-                if hud {
+                if arcane {
+                    Circle()
+                        .stroke(tint.opacity(playing ? 0.5 : 0.2), lineWidth: 1)
+                        .frame(width: 70, height: 70)
+                        .scaleEffect(playing ? 1.06 : 0.95)
+                    Circle()
+                        .fill(RadialGradient(colors: [.white.opacity(0.9), tint, tint.opacity(0.6)],
+                                             center: .topLeading, startRadius: 2, endRadius: 60))
+                        .shadow(color: tint.opacity(hovering ? 1 : 0.75), radius: hovering ? 20 : 12)
+                        .frame(width: 56, height: 56)
+                } else if hud {
                     SpinningRing(colour: tint.opacity(playing ? 0.8 : 0.3), dash: [3, 4], width: 1.2, period: playing ? 3 : 12)
                         .frame(width: 66, height: 66)
                     HexagonShape()
@@ -535,12 +551,12 @@ struct PlayButton: View {
                     .contentTransition(.symbolEffect(.replace.downUp))
                     .offset(x: playing ? 0 : 1.5)
             }
-            .frame(width: playing ? 56 : 62, height: 56)
+            .frame(width: playing || arcane ? 56 : 62, height: 56)
             .contentShape(Rectangle())
         }
         .pressBounce()
         .scaleEffect(hovering ? 1.06 : 1)
-        .rotationEffect(.degrees(playing || hud ? 0 : -6))
+        .rotationEffect(.degrees(playing || hud || arcane ? 0 : -6))
         .onHover { hovering = $0 }
         .animation(.kBouncy, value: playing)
         .animation(.kHover, value: hovering)
@@ -852,5 +868,69 @@ private struct RadialSpectrum: View {
             context.stroke(path, with: .color(tint.opacity(playing ? 0.85 : 0.3)),
                            style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
         }
+    }
+}
+
+// MARK: - the Arcane cover
+
+/// Arcane: the cover as a glowing disc at the centre of a magic circle, the
+/// spectrum flaring round it as a soft aura, sparks orbiting it while it plays.
+private struct ArcaneCover: View {
+    @ObservedObject var player: MusicPlayer
+    let path: String?
+    let tint: Color
+    let rose: Color
+
+    var body: some View {
+        ZStack {
+            RadialSpectrum(spectrum: player.spectrum, tint: tint, playing: player.isPlaying, inner: 92)
+                .frame(width: 236, height: 236)
+                .blur(radius: 1.5)
+                .opacity(0.8)
+            MagicCircle(violet: tint, rose: rose, lineWidth: 1.2, period: player.isPlaying ? 16 : 40)
+                .frame(width: 210, height: 210)
+            ForEach(0..<3, id: \.self) { index in
+                Spinning(period: 4 + Double(index) * 1.7, clockwise: index != 1) {
+                    Image(systemName: "sparkle")
+                        .font(.system(size: 9 - CGFloat(index)))
+                        .foregroundColor(.white)
+                        .shadow(color: index == 1 ? rose : tint, radius: 5)
+                        .offset(y: -96 + CGFloat(index) * 8)
+                }
+                .opacity(player.isPlaying ? 1 : 0.25)
+            }
+            disc
+                .id(path ?? "none")
+                .transition(.asymmetric(
+                    insertion: .scale(scale: 0.1).combined(with: .opacity),
+                    removal: .scale(scale: 1.3).combined(with: .opacity)
+                ))
+        }
+        .frame(width: 236, height: 236)
+        .padding(.vertical, -20)
+        .animation(.kBouncy, value: path)
+        .animation(.kBouncy, value: player.isPlaying)
+    }
+
+    private var disc: some View {
+        ZStack {
+            Circle().fill(RadialGradient(colors: [rose.opacity(0.5), tint.opacity(0.25)],
+                                         center: .center, startRadius: 4, endRadius: 80))
+            if let image = ArtworkCache.shared.image(path) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                Image(systemName: "wand.and.stars")
+                    .font(.system(size: 34, weight: .light))
+                    .foregroundStyle(LinearGradient(colors: [.white, rose], startPoint: .top, endPoint: .bottom))
+            }
+        }
+        .frame(width: 150, height: 150)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(LinearGradient(colors: [rose, tint], startPoint: .top, endPoint: .bottom), lineWidth: 1.5))
+        .shadow(color: tint, radius: 16)
+        .shadow(color: rose.opacity(0.5), radius: 30)
     }
 }

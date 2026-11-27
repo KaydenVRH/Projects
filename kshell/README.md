@@ -228,6 +228,32 @@ especially). `Surfaces/Motion.swift` is the one place they are tuned:
     render server instead of redrawing the shell every frame.
   - `kshell trigger theme_apply <name>` applies any theme by name, as the
     picker would.
+- **Arcane** (`Surfaces/Arcane.swift`) is the second trademark theme: glow and
+  particles where Stark has hard light. It turns on for the theme named Arcane,
+  or `effects = "arcane"`. The particles are `CAEmitterLayer`s, so the render
+  server simulates them:
+  - **Switching to it** casts a magic circle across every display. Rings,
+    runes and stars draw themselves, then flare and burst into sparks.
+    `kshell trigger arcane_cast` replays it.
+  - **The pointer** sheds sparks as it moves, more the faster it goes, and none
+    while it rests. The pointer position is sampled, so this needs no input
+    monitoring or permissions.
+  - **Menus** open in a burst of sparks off their outline, keep a few motes
+    drifting up from their foot, and breathe a violet glow, with a shimmer
+    passing across now and then.
+  - **Inside menus:**
+    - headers put their icon in a turning magic circle, with a gradient
+      italic title and twinkling sparkles;
+    - the selection is a violet-to-rose aura with a sparkle on its corner;
+    - icons are glowing orbs with a spark in orbit;
+    - key hints are glowing runestones.
+  - **The frame** breathes violet-to-rose, with motes rising off its bottom
+    edge and drifting up its sides.
+  - **The bar** twinkles along its foot.
+  - **The music card's** cover sits in a magic circle with orbiting sparks and
+    a spectrum aura, and the play button is an orb of light.
+  - **The wallpaper** is lwp's `arcane` shader: a summoning circle in
+    perspective, a pillar of light, orbiting orbs and spiralling sparks.
 - **Reduce motion** in macOS's Accessibility settings is respected: panels then
   appear in place.
 
@@ -714,6 +740,7 @@ Sources/KShellCore/
   Surfaces/MusicNowPlaying.swift the music panel's now-playing card
   Surfaces/Kit.swift             shared menu components (soft and HUD styles)
   Surfaces/Hud.swift             the Stark HUD: chrome, frame, bar trim, boot
+  Surfaces/Arcane.swift          Arcane: particles, pointer trail, casting
   Surfaces/VisualiserPanel.swift cava-style bars on the desktop (Canvas, tap-fed)
   Music/AudioSpectrum.swift      mixer tap -> FFT -> smoothed log-spaced bands
   Bluetooth/                     paired devices + connect/disconnect (IOBluetooth)

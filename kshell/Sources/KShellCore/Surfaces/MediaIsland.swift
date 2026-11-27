@@ -34,7 +34,7 @@ public final class MediaIslandPanel: NSPanel {
     private var localGlass: NSVisualEffectView?
     private var mask = CAShapeLayer()
     /// The Stark HUD's brackets and scanlines.
-    private var chrome: HudChromeView?
+    private var chrome: ThemeChrome?
     private lazy var motion = PanelMotion(screen: targetScreen)
     /// Which way is away from the bar: the island's bounce goes that way, so
     /// the window carries slack on that side while it moves.
@@ -143,8 +143,10 @@ public final class MediaIslandPanel: NSPanel {
 
         host.autoresizingMask = [.width, .height]
         container.addSubview(host)
-        if Hud.active {
-            let chrome = HudChromeView(frame: .zero)
+        // The trademark themes draw their own chrome over the content.
+        let chrome: ThemeChrome? = Hud.active ? HudChromeView(frame: .zero)
+            : (Arcane.active ? ArcaneChromeView(frame: .zero) : nil)
+        if let chrome {
             container.addSubview(chrome)
             self.chrome = chrome
         }
@@ -248,7 +250,7 @@ public final class MediaIslandPanel: NSPanel {
             self.motion.animate(open: true)
             if let chrome = self.chrome {
                 chrome.powerOn()
-                HudChromeView.flicker(self.host.layer)
+                if Hud.active { HudChromeView.flicker(self.host.layer) }
             }
         }
     }
@@ -497,7 +499,7 @@ struct MediaIslandView: View {
 
             HStack(spacing: 22) {
                 SkipButton(symbol: "backward.fill", colour: foreground) { monitor.control(.previous) }
-                PlayButton(playing: state.isPlaying, tint: tint, tintColour: ArtworkCache.shared.tint(state.artworkPath), hud: Hud.isHud(theme)) {
+                PlayButton(playing: state.isPlaying, tint: tint, tintColour: ArtworkCache.shared.tint(state.artworkPath), hud: Hud.isHud(theme), arcane: Arcane.isArcane(theme)) {
                     monitor.control(.playPause)
                 }
                 SkipButton(symbol: "forward.fill", colour: foreground) { monitor.control(.next) }

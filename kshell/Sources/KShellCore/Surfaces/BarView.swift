@@ -38,6 +38,11 @@ public struct BarView: View {
                         HudBarTrim()
                             .frame(height: 6)
                             .allowsHitTesting(false)
+                    } else if Arcane.isArcane(viewModel.theme) {
+                        // Arcane: sparkles winking along the bar's foot.
+                        ArcaneBarTrim()
+                            .frame(height: viewModel.appearance.height)
+                            .allowsHitTesting(false)
                     }
                 }
         }

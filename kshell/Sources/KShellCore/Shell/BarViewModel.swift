@@ -23,6 +23,7 @@ public final class BarViewModel: ObservableObject {
         appearance = config.bar
         theme = config.theme
         Hud.update(for: config.theme)
+        Arcane.update(for: config.theme)
         left = []
         center = []
         right = []
@@ -36,6 +37,7 @@ public final class BarViewModel: ObservableObject {
         theme = config.theme
         // Switching to the HUD theme boots it, once, across every display.
         if Hud.update(for: config.theme) { HudBoot.play() }
+        if Arcane.update(for: config.theme) { ArcaneCast.play() }
         build(from: config)
     }
 

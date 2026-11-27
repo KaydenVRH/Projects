@@ -79,7 +79,7 @@ public final class OverlayPanel: NSPanel {
     private let mask = CAShapeLayer()
     private weak var host: NSView?
     /// The Stark HUD's brackets and scanlines, over the content.
-    private var chrome: HudChromeView?
+    private var chrome: ThemeChrome?
     private var glass: SurfaceGlass?
     private lazy var motion = PanelMotion(screen: targetScreen)
     /// The window's origin on screen: the shown frame's, or the slack frame's
@@ -190,8 +190,10 @@ public final class OverlayPanel: NSPanel {
         host.autoresizingMask = []
         container.addSubview(host)
         self.host = host
-        if Hud.active {
-            let chrome = HudChromeView(frame: .zero)
+        // The trademark themes draw their own chrome over the content.
+        let chrome: ThemeChrome? = Hud.active ? HudChromeView(frame: .zero)
+            : (Arcane.active ? ArcaneChromeView(frame: .zero) : nil)
+        if let chrome {
             container.addSubview(chrome)
             self.chrome = chrome
         }
@@ -327,7 +329,7 @@ public final class OverlayPanel: NSPanel {
             self.motion.animate(open: true)
             if let chrome = self.chrome {
                 chrome.powerOn()
-                HudChromeView.flicker(self.host?.layer)
+                if Hud.active { HudChromeView.flicker(self.host?.layer) }
             }
         }
     }
