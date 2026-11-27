@@ -201,7 +201,7 @@ public struct VisualiserConfig {
     public var placement: String = "screen"
     /// How strong the bars are inside the bar — faint enough that the widgets'
     /// text stays readable over them.
-    public var barOpacity: Double = 0.38
+    public var barOpacity: Double = 0.2
 
     public var inBar: Bool { placement == "bar" }
 

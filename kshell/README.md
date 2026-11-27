@@ -539,7 +539,7 @@ window ignores the mouse.
   fade    = 0.5           # seconds to fade in and out
   display = "all"         # all | main
   placement   = "screen"  # screen | bar
-  bar_opacity = 0.38      # how strong the bars are inside the bar
+  bar_opacity = 0.2       # how strong the bars are inside the bar
   ```
 - `placement = "bar"` draws the bars inside the bar instead of along the bottom
   of the screen. They rise from the bar's bottom edge, over its background and
