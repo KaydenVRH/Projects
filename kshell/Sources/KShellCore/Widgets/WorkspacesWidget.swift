@@ -144,6 +144,10 @@ final class WorkspaceItemRuntime: WidgetRuntime {
         model = WidgetFactory.baseModel(spec, theme: theme, label: id, paddingX: spec.number("padding") ?? 3)
         model.labelColor = unfocusedColor
         model.action = { Shell.run("aerospace workspace \(id)") }
+        // Scroll over the workspaces to step through them, one per flick.
+        model.onScroll = BarScroll.stepper { forward in
+            Shell.run("aerospace workspace --wrap-around \(forward ? "next" : "prev")")
+        }
     }
 
     func start() {

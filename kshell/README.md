@@ -98,6 +98,13 @@ switcher does.
 Per-widget overrides: `icon`, `icon_hex`, `icon_color`, `label_color`,
 `color`, `padding`, `spacing`, `icon_font`.
 
+Scrolling over a widget: `volume` turns it up and down (3% a mouse-wheel notch,
+smooth on a trackpad, unmuting as it goes up), and `workspaces` steps to the
+next or previous workspace, one per flick. SwiftUI on macOS has no scroll-wheel
+modifier and a view laid over a widget would take its clicks, so the hovered
+widget registers itself with `BarScroll` and one app-wide monitor hands it the
+bar's scroll events.
+
 Built-in events: `app_launcher_{toggle,open,close}`,
 `script_launcher_{toggle,open,close}`, `wallpaper_launcher_{toggle,open,close}`,
 `bluetooth_menu_{toggle,open,close}`, `bluetooth_toggle <name>`, `bluetooth_power on|off`,

@@ -9,6 +9,9 @@ public final class WidgetModel: ObservableObject {
     @Published public var labelColor: RGBA?
     @Published public var iconFont: String?
     @Published public var action: (() -> Void)?
+    /// Scrolling over the widget: the vertical distance, in points (positive
+    /// is up / away from you). See `BarScroll`.
+    public var onScroll: ((Double) -> Void)?
     /// When true the widget takes no space in the bar (like sketchybar's
     /// `drawing=off`), e.g. a workspace with no windows that isn't focused.
     @Published public var hidden: Bool

@@ -178,6 +178,11 @@ private struct WidgetItemView: View {
                 .onHover { inside in
                     hovered = inside
                     if inside && Neon.isNeon(theme) { glitch() }
+                    if inside {
+                        BarScroll.target = model
+                    } else if BarScroll.target === model {
+                        BarScroll.target = nil
+                    }
                 }
                 .animation(.kHover, value: hovered)
                 .onTapGesture { model.action?() }

@@ -25,6 +25,36 @@ public enum SystemAudio {
         return State(volume: volume, muted: muted)
     }
 
+    /// Set the default output's volume (0…1), unmuting it when turned up.
+    /// Devices without a main volume get each of their first two channels.
+    public static func setVolume(_ volume: Float) {
+        guard let device = defaultOutputDevice() else { return }
+        var value = min(max(volume, 0), 1)
+        let size = UInt32(MemoryLayout<Float>.size)
+        var set = false
+        for element in [kAudioObjectPropertyElementMain, AudioObjectPropertyElement(1), AudioObjectPropertyElement(2)] {
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyVolumeScalar,
+                mScope: kAudioDevicePropertyScopeOutput,
+                mElement: element
+            )
+            var settable: DarwinBoolean = false
+            guard AudioObjectIsPropertySettable(device, &address, &settable) == noErr, settable.boolValue else { continue }
+            if AudioObjectSetPropertyData(device, &address, 0, nil, size, &value) == noErr { set = true }
+            // the main element covers every channel
+            if set && element == kAudioObjectPropertyElementMain { break }
+        }
+        if set, value > 0 {
+            var off = UInt32(0)
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyMute,
+                mScope: kAudioDevicePropertyScopeOutput,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            _ = AudioObjectSetPropertyData(device, &address, 0, nil, UInt32(MemoryLayout<UInt32>.size), &off)
+        }
+    }
+
     private static func defaultOutputDevice() -> AudioDeviceID? {
         var device = AudioDeviceID(0)
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)

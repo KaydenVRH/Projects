@@ -137,6 +137,13 @@ final class WifiRuntime: MetricRuntime {
 final class VolumeRuntime: MetricRuntime {
     init(spec: WidgetSpec, theme: Theme) {
         super.init(spec: spec, theme: theme, defaultIcon: "\u{f028}")
+        // Scroll over it to turn it up or down: a mouse-wheel notch is 3%, a
+        // trackpad glides.
+        model.onScroll = { [weak self] distance in
+            let state = SystemAudio.defaultOutput()
+            SystemAudio.setVolume(state.volume + Float(distance * 0.003))
+            self?.tick()
+        }
     }
 
     override func tick() {
