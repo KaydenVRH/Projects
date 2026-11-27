@@ -70,8 +70,20 @@ The terminal's own background is left alone.
 | `?` | help | `n` `p` | next / previous result |
 | `q` | quit | `q` / `esc` | back to results |
 
-The mouse works too: scroll the results, click one to select it, click
-the progress bar to seek.
+The mouse does everything too:
+
+| Browsing | | Playing | |
+|---|---|---|---|
+| click a result | select it | click the video | pause / play |
+| click it again, or double click | play | double click the video | fullscreen |
+| right click a result | play just the audio | scroll on the video | volume |
+| click the thumbnail | play | click or drag along the bar | seek |
+| click the search box | type a search | scroll on the bar | seek 5 s |
+| click a tab | open it | right click | back to results |
+| scroll | move through the list | click ▶ / ❚❚ | pause / play |
+
+Every key hint along the bottom is a button for its key, and a click closes
+the help.
 
 ## Options
 

@@ -44,6 +44,7 @@ fn render_browse(f: &mut Frame, app: &mut App) {
 
     render_header(f, app, header);
     render_search(f, app, search);
+    app.layout.search = search;
     render_tabs(f, app, tabs);
 
     let wide = body.width >= 90;
@@ -276,7 +277,7 @@ fn render_art(f: &mut Frame, app: &mut App, video: &Video, area: Rect) {
     }
 }
 
-fn render_footer(f: &mut Frame, app: &App, area: Rect) {
+fn render_footer(f: &mut Frame, app: &mut App, area: Rect) {
     if let Some(s) = app.status_text() {
         let style = if s.error { Style::new().fg(th::accent()) } else { Style::new().fg(th::dim()) };
         f.render_widget(Line::styled(format!(" {}", s.text), style), area);
@@ -287,7 +288,7 @@ fn render_footer(f: &mut Frame, app: &App, area: Rect) {
         f.render_widget(Line::styled(text, Style::new().fg(th::accent())), area);
         return;
     }
-    let keys: &[(&str, &str)] = match app.focus {
+    let keys: &[(&'static str, &'static str)] = match app.focus {
         Focus::Search => &[("enter", "search"), ("tab", "results"), ("ctrl-u", "clear"), ("esc", "back")],
         Focus::Results => &[
             ("enter", "play"),
@@ -299,15 +300,32 @@ fn render_footer(f: &mut Frame, app: &App, area: Rect) {
             ("q", "quit"),
         ],
     };
-    f.render_widget(hints(keys), area);
+    let line = hints(app, keys, area, false);
+    f.render_widget(line, area);
 }
 
-fn hints(keys: &[(&str, &str)]) -> Line<'static> {
+/// Key hints along `area` (from its left, or flush right), each recorded as a
+/// button for its key so the mouse can press it.
+fn hints(app: &mut App, keys: &[(&'static str, &'static str)], area: Rect, right: bool) -> Line<'static> {
     let mut spans = vec![Span::raw(" ")];
+    let mut widths = Vec::new();
     for (k, what) in keys {
-        spans.extend(th::hint(k, what));
+        let hint = th::hint(k, what);
+        widths.push((*k, hint.iter().map(|s| s.width() as u16).sum::<u16>()));
+        spans.extend(hint);
     }
-    Line::from(spans)
+    let line = Line::from(spans);
+    let total = line.width() as u16;
+    let mut x = if right { area.x + area.width.saturating_sub(total) } else { area.x } + 1;
+    for (key, width) in widths {
+        // the hint without the gap after it
+        let r = Rect { x, y: area.y, width: width.saturating_sub(3), height: 1 }.intersection(area);
+        if r.width > 0 {
+            app.layout.buttons.push((r, key));
+        }
+        x += width;
+    }
+    line
 }
 
 // ── player ──────────────────────────────────────────────────────────
@@ -439,7 +457,7 @@ fn render_progress(f: &mut Frame, player: &Player, area: Rect) {
     f.render_widget(line, area);
 }
 
-fn render_controls(f: &mut Frame, app: &App, area: Rect) {
+fn render_controls(f: &mut Frame, app: &mut App, area: Rect) {
     let Some(player) = &app.player else { return };
     let state = if player.paused() { " ❚❚ " } else { " ▶ " };
     let time = match player.duration() {
@@ -447,7 +465,11 @@ fn render_controls(f: &mut Frame, app: &App, area: Rect) {
         _ => format_duration(player.position()),
     };
     let mut left = vec![Span::raw(" ")];
-    left.extend(th::tag(state, if player.paused() { th::mid() } else { th::accent() }));
+    let tag = th::tag(state, if player.paused() { th::mid() } else { th::accent() });
+    // the play / pause tag is a button
+    let tag_width = tag.iter().map(|s| s.width() as u16).sum::<u16>();
+    let pause_button = Rect { x: area.x + 1, y: area.y, width: tag_width, height: 1 }.intersection(area);
+    left.extend(tag);
     left.push(Span::styled(format!(" {time}"), Style::new().fg(th::highlight()).bold()));
     if let Some((vol, muted)) = player.volume() {
         let v = if muted { "muted".to_string() } else { format!("vol {:.0}%", vol) };
@@ -460,8 +482,9 @@ fn render_controls(f: &mut Frame, app: &App, area: Rect) {
         ));
     }
     f.render_widget(Line::from(left), area);
+    app.layout.buttons.push((pause_button, "space"));
     if area.width > 100 {
-        let keys = hints(&[("space", "pause"), ("←→", "seek"), ("↑↓", "volume"), ("f", "fullscreen"), ("n", "next"), ("q", "back")]);
+        let keys = hints(app, &[("space", "pause"), ("←→", "seek"), ("↑↓", "volume"), ("f", "fullscreen"), ("n", "next"), ("q", "back")], area, true);
         f.render_widget(keys.alignment(Alignment::Right), area);
     }
     if let Some(s) = app.status_text().filter(|s| s.error) {
@@ -597,4 +620,24 @@ mod tests {
         app.chrome = false;
         draw_everywhere(&mut app);
     }
+
+    /// Each key hint is recorded as a button exactly over its tag and label.
+    #[test]
+    fn hint_buttons_sit_on_their_hints() {
+        for theme in crate::theme::Theme::ALL {
+            crate::theme::set(theme);
+            let mut app = app();
+            app.focus = Focus::Results;
+            let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
+            term.draw(|f| render(f, &mut app)).unwrap();
+            let buffer = term.backend().buffer().clone();
+            assert!(!app.layout.buttons.is_empty());
+            for (r, key) in &app.layout.buttons {
+                let text: String = (r.x..r.x + r.width).map(|x| buffer[(x, r.y)].symbol().to_string()).collect();
+                assert!(text.to_lowercase().contains(&key.to_lowercase()), "{theme:?}: {key} → {text:?}");
+            }
+        }
+        crate::theme::set(crate::theme::Theme::Neon);
+    }
 }
+

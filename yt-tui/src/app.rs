@@ -9,7 +9,7 @@ use crate::theme::{self, Theme};
 use crate::thumbs::{self, Thumbs};
 use crate::youtube::{self, Stream, Video};
 use anyhow::Result;
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Position, Rect};
 use ratatui::widgets::ListState;
 use std::collections::HashMap;
@@ -88,6 +88,9 @@ pub struct Layout {
     pub thumb: Option<Rect>,
     pub video: Option<Rect>,
     pub progress: Option<Rect>,
+    pub search: Rect,
+    /// The key hints on screen, each a button for its key.
+    pub buttons: Vec<(Rect, &'static str)>,
 }
 
 pub struct App {
@@ -125,6 +128,10 @@ pub struct App {
     /// Keeps the look in step with kshell while on `auto`.
     look: theme::Follower,
     look_checked: Instant,
+    /// Where and when the last left click landed, for double clicks.
+    last_click: Option<(Position, Instant)>,
+    /// Dragging along the progress bar.
+    scrubbing: bool,
 }
 
 impl App {
@@ -164,6 +171,8 @@ impl App {
             start: Instant::now(),
             look,
             look_checked: Instant::now(),
+            last_click: None,
+            scrubbing: false,
         }
     }
 
@@ -411,16 +420,7 @@ impl App {
     pub fn handle(&mut self, event: Event, out: &mut impl Write) -> io::Result<()> {
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.key(key, out),
-            Event::Mouse(m) => {
-                let pos = Position::new(m.column, m.row);
-                match m.kind {
-                    MouseEventKind::ScrollDown if self.player.is_none() => self.move_selection(3),
-                    MouseEventKind::ScrollUp if self.player.is_none() => self.move_selection(-3),
-                    MouseEventKind::Down(MouseButton::Left) => self.click(pos),
-                    _ => {}
-                }
-                Ok(())
-            }
+            Event::Mouse(m) => self.mouse(m, out),
             Event::Resize(..) => {
                 self.cell = cell_size();
                 Ok(())
@@ -429,31 +429,134 @@ impl App {
         }
     }
 
-    fn click(&mut self, pos: Position) {
-        if let (Some(player), Some(bar)) = (&mut self.player, self.layout.progress) {
-            if bar.contains(pos) {
-                if let Some(d) = player.duration() {
-                    let frac = (pos.x - bar.x) as f64 / bar.width.max(1) as f64;
-                    player.seek_to(frac * d);
+    /// The mouse, everywhere:
+    ///
+    /// - browsing: click a result to select it, click it again (or double
+    ///   click) to play, right click to play just the audio; click the search
+    ///   box to type, a tab to open it, the thumbnail to play; scroll the list.
+    /// - playing: click the video to pause, double click for fullscreen,
+    ///   scroll on it for volume; click or drag along the bar to seek, scroll
+    ///   on the bar to step 5 s; right click to go back.
+    /// - any key hint on screen is a button for its key; a click closes help.
+    fn mouse(&mut self, m: MouseEvent, out: &mut impl Write) -> io::Result<()> {
+        let pos = Position::new(m.column, m.row);
+        let press = |key: KeyCode| KeyEvent::new(key, KeyModifiers::NONE);
+        if self.help {
+            if matches!(m.kind, MouseEventKind::Down(_)) {
+                self.help = false;
+            }
+            return Ok(());
+        }
+        let playing = self.player.is_some();
+        match m.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(label) = self.layout.buttons.iter().find(|(r, _)| r.contains(pos)).map(|(_, l)| *l) {
+                    if let Some(key) = hint_key(label) {
+                        return self.key(key, out);
+                    }
+                }
+                let double = self.last_click.is_some_and(|(at, when)| {
+                    at.y == pos.y && at.x.abs_diff(pos.x) <= 2 && when.elapsed() < Duration::from_millis(400)
+                });
+                self.last_click = if double { None } else { Some((pos, Instant::now())) };
+                if playing {
+                    self.player_click(pos, double);
+                    return Ok(());
+                }
+                return self.browse_click(pos, double, out);
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.scrubbing => self.seek_at(pos.x),
+            MouseEventKind::Up(MouseButton::Left) => self.scrubbing = false,
+            MouseEventKind::Down(MouseButton::Right) => {
+                if playing || self.loading.is_some() {
+                    return self.key(press(KeyCode::Esc), out);
+                }
+                // right click a result: play just its audio
+                if let Some(row) = self.row_at(pos) {
+                    self.focus = Focus::Results;
+                    self.list.select(Some(row));
+                    return self.key(press(KeyCode::Char('a')), out);
                 }
             }
+            MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
+                let up = m.kind == MouseEventKind::ScrollUp;
+                if let Some(player) = &mut self.player {
+                    if self.layout.progress.is_some_and(|bar| bar.contains(pos)) {
+                        player.seek_by(if up { 5.0 } else { -5.0 });
+                    } else {
+                        player.add_volume(if up { 5.0 } else { -5.0 });
+                    }
+                } else {
+                    self.move_selection(if up { -3 } else { 3 });
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn player_click(&mut self, pos: Position, double: bool) {
+        if self.layout.progress.is_some_and(|bar| bar.contains(pos)) {
+            self.scrubbing = true;
+            self.seek_at(pos.x);
             return;
+        }
+        if self.layout.video.is_some_and(|v| v.contains(pos)) {
+            let Some(player) = &mut self.player else { return };
+            // the first click of a double paused it: put that back
+            player.toggle_pause();
+            if double {
+                self.chrome = !self.chrome;
+            }
+        }
+    }
+
+    /// Seek to where column `x` falls on the progress bar.
+    fn seek_at(&mut self, x: u16) {
+        let (Some(player), Some(bar)) = (&mut self.player, self.layout.progress) else { return };
+        if let Some(d) = player.duration() {
+            let frac = (x.saturating_sub(bar.x)) as f64 / bar.width.max(1) as f64;
+            player.seek_to(frac.clamp(0.0, 1.0) * d);
+        }
+    }
+
+    fn browse_click(&mut self, pos: Position, double: bool, out: &mut impl Write) -> io::Result<()> {
+        let press = |key: KeyCode| KeyEvent::new(key, KeyModifiers::NONE);
+        if self.layout.search.contains(pos) {
+            self.focus = Focus::Search;
+            return Ok(());
         }
         if let Some((_, tab)) = self.layout.tabs.iter().find(|(r, _)| r.contains(pos)) {
             let tab = tab.clone();
             self.focus = Focus::Results;
             self.open(tab);
-            return;
+            return Ok(());
         }
-        let r = self.layout.results;
-        if r.contains(pos) && pos.y > r.y {
-            // Rows are two lines plus a gap, under the border.
-            let row = (pos.y - r.y - 1) as usize / 3 + self.list.offset();
-            if row < self.results.len() {
-                self.focus = Focus::Results;
-                self.list.select(Some(row));
+        if self.layout.thumb.is_some_and(|t| t.contains(pos)) && self.selected().is_some() {
+            self.focus = Focus::Results;
+            return self.key(press(KeyCode::Enter), out);
+        }
+        if let Some(row) = self.row_at(pos) {
+            // a second click on the armed row plays it
+            let again = self.focus == Focus::Results && self.list.selected() == Some(row);
+            self.focus = Focus::Results;
+            self.list.select(Some(row));
+            if again || double {
+                return self.key(press(KeyCode::Enter), out);
             }
         }
+        Ok(())
+    }
+
+    /// The result under `pos`, if any.
+    fn row_at(&self, pos: Position) -> Option<usize> {
+        let r = self.layout.results;
+        if !r.contains(pos) || pos.y <= r.y {
+            return None;
+        }
+        // Rows are two lines plus a gap, under the border.
+        let row = (pos.y - r.y - 1) as usize / 3 + self.list.offset();
+        (row < self.results.len()).then_some(row)
     }
 
     fn key(&mut self, key: KeyEvent, out: &mut impl Write) -> io::Result<()> {
@@ -635,6 +738,29 @@ pub fn cell_size() -> (f64, f64) {
     }
 }
 
+/// The key a hint stands for, as drawn: `enter`, `ctrl-u`, `←→`, `1-5`, `q`…
+/// Ranges press the step forward (`1-5` is the next tab, `←→` seeks ahead).
+pub fn hint_key(label: &str) -> Option<KeyEvent> {
+    let plain = |code| Some(KeyEvent::new(code, KeyModifiers::NONE));
+    match label {
+        "enter" => plain(KeyCode::Enter),
+        "tab" => plain(KeyCode::Tab),
+        "esc" => plain(KeyCode::Esc),
+        "space" => plain(KeyCode::Char(' ')),
+        "←→" => plain(KeyCode::Right),
+        "↑↓" => plain(KeyCode::Up),
+        "1-5" => plain(KeyCode::Char(']')),
+        "ctrl-u" => Some(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)),
+        other => {
+            let mut chars = other.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) => plain(KeyCode::Char(c)),
+                _ => None,
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -677,4 +803,50 @@ mod tests {
         app.cycle_tab(1);
         assert_eq!(app.source, Source::Home);
     }
+
+    fn click(app: &mut App, x: u16, y: u16, button: MouseButton) {
+        let m = MouseEvent { kind: MouseEventKind::Down(button), column: x, row: y, modifiers: KeyModifiers::NONE };
+        app.mouse(m, &mut Vec::new()).unwrap();
+    }
+
+    #[test]
+    fn hints_name_their_keys() {
+        assert_eq!(hint_key("enter").map(|k| k.code), Some(KeyCode::Enter));
+        assert_eq!(hint_key("space").map(|k| k.code), Some(KeyCode::Char(' ')));
+        assert_eq!(hint_key("1-5").map(|k| k.code), Some(KeyCode::Char(']')));
+        assert_eq!(hint_key("←→").map(|k| k.code), Some(KeyCode::Right));
+        let clear = hint_key("ctrl-u").unwrap();
+        assert_eq!((clear.code, clear.modifiers), (KeyCode::Char('u'), KeyModifiers::CONTROL));
+        assert_eq!(hint_key("/").map(|k| k.code), Some(KeyCode::Char('/')));
+        assert_eq!(hint_key("nonsense"), None);
+    }
+
+    #[test]
+    fn clicking_picks_rows_the_search_box_and_buttons() {
+        let mut app = app();
+        app.results = (0..10).map(video).collect();
+        app.focus = Focus::Search;
+        app.layout.results = Rect::new(0, 5, 50, 30);
+        app.layout.search = Rect::new(0, 1, 50, 3);
+        // rows are three lines each under the border: row 2 starts at 5+1+6
+        click(&mut app, 4, 12, MouseButton::Left);
+        assert_eq!(app.focus, Focus::Results);
+        assert_eq!(app.list.selected(), Some(2));
+        click(&mut app, 4, 2, MouseButton::Left);
+        assert_eq!(app.focus, Focus::Search);
+        // a hint is a button for its key
+        app.focus = Focus::Results;
+        app.layout.buttons = vec![(Rect::new(60, 40, 6, 1), "q")];
+        click(&mut app, 62, 40, MouseButton::Left);
+        assert!(app.quit);
+    }
+
+    #[test]
+    fn a_click_closes_help() {
+        let mut app = app();
+        app.help = true;
+        click(&mut app, 1, 1, MouseButton::Left);
+        assert!(!app.help);
+    }
 }
+
