@@ -644,6 +644,171 @@ fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]])
 }
 "#,
     ),
+    (
+        "neon",
+        r#"
+// Neon — a synthwave city at night. A sunset sky over a huge striped sun; a
+// cyberpunk skyline stands in front of it, windows flickering and neon signs
+// on the roofs; wireframe mountains frame it; a magenta grid floor rolls toward
+// you with the sun reflected in it. Washed in scanlines and grain, with a VHS
+// tracking band that rolls through now and then.
+static float hash21(float2 p) {
+    p = fract(p * float2(234.34, 435.345));
+    p += dot(p, p + 34.23);
+    return fract(p.x * p.y);
+}
+static float vnoise(float2 p) {
+    float2 i = floor(p);
+    float2 f = fract(p);
+    float2 w = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash21(i), hash21(i + float2(1, 0)), w.x),
+               mix(hash21(i + float2(0, 1)), hash21(i + float2(1, 1)), w.x), w.y);
+}
+static float hair(float d, float w) { return 1.0 - smoothstep(0.0, w, d); }
+
+// A ridge line: jagged, made of a few octaves of noise.
+static float ridge(float x, float seed) {
+    float h = 0.0, a = 0.5, f = 1.6;
+    for (int i = 0; i < 4; i++) {
+        h += a * abs(vnoise(float2(x * f, seed)) * 2.0 - 1.0);
+        f *= 2.1;
+        a *= 0.5;
+    }
+    return h;
+}
+
+fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]]) {
+    float2 res = u.resolution;
+    float aspect = res.x / max(res.y, 1.0);
+    float t = u.time;
+    float2 uv = in.uv;
+
+    // ---- VHS tracking: a band rolling up the picture now and then, tearing it
+    float roll = fract(t * 0.045);
+    float bandOn = step(0.82, fract(t * 0.045 * 3.0 + 0.3)) ;
+    float inBand = exp(-pow((uv.y - roll) * 30.0, 2.0)) * bandOn;
+    uv.x += inBand * (vnoise(float2(uv.y * 80.0, t * 20.0)) - 0.5) * 0.04;
+
+    float2 p = (uv - 0.5) * float2(aspect, 1.0) * 2.0;
+    float px = 2.0 / max(res.y, 1.0);
+
+    float3 magenta = float3(1.00, 0.18, 0.59);
+    float3 cyan    = float3(0.00, 0.94, 1.00);
+    float3 yellow  = float3(1.00, 0.82, 0.25);
+    float3 orange  = float3(1.00, 0.45, 0.20);
+    float3 night   = float3(0.043, 0.016, 0.094);
+
+    float horizon = -0.12;
+    float3 col;
+
+    if (p.y > horizon) {
+        // ---- the sky: purple-black overhead into magenta and orange at the horizon
+        float h = (p.y - horizon) / (1.0 - horizon);
+        col = mix(float3(0.55, 0.10, 0.35), float3(0.18, 0.04, 0.26), smoothstep(0.0, 0.35, h));
+        col = mix(col, night, smoothstep(0.3, 0.9, h));
+        col += orange * 0.35 * exp(-h * 9.0);
+        // stars
+        float2 sp = p * 30.0;
+        float2 id = floor(sp);
+        float sh = hash21(id);
+        if (sh > 0.97) {
+            float2 off = float2(hash21(id + 1.3), hash21(id + 4.1)) - 0.5;
+            float d = length(fract(sp) - 0.5 - off * 0.6);
+            float tw = 0.5 + 0.5 * sin(t * (1.0 + sh * 4.0) + sh * 60.0);
+            col += float3(1.0, 0.85, 1.0) * exp(-d * 16.0) * 0.6 * tw * smoothstep(0.25, 0.7, h);
+        }
+
+        // ---- the sun: yellow into magenta, stripes cut out of its lower half,
+        // drifting down
+        float2 sc = float2(0.0, horizon + 0.36);
+        float R = 0.46;
+        float d = length(p - sc);
+        float sunY = (p.y - sc.y) / R;
+        float3 sun = mix(magenta, yellow, smoothstep(-0.9, 0.7, sunY));
+        float stripes = 1.0;
+        if (sunY < 0.2) {
+            float k = (0.2 - sunY);
+            float bands = fract((sunY - t * 0.035) * 9.0);
+            stripes = step(k * 0.55, bands);
+        }
+        float disc = (1.0 - smoothstep(R - px * 2.0, R, d)) * stripes;
+        col = mix(col, sun, disc);
+        col += mix(magenta, orange, 0.5) * exp(-max(d - R, 0.0) * 5.0) * 0.35;
+
+        // ---- wireframe mountains, left and right, the middle left open
+        for (int m = 0; m < 2; m++) {
+            float fm = float(m);
+            float side = smoothstep(0.25, 1.1, abs(p.x));
+            float top = horizon + (0.08 + 0.32 * ridge(p.x * 0.9 + fm * 7.0, fm * 3.0)) * side * (1.0 - fm * 0.35);
+            if (p.y < top) {
+                float3 rock = mix(float3(0.06, 0.02, 0.11), float3(0.10, 0.03, 0.16), fm);
+                col = rock;
+                // contour lines running across the slope
+                float lines = hair(abs(fract((top - p.y) * 22.0) - 0.5) - 0.46, 0.04);
+                col += (fm == 0.0 ? cyan : magenta) * lines * 0.10 * smoothstep(horizon, top, p.y);
+            }
+            col += (fm == 0.0 ? cyan : magenta) * hair(abs(p.y - top), px * 1.6) * side * 0.9;
+            col += (fm == 0.0 ? cyan : magenta) * exp(-abs(p.y - top) * 60.0) * side * 0.15;
+        }
+
+        // ---- the skyline, standing in front of the sun
+        float bw = 0.055;
+        float bx = floor(p.x / bw);
+        float bh = hash21(float2(bx, 2.0));
+        float centre = exp(-pow(p.x / 1.4, 2.0));
+        float height = (0.05 + 0.30 * bh * bh) * (0.35 + 0.9 * centre);
+        float gap = step(0.08, fract(p.x / bw)) * step(fract(p.x / bw), 0.94);
+        if (p.y < horizon + height && gap > 0.5) {
+            col = float3(0.035, 0.012, 0.07);
+            // windows: a grid, some lit, a few flickering
+            float2 w = float2(fract(p.x / bw) * 6.0, (p.y - horizon) * 90.0);
+            float2 wi = floor(w);
+            float2 wf = fract(w);
+            float lit = step(0.62, hash21(wi + bx * 13.0 + floor(t * 0.15 + hash21(wi + bx) * 4.0) * 0.0));
+            float flick = step(0.15, fract(sin(dot(wi, float2(12.9, 78.2)) + bx) * 43758.5 + t * 0.7));
+            float pane = step(0.25, wf.x) * step(wf.x, 0.75) * step(0.3, wf.y) * step(wf.y, 0.7);
+            float3 wc = hash21(wi + bx) > 0.7 ? cyan : yellow;
+            col += wc * pane * lit * mix(0.35, 0.8, flick) * step(wi.x, 4.5) * step(0.5, wi.x);
+            // a neon sign on some roofs
+            float top = horizon + height;
+            if (bh > 0.6) {
+                float sign = hair(abs(p.y - (top - 0.012)), px * 2.5) * step(0.2, fract(p.x / bw)) * step(fract(p.x / bw), 0.8);
+                float on = step(0.08, fract(t * 0.5 + bh * 7.0));
+                col += (hash21(float2(bx, 9.0)) > 0.5 ? magenta : cyan) * sign * on * 1.3;
+            }
+        }
+        // the skyline's rim catching the sunset
+        col += magenta * hair(abs(p.y - (horizon + height)), px * 1.5) * gap * 0.35;
+    } else {
+        // ---- the floor: a magenta grid rolling toward you
+        float below = horizon - p.y;
+        float z = 0.3 / below;
+        float2 g = float2(p.x * z * 1.1, z + t * 0.9);
+        float2 fw = fwidth(g) * 1.4;
+        float2 f = abs(fract(g) - 0.5);
+        float lines = max(hair(0.5 - f.x, fw.x), hair(0.5 - f.y, fw.y));
+        float fade = exp(-z * 0.12);
+        col = float3(0.05, 0.01, 0.09) * (1.0 - smoothstep(0.0, 1.0, below));
+        col += magenta * lines * fade * 0.85;
+        col += magenta * lines * fade * exp(-below * 4.0) * 0.6;
+        // the sun reflected on the floor, broken up by the grid
+        float streak = exp(-pow(p.x / 0.35, 2.0)) * exp(-below * 2.2);
+        col += mix(yellow, magenta, smoothstep(0.0, 0.4, below)) * streak * 0.35 * (0.7 + 0.3 * sin(below * 120.0 - t * 4.0));
+    }
+    // the horizon's glow
+    col += mix(magenta, cyan, 0.5 + 0.5 * sin(p.x * 0.5)) * exp(-abs(p.y - horizon) * 45.0) * 0.45;
+
+    // ---- the tape: scanlines, grain, the tracking band's static, vignette
+    col *= 0.88 + 0.12 * sin(uv.y * res.y * 1.5);
+    col += (hash21(uv * res + fract(t * 7.0)) - 0.5) * 0.035;
+    col += inBand * (hash21(float2(uv.x * 400.0, t * 60.0)) * 0.25);
+    col = float3(col.r + inBand * 0.08, col.g, col.b + inBand * 0.06);
+    float2 vq = (in.uv - 0.5) * 2.0;
+    col *= 1.0 - 0.35 * dot(vq, vq) * 0.5;
+    return float4(max(col, 0.0), 1.0);
+}
+"#,
+    ),
 ];
 
 pub fn builtin_source(name: &str) -> Option<&'static str> {
