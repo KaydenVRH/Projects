@@ -16,4 +16,65 @@ enum WindowLevel {
     static let bar = NSWindow.Level(rawValue: 19)
     /// Launchers and the media island, above the bar.
     static let overlay = NSWindow.Level(rawValue: 20)
+    /// Behind every ordinary window but above the desktop and a live
+    /// wallpaper: decoration that should show in the gaps between windows and
+    /// never cover them.
+    static let backdrop = NSWindow.Level(rawValue: -1)
+}
+
+/// A click-through, screen-sized window behind ordinary windows, for the
+/// trademark themes' decoration that would otherwise sit on top of them — the
+/// frame's corner pieces and the particles rising off it. Its frame panel
+/// orders it in and out with itself.
+final class BackdropPanel: NSPanel {
+    let root: NSView
+
+    init(screen: NSScreen) {
+        root = NSView(frame: NSRect(origin: .zero, size: screen.frame.size))
+        super.init(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel],
+                   backing: .buffered, defer: false)
+        level = WindowLevel.backdrop
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = false
+        ignoresMouseEvents = true
+        isMovable = false
+        hidesOnDeactivate = false
+        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        root.wantsLayer = true
+        contentView = root
+    }
+
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
+/// A frame overlay with a backdrop: ordering one in or out does both.
+class FrameOverlayPanel: NSPanel {
+    let frameScreen: NSScreen
+    let backdrop: BackdropPanel
+
+    init(screen: NSScreen) {
+        frameScreen = screen
+        backdrop = BackdropPanel(screen: screen)
+        super.init(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        level = WindowLevel.surface
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = false
+        ignoresMouseEvents = true
+        isMovable = false
+        hidesOnDeactivate = false
+        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+    }
+
+    override func orderFrontRegardless() {
+        backdrop.orderFrontRegardless()
+        super.orderFrontRegardless()
+    }
+
+    override func orderOut(_ sender: Any?) {
+        backdrop.orderOut(sender)
+        super.orderOut(sender)
+    }
 }

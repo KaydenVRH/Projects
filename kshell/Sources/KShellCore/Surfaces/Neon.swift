@@ -179,20 +179,10 @@ final class NeonChromeView: NSView, ThemeChrome {
 /// and cyan a hair apart, still and baked; and in each corner a short tube
 /// that flickers now and then like a failing sign — small layers, so the
 /// flicker costs only their corner.
-final class NeonFramePanel: NSPanel {
-    let frameScreen: NSScreen
+final class NeonFramePanel: FrameOverlayPanel {
 
     init(screen: NSScreen, inset: CGFloat, radius: CGFloat) {
-        frameScreen = screen
-        super.init(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-        level = WindowLevel.surface
-        isOpaque = false
-        backgroundColor = .clear
-        hasShadow = false
-        ignoresMouseEvents = true
-        isMovable = false
-        hidesOnDeactivate = false
-        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        super.init(screen: screen)
 
         let root = NSView(frame: NSRect(origin: .zero, size: screen.frame.size))
         root.wantsLayer = true
@@ -246,7 +236,8 @@ final class NeonFramePanel: NSPanel {
             tube.shadowOpacity = 1
             tube.shadowOffset = .zero
             tube.bakeGlow(shape: shape, width: 2)
-            root.layer?.addSublayer(tube)
+            // The corner signs reach into the opening: behind windows.
+            backdrop.root.layer?.addSublayer(tube)
 
             let flicker = CAKeyframeAnimation(keyPath: "opacity")
             flicker.values = [1, 1, 0.2, 1, 0.4, 1, 1]

@@ -194,24 +194,14 @@ final class HudChromeView: NSView {
 /// Over the frame, per display: a glowing trace of the frame's inner opening,
 /// bright brackets in its four corners, and a light that runs round it. Click
 /// through, like the frame itself.
-final class HudFramePanel: NSPanel {
-    let frameScreen: NSScreen
+final class HudFramePanel: FrameOverlayPanel {
     private let trace = CAShapeLayer()
     private let runner = CAShapeLayer()
     private let runnerGlow = CAShapeLayer()
     private let corners = CAShapeLayer()
 
     init(screen: NSScreen, inset: CGFloat, radius: CGFloat) {
-        frameScreen = screen
-        super.init(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-        level = WindowLevel.surface
-        isOpaque = false
-        backgroundColor = .clear
-        hasShadow = false
-        ignoresMouseEvents = true
-        isMovable = false
-        hidesOnDeactivate = false
-        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        super.init(screen: screen)
 
         let root = NSView(frame: NSRect(origin: .zero, size: screen.frame.size))
         root.wantsLayer = true
@@ -262,7 +252,8 @@ final class HudFramePanel: NSPanel {
         corners.shadowOpacity = 1
         corners.shadowOffset = .zero
         corners.bakeGlow(shape: corners.path, width: 2)
-        root.layer?.addSublayer(corners)
+        // The brackets reach into the opening, so they sit behind windows.
+        backdrop.root.layer?.addSublayer(corners)
 
         animate()
     }

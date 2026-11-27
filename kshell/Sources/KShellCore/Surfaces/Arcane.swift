@@ -268,20 +268,10 @@ final class ArcaneChromeView: NSView, ThemeChrome {
 
 /// Over the frame, per display: the opening's edge glowing violet and
 /// breathing, and motes rising off the bottom edge and drifting up the sides.
-final class ArcaneFramePanel: NSPanel {
-    let frameScreen: NSScreen
+final class ArcaneFramePanel: FrameOverlayPanel {
 
     init(screen: NSScreen, inset: CGFloat, radius: CGFloat) {
-        frameScreen = screen
-        super.init(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-        level = WindowLevel.surface
-        isOpaque = false
-        backgroundColor = .clear
-        hasShadow = false
-        ignoresMouseEvents = true
-        isMovable = false
-        hidesOnDeactivate = false
-        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        super.init(screen: screen)
 
         let root = NSView(frame: NSRect(origin: .zero, size: screen.frame.size))
         root.wantsLayer = true
@@ -330,7 +320,8 @@ final class ArcaneFramePanel: NSPanel {
         floor.emitterSize = CGSize(width: opening.width, height: 1)
         floor.renderMode = .additive
         floor.emitterCells = Arcane.cells(rate: 1.6, velocity: 30, lifetime: 5, scale: 0.3)
-        root.layer?.addSublayer(floor)
+        // The motes drift up into the opening, so they rise behind windows.
+        backdrop.root.layer?.addSublayer(floor)
 
         for x in [opening.minX, opening.maxX] {
             let side = CAEmitterLayer()
@@ -342,7 +333,7 @@ final class ArcaneFramePanel: NSPanel {
             side.emitterSize = CGSize(width: 1, height: opening.height * 0.9)
             side.renderMode = .additive
             side.emitterCells = Arcane.cells(rate: 0.45, velocity: 14, lifetime: 4, scale: 0.26)
-            root.layer?.addSublayer(side)
+            backdrop.root.layer?.addSublayer(side)
         }
     }
 }
