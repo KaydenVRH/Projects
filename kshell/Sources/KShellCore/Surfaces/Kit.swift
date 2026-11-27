@@ -15,6 +15,8 @@ struct KitPalette {
     let hud: Bool
     /// The Arcane theme: glow, gradients and sparkles.
     let arcane: Bool
+    /// The Neon theme: slants, tubes and colour fringes.
+    let neon: Bool
     /// The theme's second colour (rose, for Arcane).
     let highlight: Color
 
@@ -29,6 +31,7 @@ struct KitPalette {
         self.font = font
         hud = Hud.isHud(theme)
         arcane = !hud && Arcane.isArcane(theme)
+        neon = !hud && !arcane && Neon.isNeon(theme)
         highlight = theme.highlight?.color ?? accent
     }
 }
@@ -47,7 +50,59 @@ struct KitHeader<Trailing: View>: View {
     @State private var arrived = false
 
     var body: some View {
-        if palette.hud { hudBody } else if palette.arcane { arcaneBody } else { softBody }
+        if palette.hud { hudBody } else if palette.arcane { arcaneBody } else if palette.neon { neonBody } else { softBody }
+    }
+
+    /// Neon: the icon on a slanted magenta tile with a cyan echo, the title in
+    /// heavy italic capitals split into colour fringes, a blinking cursor.
+    private var neonBody: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                SlantShape(slant: 7)
+                    .stroke(palette.highlight, lineWidth: 1.2)
+                    .offset(x: 2.5, y: -2)
+                SlantShape(slant: 7)
+                    .fill(palette.accent)
+                    .shadow(color: palette.accent.opacity(0.9), radius: 8)
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .heavy))
+                    .foregroundColor(.black.opacity(0.85))
+                    .symbolEffect(.bounce, value: arrived)
+            }
+            .frame(width: 44, height: 34)
+            .offset(x: arrived ? 0 : -40)
+            .opacity(arrived ? 1 : 0)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 2) {
+                    ChromaText(text: title.uppercased(), font: .system(size: 18, weight: .black).italic(),
+                               magenta: palette.accent, cyan: palette.highlight, foreground: palette.foreground)
+                    BlinkingCursor(colour: palette.highlight)
+                }
+                if let subtitle {
+                    Text("▸▸ " + subtitle.uppercased())
+                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                        .tracking(1.2)
+                        .foregroundColor(palette.highlight.opacity(0.85))
+                        .contentTransition(.numericText())
+                }
+            }
+            Spacer(minLength: 8)
+            trailing
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 16)
+        .padding(.bottom, 12)
+        .overlay(alignment: .bottom) {
+            LinearGradient(colors: [palette.accent, palette.highlight], startPoint: .leading, endPoint: .trailing)
+                .frame(height: 1.5)
+                .shadow(color: palette.accent, radius: 4)
+                .padding(.horizontal, 18)
+                .scaleEffect(x: arrived ? 1 : 0, anchor: .leading)
+        }
+        .onAppear {
+            withAnimation(.kBouncy.delay(0.08)) { arrived = true }
+        }
     }
 
     /// Arcane: the icon at the heart of a turning magic circle, the title lit
@@ -220,6 +275,24 @@ struct KeyHints: View {
             }
             .font(.system(size: 9.5, weight: .medium, design: .monospaced))
             .lineLimit(1)
+        } else if palette.neon {
+            // Neon: keys on slanted magenta tags.
+            HStack(spacing: 12) {
+                ForEach(Array(hints.enumerated()), id: \.offset) { _, hint in
+                    HStack(spacing: 5) {
+                        Text(hint.key.uppercased())
+                            .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
+                            .foregroundColor(.black.opacity(0.85))
+                            .padding(.horizontal, 8)
+                            .frame(minHeight: 16)
+                            .background(SlantShape(slant: 4).fill(palette.accent).shadow(color: palette.accent, radius: 4))
+                        Text(hint.label.uppercased())
+                            .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                            .foregroundColor(palette.highlight.opacity(0.8))
+                    }
+                }
+            }
+            .lineLimit(1)
         } else if palette.arcane {
             // Arcane: glowing runestones and italic labels.
             HStack(spacing: 12) {
@@ -317,7 +390,46 @@ struct KitCard: ViewModifier {
     var radius: CGFloat = 14
 
     func body(content: Content) -> some View {
-        if palette.hud { hudBody(content) } else if palette.arcane { arcaneBody(content) } else { softBody(content) }
+        if palette.hud { hudBody(content) } else if palette.arcane { arcaneBody(content) }
+        else if palette.neon { neonBody(content) } else { softBody(content) }
+    }
+
+    /// Neon: slanted cells; the armed one lit magenta with a cyan tube a hair
+    /// off it and a ▶ at its edge, gliding between rows.
+    private func neonBody(_ content: Content) -> some View {
+        content
+            .background {
+                ZStack {
+                    SlantShape(slant: 7)
+                        .fill(palette.accent.opacity(hovered ? 0.12 : 0.04))
+                    if selected {
+                        ZStack {
+                            SlantShape(slant: 7)
+                                .fill(LinearGradient(colors: [palette.accent.opacity(0.42), palette.accent.opacity(0.10)],
+                                                     startPoint: .leading, endPoint: .trailing))
+                            SlantShape(slant: 7)
+                                .stroke(palette.highlight, lineWidth: 1.2)
+                                .offset(x: 2.5, y: -2)
+                                .shadow(color: palette.highlight.opacity(0.9), radius: 4)
+                            SlantShape(slant: 7)
+                                .stroke(palette.accent, lineWidth: 1.4)
+                                .shadow(color: palette.accent, radius: 6)
+                            HStack {
+                                Image(systemName: "play.fill")
+                                    .font(.system(size: 7))
+                                    .foregroundColor(palette.highlight)
+                                    .shadow(color: palette.highlight, radius: 3)
+                                    .offset(x: -9)
+                                Spacer()
+                            }
+                        }
+                        .matchedGeometryEffect(id: "kit-armed", in: highlight)
+                    }
+                }
+            }
+            .offset(x: selected ? 3 : 0)
+            .animation(.kSelect, value: selected)
+            .animation(.kHover, value: hovered)
     }
 
     /// Arcane: the armed row is wrapped in a glowing violet-to-rose aura that
@@ -452,7 +564,28 @@ struct IconBubble: View {
     @State private var pulse = false
 
     var body: some View {
-        if palette.hud { hudBody } else if palette.arcane { arcaneBody } else { softBody }
+        if palette.hud { hudBody } else if palette.arcane { arcaneBody } else if palette.neon { neonBody } else { softBody }
+    }
+
+    /// Neon: a slanted tile, lit cyan with a magenta echo while live.
+    private var neonBody: some View {
+        ZStack {
+            if active {
+                SlantShape(slant: 6)
+                    .stroke(palette.accent, lineWidth: 1.2)
+                    .offset(x: 2, y: -1.5)
+            }
+            SlantShape(slant: 6)
+                .fill(active ? palette.highlight : palette.accent.opacity(0.12))
+                .overlay(SlantShape(slant: 6).stroke(palette.accent.opacity(active ? 0 : 0.5), lineWidth: 1))
+                .shadow(color: palette.highlight.opacity(active ? 0.9 : 0), radius: 7)
+            Image(systemName: symbol)
+                .font(.system(size: size * 0.36, weight: .heavy))
+                .foregroundColor(active ? .black.opacity(0.85) : palette.foreground.opacity(0.75))
+                .symbolEffect(.bounce, value: active)
+        }
+        .frame(width: size + 6, height: size * 0.86)
+        .animation(.kBouncy, value: active)
     }
 
     /// Arcane: a glowing orb, with a spark orbiting it while live.
@@ -565,6 +698,21 @@ struct KitToggle: View {
                 }
                 .frame(width: 46, height: 22)
                 .contentShape(Rectangle())
+            } else if palette.neon {
+                // Neon: a slanted track; the knob a yellow block that slams over.
+                ZStack(alignment: isOn ? .trailing : .leading) {
+                    SlantShape(slant: 5)
+                        .fill(isOn ? palette.accent.opacity(0.35) : Color.white.opacity(0.06))
+                        .overlay(SlantShape(slant: 5).stroke(isOn ? palette.accent : palette.dim, lineWidth: 1.2))
+                        .shadow(color: isOn ? palette.accent : .clear, radius: 6)
+                    SlantShape(slant: 4)
+                        .fill(isOn ? palette.highlight : palette.foreground.opacity(0.5))
+                        .shadow(color: isOn ? palette.highlight : .clear, radius: 5)
+                        .frame(width: travelling ? 24 : 17, height: 14)
+                        .padding(4)
+                }
+                .frame(width: 46, height: 22)
+                .contentShape(Rectangle())
             } else if palette.arcane {
                 // Arcane: a glowing track and a knob of light.
                 ZStack(alignment: isOn ? .trailing : .leading) {
@@ -613,6 +761,15 @@ struct StatusPill: View {
                 .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
                 .foregroundColor(lit ? palette.accent : palette.dim)
                 .shadow(color: lit ? palette.accent.opacity(0.8) : .clear, radius: 4)
+                .animation(.kBouncy, value: lit)
+        } else if palette.neon {
+            Text(text.uppercased())
+                .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
+                .foregroundColor(lit ? .black.opacity(0.85) : palette.dim)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 3)
+                .background(SlantShape(slant: 4).fill(lit ? palette.highlight : palette.accent.opacity(0.1)))
+                .shadow(color: lit ? palette.highlight.opacity(0.8) : .clear, radius: 5)
                 .animation(.kBouncy, value: lit)
         } else if palette.arcane {
             HStack(spacing: 4) {
@@ -670,6 +827,12 @@ struct KitEmpty: View {
                     SpinningRing(colour: palette.accent.opacity(0.35), dash: [24, 10], width: 1, period: 11, clockwise: false)
                         .frame(width: 140, height: 140)
                     HexagonShape().stroke(palette.accent.opacity(0.7), lineWidth: 1.2).frame(width: 84, height: 74)
+                } else if palette.neon {
+                    SlantShape(slant: 14).stroke(palette.highlight.opacity(0.7), lineWidth: 1.4)
+                        .frame(width: 120, height: 84).offset(x: 4, y: -3)
+                    SlantShape(slant: 14).stroke(palette.accent, lineWidth: 1.6)
+                        .frame(width: 120, height: 84)
+                        .shadow(color: palette.accent, radius: 8)
                 } else if palette.arcane {
                     MagicCircle(violet: palette.accent, rose: palette.highlight, lineWidth: 1.4, period: 18)
                         .frame(width: 130, height: 130)
@@ -684,8 +847,9 @@ struct KitEmpty: View {
                     .foregroundColor(palette.accent)
             }
             .offset(y: float ? -4 : 4)
-            Text(palette.hud ? title.uppercased() : title)
-                .font(palette.hud ? .system(size: 13, weight: .semibold, design: .monospaced) : .custom(palette.font, size: 15))
+            Text(palette.hud || palette.neon ? title.uppercased() : title)
+                .font(palette.hud ? .system(size: 13, weight: .semibold, design: .monospaced)
+                      : palette.neon ? .system(size: 14, weight: .black).italic() : .custom(palette.font, size: 15))
                 .tracking(palette.hud ? 2 : 0)
                 .foregroundColor(palette.foreground)
             Text(detail)
@@ -698,6 +862,23 @@ struct KitEmpty: View {
         .padding(30)
         .onAppear {
             withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) { float = true }
+        }
+    }
+}
+
+/// A block cursor blinking after a title.
+struct BlinkingCursor: View {
+    let colour: Color
+
+    var body: some View {
+        // Twice a second, not every frame.
+        TimelineView(.periodic(from: .now, by: 0.5)) { context in
+            let on = Int(context.date.timeIntervalSinceReferenceDate * 2) % 2 == 0
+            Rectangle()
+                .fill(colour)
+                .frame(width: 8, height: 15)
+                .shadow(color: colour, radius: 4)
+                .opacity(on ? 1 : 0)
         }
     }
 }

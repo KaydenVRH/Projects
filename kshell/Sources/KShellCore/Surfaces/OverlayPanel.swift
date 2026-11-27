@@ -192,7 +192,8 @@ public final class OverlayPanel: NSPanel {
         self.host = host
         // The trademark themes draw their own chrome over the content.
         let chrome: ThemeChrome? = Hud.active ? HudChromeView(frame: .zero)
-            : (Arcane.active ? ArcaneChromeView(frame: .zero) : nil)
+            : Arcane.active ? ArcaneChromeView(frame: .zero)
+            : Neon.active ? NeonChromeView(frame: .zero) : nil
         if let chrome {
             container.addSubview(chrome)
             self.chrome = chrome
@@ -330,6 +331,10 @@ public final class OverlayPanel: NSPanel {
             if let chrome = self.chrome {
                 chrome.powerOn()
                 if Hud.active { HudChromeView.flicker(self.host?.layer) }
+                if Neon.active {
+                    Neon.strike(self.host?.layer)
+                    Neon.jolt(self.host?.layer)
+                }
             }
         }
     }

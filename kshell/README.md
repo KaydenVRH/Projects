@@ -254,6 +254,35 @@ especially). `Surfaces/Motion.swift` is the one place they are tuned:
     a spectrum aura, and the play button is an orb of light.
   - **The wallpaper** is lwp's `arcane` shader: a summoning circle in
     perspective, a pillar of light, orbiting orbs and spiralling sparks.
+- **Neon** (`Surfaces/Neon.swift`) is the third trademark theme: a cyberpunk
+  city on tape, with neon tubes and tape glitches where Stark has holograms and
+  Arcane has particles. It turns on for the theme named Neon, or
+  `effects = "neon"`:
+  - **Switching to it** glitches it in across every display. Slices of colour
+    tear across the screen, a big KSHELL title splits into magenta and cyan,
+    and a tape-rewind wipe clears it. `kshell trigger neon_boot` replays it.
+  - **Menus** strike up like neon tubes, stuttering before they light, and
+    jolt sideways through a glitch with colour slices flashing across them.
+    Their outline is doubled, magenta with a cyan tube a hair off it like
+    misregistered tape. They carry scanlines and a tracking band that rolls
+    down now and then.
+  - **Inside menus**, shapes lean forward:
+    - headers put their icon on a slanted magenta tile, with heavy italic
+      capitals split into colour fringes that jump now and then, and a
+      blinking cursor;
+    - the selection is a slanted magenta cell with a cyan echo and a ▶;
+    - key hints are slanted tags.
+  - **The frame** is two neon tubes, with flickering signs in its corners.
+  - **The bar** has a magenta-to-cyan tube along its foot with a glint running
+    it, and the focused workspace sits in a slanted tag.
+  - **The music card's** cover stands in front of a synthwave sun and splits
+    into cyan and magenta copies on the bass. The play button is a slanted
+    block.
+  - **The wallpaper** is lwp's `neon` shader: a striped sun behind a skyline
+    with flickering windows and roof signs, wireframe mountains, a rolling
+    grid floor, and VHS tracking.
+  - As with the others, nothing animates on a screen-sized layer. Idle GPU
+    measured about 50% with Neon, against about 65% with Arcane.
 - **Reduce motion** in macOS's Accessibility settings is respected: panels then
   appear in place.
 
@@ -741,6 +770,7 @@ Sources/KShellCore/
   Surfaces/Kit.swift             shared menu components (soft and HUD styles)
   Surfaces/Hud.swift             the Stark HUD: chrome, frame, bar trim, boot
   Surfaces/Arcane.swift          Arcane: particles, pointer trail, casting
+  Surfaces/Neon.swift            Neon: tubes, glitches, slants, glitch-in
   Surfaces/VisualiserPanel.swift cava-style bars on the desktop (Canvas, tap-fed)
   Music/AudioSpectrum.swift      mixer tap -> FFT -> smoothed log-spaced bands
   Bluetooth/                     paired devices + connect/disconnect (IOBluetooth)

@@ -38,6 +38,11 @@ public struct BarView: View {
                         HudBarTrim()
                             .frame(height: 6)
                             .allowsHitTesting(false)
+                    } else if Neon.isNeon(viewModel.theme) {
+                        // Neon: a tube along the bar's foot with a glint running it.
+                        NeonBarTrim()
+                            .frame(height: 2)
+                            .allowsHitTesting(false)
                     } else if Arcane.isArcane(viewModel.theme) {
                         // Arcane: sparkles winking along the bar's foot.
                         ArcaneBarTrim()
@@ -126,10 +131,18 @@ private struct WidgetItemView: View {
                     }
                 }
                 .padding(.horizontal, model.paddingX)
-                .padding(.horizontal, model.active ? (Hud.isHud(theme) ? 7 : 4) : 0)
+                .padding(.horizontal, model.active ? (Hud.isHud(theme) || Neon.isNeon(theme) ? 7 : 4) : 0)
                 .background {
                     if model.active {
-                        if Hud.isHud(theme) {
+                        if Neon.isNeon(theme) {
+                            // Neon: a slanted tag, outlined in the other tube colour.
+                            SlantShape(slant: 5)
+                                .fill(labelColor.opacity(0.22))
+                                .overlay(SlantShape(slant: 5).stroke(labelColor, lineWidth: 1.2).offset(x: 1, y: -0.5))
+                                .shadow(color: labelColor.opacity(0.8), radius: 4)
+                                .padding(.vertical, 5)
+                                .matchedGeometryEffect(id: "active", in: pill)
+                        } else if Hud.isHud(theme) {
                             // Stark: a targeting bracket instead of a pill.
                             ZStack {
                                 ChamferShape(cut: 4).fill(labelColor.opacity(0.14))

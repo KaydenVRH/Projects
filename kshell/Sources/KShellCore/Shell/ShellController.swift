@@ -29,6 +29,8 @@ public final class ShellController {
     /// The Arcane theme's glowing frame and the sparks trailing the pointer.
     private var arcaneFrames: [ArcaneFramePanel] = []
     private var cursorTrail: ArcaneCursorTrail?
+    /// The Neon theme's tubes over the frame.
+    private var neonFrames: [NeonFramePanel] = []
     private var visualisers: [VisualiserPanel] = []
     private var playingObserver: AnyCancellable?
     private var manualHidden = false
@@ -128,6 +130,8 @@ public final class ShellController {
         arcaneFrames.removeAll()
         cursorTrail?.stop()
         cursorTrail = nil
+        for frame in neonFrames { frame.orderOut(nil) }
+        neonFrames.removeAll()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -194,6 +198,8 @@ public final class ShellController {
         eventTokens.append(bus.observe("hud_boot") { _ in HudBoot.play() })
         // Replay the Arcane theme's casting.
         eventTokens.append(bus.observe("arcane_cast") { _ in ArcaneCast.play() })
+        // Replay the Neon theme's glitch-in.
+        eventTokens.append(bus.observe("neon_boot") { _ in NeonBoot.play() })
         eventTokens.append(bus.observe("visualiser_toggle") { [weak self] _ in
             guard let self else { return }
             self.setVisualiserEnabled(!self.visualiserEnabled)
@@ -454,6 +460,13 @@ public final class ShellController {
                 frame.orderFrontRegardless()
             }
         }
+        for frame in neonFrames {
+            if fullscreenDisplays.contains(FullscreenWatch.displayID(frame.frameScreen) ?? 0) {
+                frame.orderOut(nil)
+            } else {
+                frame.orderFrontRegardless()
+            }
+        }
         for screen in NSScreen.screens {
             cursorTrail?.setHidden(fullscreenDisplays.contains(FullscreenWatch.displayID(screen) ?? 0), on: screen)
         }
@@ -600,6 +613,8 @@ public final class ShellController {
         arcaneFrames.removeAll()
         cursorTrail?.stop()
         cursorTrail = nil
+        for frame in neonFrames { frame.orderOut(nil) }
+        neonFrames.removeAll()
 
         let screens: [NSScreen]
         if viewModel.appearance.display == "main" {
@@ -673,6 +688,15 @@ public final class ShellController {
                 }
             }
             cursorTrail = ArcaneCursorTrail()
+        }
+        // Neon: double tubes round the frame, flickering corner signs.
+        if usesSurface, Neon.active {
+            let inset = CGFloat(borderConfig.inset + borderConfig.thickness)
+            neonFrames = screens.map { screen in
+                let frame = NeonFramePanel(screen: screen, inset: inset, radius: CGFloat(borderConfig.radius))
+                frame.orderFrontRegardless()
+                return frame
+            }
         }
 
         if manualHidden {

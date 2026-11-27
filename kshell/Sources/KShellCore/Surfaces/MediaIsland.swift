@@ -145,7 +145,8 @@ public final class MediaIslandPanel: NSPanel {
         container.addSubview(host)
         // The trademark themes draw their own chrome over the content.
         let chrome: ThemeChrome? = Hud.active ? HudChromeView(frame: .zero)
-            : (Arcane.active ? ArcaneChromeView(frame: .zero) : nil)
+            : Arcane.active ? ArcaneChromeView(frame: .zero)
+            : Neon.active ? NeonChromeView(frame: .zero) : nil
         if let chrome {
             container.addSubview(chrome)
             self.chrome = chrome
@@ -251,6 +252,10 @@ public final class MediaIslandPanel: NSPanel {
             if let chrome = self.chrome {
                 chrome.powerOn()
                 if Hud.active { HudChromeView.flicker(self.host.layer) }
+                if Neon.active {
+                    Neon.strike(self.host.layer)
+                    Neon.jolt(self.host.layer)
+                }
             }
         }
     }
@@ -499,7 +504,7 @@ struct MediaIslandView: View {
 
             HStack(spacing: 22) {
                 SkipButton(symbol: "backward.fill", colour: foreground) { monitor.control(.previous) }
-                PlayButton(playing: state.isPlaying, tint: tint, tintColour: ArtworkCache.shared.tint(state.artworkPath), hud: Hud.isHud(theme), arcane: Arcane.isArcane(theme)) {
+                PlayButton(playing: state.isPlaying, tint: tint, tintColour: ArtworkCache.shared.tint(state.artworkPath), hud: Hud.isHud(theme), arcane: Arcane.isArcane(theme), neon: Neon.isNeon(theme)) {
                     monitor.control(.playPause)
                 }
                 SkipButton(symbol: "forward.fill", colour: foreground) { monitor.control(.next) }

@@ -130,6 +130,9 @@ struct NowPlayingCard: View {
             Group {
                 if Hud.isHud(theme) {
                     HudCover(player: player, path: path, tint: tint)
+                } else if Neon.isNeon(theme) {
+                    NeonCover(player: player, path: path, magenta: theme.accent?.color ?? tint,
+                              cyan: theme.highlight?.color ?? tint, yellow: theme.mid?.color ?? .yellow)
                 } else if Arcane.isArcane(theme) {
                     ArcaneCover(player: player, path: path, tint: tint,
                                 rose: theme.highlight?.color ?? tint)
@@ -195,7 +198,8 @@ struct NowPlayingCard: View {
                 .disabled(!player.hasTrack)
             Spacer(minLength: 0)
             PlayButton(playing: player.isPlaying, tint: tint, tintColour: tintColour,
-                       hud: Hud.isHud(theme), arcane: Arcane.isArcane(theme)) { player.toggle() }
+                       hud: Hud.isHud(theme), arcane: Arcane.isArcane(theme),
+                       neon: Neon.isNeon(theme)) { player.toggle() }
             Spacer(minLength: 0)
             SkipButton(symbol: "forward.fill", colour: foreground) { player.next() }
                 .disabled(!player.hasTrack)
@@ -515,6 +519,8 @@ struct PlayButton: View {
     var hud = false
     /// Arcane: an orb of light with a halo.
     var arcane = false
+    /// Neon: a slanted magenta block with a cyan echo.
+    var neon = false
     let action: () -> Void
 
     @State private var hovering = false
@@ -522,7 +528,16 @@ struct PlayButton: View {
     var body: some View {
         Button(action: action) {
             ZStack {
-                if arcane {
+                if neon {
+                    SlantShape(slant: 10)
+                        .stroke(Color(nsColor: Neon.cyan), lineWidth: 1.4)
+                        .frame(width: 66, height: 48)
+                        .offset(x: 3, y: -2.5)
+                    SlantShape(slant: 10)
+                        .fill(tint)
+                        .shadow(color: tint.opacity(hovering ? 1 : 0.7), radius: hovering ? 16 : 10)
+                        .frame(width: 66, height: 48)
+                } else if arcane {
                     Circle()
                         .stroke(tint.opacity(playing ? 0.5 : 0.2), lineWidth: 1)
                         .frame(width: 70, height: 70)
@@ -551,12 +566,12 @@ struct PlayButton: View {
                     .contentTransition(.symbolEffect(.replace.downUp))
                     .offset(x: playing ? 0 : 1.5)
             }
-            .frame(width: playing || arcane ? 56 : 62, height: 56)
+            .frame(width: playing || arcane || neon ? 56 : 62, height: 56)
             .contentShape(Rectangle())
         }
         .pressBounce()
         .scaleEffect(hovering ? 1.06 : 1)
-        .rotationEffect(.degrees(playing || hud || arcane ? 0 : -6))
+        .rotationEffect(.degrees(playing || hud || arcane || neon ? 0 : -6))
         .onHover { hovering = $0 }
         .animation(.kBouncy, value: playing)
         .animation(.kHover, value: hovering)
@@ -931,5 +946,80 @@ private struct ArcaneCover: View {
         .overlay(Circle().stroke(LinearGradient(colors: [rose, tint], startPoint: .top, endPoint: .bottom), lineWidth: 1.5))
         .shadow(color: tint, radius: 16)
         .shadow(color: rose.opacity(0.5), radius: 30)
+    }
+}
+
+// MARK: - the Neon cover
+
+/// Neon: the cover in front of a synthwave sun, a grid underneath, and two
+/// colour-fringe copies — cyan and magenta — that split away from it on the
+/// bass, like a tape losing its registration.
+private struct NeonCover: View {
+    @ObservedObject var player: MusicPlayer
+    let path: String?
+    let magenta: Color
+    let cyan: Color
+    let yellow: Color
+
+    var body: some View {
+        ZStack {
+            SynthSun(yellow: yellow, magenta: magenta)
+                .frame(width: 190, height: 190)
+                .offset(y: -18)
+            NeonSplit(spectrum: player.spectrum, playing: player.isPlaying, magenta: magenta, cyan: cyan) {
+                cover
+            }
+            .id(path ?? "none")
+            .transition(.asymmetric(
+                insertion: .move(edge: .trailing).combined(with: .opacity),
+                removal: .move(edge: .leading).combined(with: .opacity)
+            ))
+        }
+        .frame(width: 236, height: 236)
+        .padding(.vertical, -20)
+        .animation(.kBouncy, value: path)
+    }
+
+    private var cover: some View {
+        ZStack {
+            Rectangle().fill(Color.black.opacity(0.6))
+            if let image = ArtworkCache.shared.image(path) {
+                Image(nsImage: image).resizable().interpolation(.high).aspectRatio(contentMode: .fill)
+            } else {
+                Image(systemName: "waveform")
+                    .font(.system(size: 40, weight: .heavy))
+                    .foregroundStyle(LinearGradient(colors: [yellow, magenta], startPoint: .top, endPoint: .bottom))
+            }
+        }
+        .frame(width: 140, height: 140)
+        .clipped()
+        .overlay(Rectangle().stroke(magenta, lineWidth: 1.5))
+        .shadow(color: magenta.opacity(0.8), radius: 12)
+    }
+}
+
+/// Splits its content into cyan and magenta copies by the bass level.
+private struct NeonSplit<Content: View>: View {
+    @ObservedObject var spectrum: AudioSpectrum
+    let playing: Bool
+    let magenta: Color
+    let cyan: Color
+    @ViewBuilder let content: Content
+
+    private var bass: CGFloat {
+        let bands = spectrum.bands
+        guard playing, !bands.isEmpty else { return 0 }
+        let low = bands.prefix(max(2, bands.count / 10))
+        return CGFloat(low.reduce(0, +) / Float(low.count))
+    }
+
+    var body: some View {
+        let split = 1.5 + min(1, bass * 1.2) * 7
+        ZStack {
+            content.colorMultiply(cyan).opacity(0.7).offset(x: -split, y: split * 0.3).blendMode(.screen)
+            content.colorMultiply(magenta).opacity(0.7).offset(x: split, y: -split * 0.3).blendMode(.screen)
+            content
+        }
+        .animation(.spring(response: 0.14, dampingFraction: 0.6), value: split)
     }
 }
