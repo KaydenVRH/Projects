@@ -11,6 +11,8 @@ struct KitPalette {
     let foreground: Color
     let dim: Color
     let font: String
+    /// The Stark HUD: brackets, hexagons and hard edges instead of soft cards.
+    let hud: Bool
 
     init(theme: Theme, bar: BarConfig) {
         self.init(theme: theme, font: bar.fontFamily)
@@ -21,6 +23,7 @@ struct KitPalette {
         foreground = theme.foreground?.color ?? .white
         dim = (theme.dim ?? theme.foreground)?.color ?? .gray
         self.font = font
+        hud = Hud.isHud(theme)
     }
 }
 
@@ -38,6 +41,66 @@ struct KitHeader<Trailing: View>: View {
     @State private var arrived = false
 
     var body: some View {
+        if palette.hud { hudBody } else { softBody }
+    }
+
+    /// Stark: the icon in a hexagon inside a turning dashed ring, the title in
+    /// spaced capitals, and the subtitle as a readout.
+    private var hudBody: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                SpinningRing(colour: palette.accent.opacity(0.7), dash: [3, 3], width: 1, period: 6)
+                    .frame(width: 42, height: 42)
+                HexagonShape()
+                    .fill(palette.accent.opacity(0.14))
+                    .overlay(HexagonShape().stroke(palette.accent, lineWidth: 1.4))
+                    .shadow(color: palette.accent.opacity(0.8), radius: 6)
+                    .frame(width: 32, height: 28)
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(palette.accent)
+                    .symbolEffect(.bounce, value: arrived)
+            }
+            .frame(width: 42, height: 42)
+            .scaleEffect(arrived ? 1 : 0.3)
+            .opacity(arrived ? 1 : 0)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title.uppercased())
+                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                    .tracking(2.5)
+                    .foregroundColor(palette.foreground)
+                    .shadow(color: palette.accent.opacity(0.6), radius: 4)
+                if let subtitle {
+                    Text("// " + subtitle.uppercased())
+                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                        .tracking(1)
+                        .foregroundColor(palette.accent.opacity(0.8))
+                        .contentTransition(.numericText())
+                }
+            }
+            Spacer(minLength: 8)
+            trailing
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 16)
+        .padding(.bottom, 12)
+        .overlay(alignment: .bottom) {
+            // a rule with a bright head, drawn across under the title
+            HStack(spacing: 0) {
+                Rectangle().fill(palette.accent).frame(width: 36, height: 2)
+                Rectangle().fill(palette.accent.opacity(0.25)).frame(height: 1)
+            }
+            .shadow(color: palette.accent.opacity(0.8), radius: 3)
+            .padding(.horizontal, 18)
+            .scaleEffect(x: arrived ? 1 : 0, anchor: .leading)
+        }
+        .onAppear {
+            withAnimation(.kBouncy.delay(0.08)) { arrived = true }
+        }
+    }
+
+    private var softBody: some View {
         HStack(spacing: 12) {
             ZStack {
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
@@ -93,6 +156,26 @@ struct KeyHints: View {
     let palette: KitPalette
 
     var body: some View {
+        if palette.hud {
+            // Stark: [KEY] LABEL, as a readout rather than keycaps.
+            HStack(spacing: 12) {
+                ForEach(Array(hints.enumerated()), id: \.offset) { _, hint in
+                    HStack(spacing: 4) {
+                        Text("[\(hint.key.uppercased())]")
+                            .foregroundColor(palette.accent)
+                        Text(hint.label.uppercased())
+                            .foregroundColor(palette.foreground.opacity(0.6))
+                    }
+                }
+            }
+            .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+            .lineLimit(1)
+        } else {
+            softBody
+        }
+    }
+
+    private var softBody: some View {
         HStack(spacing: 12) {
             ForEach(Array(hints.enumerated()), id: \.offset) { _, hint in
                 HStack(spacing: 5) {
@@ -160,6 +243,48 @@ struct KitCard: ViewModifier {
     var radius: CGFloat = 14
 
     func body(content: Content) -> some View {
+        if palette.hud { hudBody(content) } else { softBody(content) }
+    }
+
+    /// Stark: hard-edged cells with cut corners; the armed one is locked on by a
+    /// targeting reticle that glides between rows, with a lit edge and a glow.
+    private func hudBody(_ content: Content) -> some View {
+        content
+            .background {
+                ZStack {
+                    ChamferShape(cut: 6)
+                        .fill(palette.accent.opacity(hovered ? 0.08 : 0.03))
+                        .overlay(ChamferShape(cut: 6).stroke(palette.accent.opacity(hovered ? 0.35 : 0.14), lineWidth: 1))
+                    if selected {
+                        ZStack {
+                            ChamferShape(cut: 6)
+                                .fill(LinearGradient(
+                                    colors: [palette.accent.opacity(0.24), palette.accent.opacity(0.04)],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                ))
+                            BracketShape(arm: 9)
+                                .stroke(palette.accent, lineWidth: 1.8)
+                                .shadow(color: palette.accent, radius: 5)
+                                .padding(-3)
+                            HStack {
+                                Rectangle()
+                                    .fill(palette.accent)
+                                    .frame(width: 2)
+                                    .padding(.vertical, 7)
+                                    .shadow(color: palette.accent, radius: 4)
+                                Spacer()
+                            }
+                        }
+                        .matchedGeometryEffect(id: "kit-armed", in: highlight)
+                    }
+                }
+            }
+            .animation(.kSelect, value: selected)
+            .animation(.kHover, value: hovered)
+    }
+
+    private func softBody(_ content: Content) -> some View {
         content
             .background {
                 ZStack {
@@ -217,6 +342,31 @@ struct IconBubble: View {
     @State private var pulse = false
 
     var body: some View {
+        if palette.hud { hudBody } else { softBody }
+    }
+
+    /// Stark: a hexagon, lit and ringed by a turning dashed circle when live.
+    private var hudBody: some View {
+        ZStack {
+            if active {
+                SpinningRing(colour: palette.accent.opacity(0.8), dash: [2, 3], width: 1, period: 4)
+                    .frame(width: size + 6, height: size + 6)
+            }
+            HexagonShape()
+                .fill(palette.accent.opacity(active ? 0.28 : 0.06))
+                .overlay(HexagonShape().stroke(palette.accent.opacity(active ? 1 : 0.35), lineWidth: 1.2))
+                .shadow(color: palette.accent.opacity(active ? 0.8 : 0), radius: 5)
+                .frame(width: size * 0.92, height: size * 0.8)
+            Image(systemName: symbol)
+                .font(.system(size: size * 0.36, weight: .medium))
+                .foregroundColor(active ? palette.accent : palette.foreground.opacity(0.7))
+                .symbolEffect(.bounce, value: active)
+        }
+        .frame(width: size + 6, height: size + 6)
+        .animation(.kBouncy, value: active)
+    }
+
+    private var softBody: some View {
         ZStack {
             if active {
                 Circle()
@@ -265,17 +415,33 @@ struct KitToggle: View {
             }
             action()
         } label: {
-            ZStack(alignment: isOn ? .trailing : .leading) {
-                Capsule()
-                    .fill(isOn ? palette.accent : Color.white.opacity(0.14))
-                    .shadow(color: isOn ? palette.accent.opacity(0.5) : .clear, radius: 8)
-                Capsule()
-                    .fill(isOn ? Color.black.opacity(0.7) : palette.foreground.opacity(0.85))
-                    .frame(width: travelling ? 24 : 16, height: 16)
-                    .padding(3)
+            if palette.hud {
+                // Stark: a hard switch with a lit block that slams across.
+                ZStack(alignment: isOn ? .trailing : .leading) {
+                    ChamferShape(cut: 4)
+                        .stroke(palette.accent.opacity(isOn ? 0.9 : 0.35), lineWidth: 1.2)
+                        .background(ChamferShape(cut: 4).fill(palette.accent.opacity(isOn ? 0.16 : 0.03)))
+                    ChamferShape(cut: 3)
+                        .fill(isOn ? palette.accent : palette.foreground.opacity(0.4))
+                        .shadow(color: isOn ? palette.accent : .clear, radius: 6)
+                        .frame(width: travelling ? 26 : 18, height: 14)
+                        .padding(4)
+                }
+                .frame(width: 46, height: 22)
+                .contentShape(Rectangle())
+            } else {
+                ZStack(alignment: isOn ? .trailing : .leading) {
+                    Capsule()
+                        .fill(isOn ? palette.accent : Color.white.opacity(0.14))
+                        .shadow(color: isOn ? palette.accent.opacity(0.5) : .clear, radius: 8)
+                    Capsule()
+                        .fill(isOn ? Color.black.opacity(0.7) : palette.foreground.opacity(0.85))
+                        .frame(width: travelling ? 24 : 16, height: 16)
+                        .padding(3)
+                }
+                .frame(width: 42, height: 22)
+                .contentShape(Capsule())
             }
-            .frame(width: 42, height: 22)
-            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .animation(.kBouncy, value: isOn)
@@ -289,6 +455,18 @@ struct StatusPill: View {
     let palette: KitPalette
 
     var body: some View {
+        if palette.hud {
+            Text("[ \(text.uppercased()) ]")
+                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                .foregroundColor(lit ? palette.accent : palette.dim)
+                .shadow(color: lit ? palette.accent.opacity(0.8) : .clear, radius: 4)
+                .animation(.kBouncy, value: lit)
+        } else {
+            softBody
+        }
+    }
+
+    private var softBody: some View {
         HStack(spacing: 5) {
             Circle()
                 .fill(lit ? palette.accent : palette.dim.opacity(0.6))
@@ -316,15 +494,24 @@ struct KitEmpty: View {
     var body: some View {
         VStack(spacing: 12) {
             ZStack {
-                Circle().fill(palette.accent.opacity(0.1)).frame(width: 84, height: 84)
-                Circle().stroke(palette.accent.opacity(0.18), lineWidth: 1).frame(width: 110, height: 110)
+                if palette.hud {
+                    SpinningRing(colour: palette.accent.opacity(0.6), dash: [2, 5], width: 2, period: 7)
+                        .frame(width: 112, height: 112)
+                    SpinningRing(colour: palette.accent.opacity(0.35), dash: [24, 10], width: 1, period: 11, clockwise: false)
+                        .frame(width: 140, height: 140)
+                    HexagonShape().stroke(palette.accent.opacity(0.7), lineWidth: 1.2).frame(width: 84, height: 74)
+                } else {
+                    Circle().fill(palette.accent.opacity(0.1)).frame(width: 84, height: 84)
+                    Circle().stroke(palette.accent.opacity(0.18), lineWidth: 1).frame(width: 110, height: 110)
+                }
                 Image(systemName: icon)
                     .font(.system(size: 30, weight: .light))
                     .foregroundColor(palette.accent)
             }
             .offset(y: float ? -4 : 4)
-            Text(title)
-                .font(.custom(palette.font, size: 15))
+            Text(palette.hud ? title.uppercased() : title)
+                .font(palette.hud ? .system(size: 13, weight: .semibold, design: .monospaced) : .custom(palette.font, size: 15))
+                .tracking(palette.hud ? 2 : 0)
                 .foregroundColor(palette.foreground)
             Text(detail)
                 .font(.custom(palette.font, size: 11))

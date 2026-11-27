@@ -421,7 +421,7 @@ struct MusicPanelView: View {
                         .padding(.vertical, 7)
                         .background {
                             if on {
-                                Capsule()
+                                AnyShape(palette.hud ? AnyShape(ChamferShape(cut: 6)) : AnyShape(Capsule()))
                                     .fill(accent)
                                     .shadow(color: accent.opacity(0.5), radius: 8)
                                     .matchedGeometryEffect(id: "tab", in: pill)
@@ -456,6 +456,11 @@ struct MusicPanelView: View {
         .padding(.top, 14)
         .padding(.bottom, 10)
         .animation(.kBouncy, value: tab)
+    }
+
+    /// The search box's outline: a capsule, or cut corners under the HUD.
+    private var fieldShape: AnyShape {
+        palette.hud ? AnyShape(ChamferShape(cut: 8)) : AnyShape(Capsule(style: .continuous))
     }
 
     /// What the footer says on the left, per tab.
@@ -569,10 +574,10 @@ struct MusicPanelView: View {
             .padding(.horizontal, 15)
             .padding(.vertical, 10)
             .background(
-                Capsule(style: .continuous)
+                fieldShape
                     .fill(Color.white.opacity(focusedField ? 0.09 : 0.05))
                     .overlay(
-                        Capsule(style: .continuous)
+                        fieldShape
                             .stroke(accent.opacity(focusedField ? 0.6 : 0.15), lineWidth: 1.2)
                     )
                     .shadow(color: accent.opacity(focusedField ? 0.3 : 0), radius: 12)

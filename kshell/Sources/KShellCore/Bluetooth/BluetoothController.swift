@@ -29,36 +29,50 @@ public final class BluetoothController: ObservableObject {
 
     // MARK: - reading
 
+    /// Reads off the main thread. IOBluetooth's first use waits on the
+    /// Bluetooth permission prompt — which a rebuilt binary brings back — and on
+    /// the main thread that froze the whole shell until it was answered.
+    private var reading = false
+
     public func refresh() {
         guard Thread.isMainThread else {
             DispatchQueue.main.async { [weak self] in self?.refresh() }
             return
         }
-        let controller = IOBluetoothHostController.default()
-        let powered = controller?.powerState.rawValue == 1
-        let paired = IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] ?? []
+        guard !reading else { return }
+        reading = true
+        queue.async { [weak self] in
+            let controller = IOBluetoothHostController.default()
+            let available = controller != nil
+            let powered = controller?.powerState.rawValue == 1
+            let paired = IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] ?? []
 
-        let mapped: [BluetoothDevice] = paired.compactMap { device -> BluetoothDevice? in
-            guard let address = device.addressString, !address.isEmpty else { return nil }
-            let name = (device.nameOrAddress ?? "").isEmpty ? address : device.nameOrAddress!
-            return BluetoothDevice(
-                name: name,
-                address: address,
-                kind: BluetoothDevice.kind(forName: name, classOfDevice: device.classOfDevice),
-                isPaired: true,
-                isConnected: device.isConnected()
-            )
+            let mapped: [BluetoothDevice] = paired.compactMap { device -> BluetoothDevice? in
+                guard let address = device.addressString, !address.isEmpty else { return nil }
+                let name = (device.nameOrAddress ?? "").isEmpty ? address : device.nameOrAddress!
+                return BluetoothDevice(
+                    name: name,
+                    address: address,
+                    kind: BluetoothDevice.kind(forName: name, classOfDevice: device.classOfDevice),
+                    isPaired: true,
+                    isConnected: device.isConnected()
+                )
+            }
+            // While Bluetooth is off the paired list is stale; don't claim
+            // anything is connected.
+            let sorted = BluetoothDevice.sorted(mapped.map { device in
+                var device = device
+                if !powered { device.isConnected = false }
+                return device
+            })
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.reading = false
+                self.isAvailable = available
+                self.isPowered = powered
+                self.devices = sorted
+            }
         }
-
-        isAvailable = controller != nil
-        isPowered = powered
-        // While Bluetooth is off the paired list is stale; don't claim anything
-        // is connected.
-        devices = BluetoothDevice.sorted(mapped.map { device in
-            var device = device
-            if !powered { device.isConnected = false }
-            return device
-        })
     }
 
     /// Poll while the menu is open, so a device connecting from its own side (or

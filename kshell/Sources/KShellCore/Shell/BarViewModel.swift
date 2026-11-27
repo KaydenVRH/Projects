@@ -22,6 +22,7 @@ public final class BarViewModel: ObservableObject {
     public init(config: ShellConfig) {
         appearance = config.bar
         theme = config.theme
+        Hud.update(for: config.theme)
         left = []
         center = []
         right = []
@@ -33,6 +34,8 @@ public final class BarViewModel: ObservableObject {
         stopAll()
         appearance = config.bar
         theme = config.theme
+        // Switching to the HUD theme boots it, once, across every display.
+        if Hud.update(for: config.theme) { HudBoot.play() }
         build(from: config)
     }
 

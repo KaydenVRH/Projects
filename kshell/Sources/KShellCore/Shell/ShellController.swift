@@ -24,6 +24,8 @@ public final class ShellController {
     private var eventTokens: [NSObjectProtocol] = []
     private var bars: [BarPanel] = []
     private var borders: [ScreenBorderPanel] = []
+    /// The Stark HUD's brackets and running light over each frame.
+    private var hudFrames: [HudFramePanel] = []
     private var visualisers: [VisualiserPanel] = []
     private var playingObserver: AnyCancellable?
     private var manualHidden = false
@@ -117,6 +119,8 @@ public final class ShellController {
         viewModel.stop()
         for bar in bars { bar.dismiss() }
         bars.removeAll()
+        for hud in hudFrames { hud.orderOut(nil) }
+        hudFrames.removeAll()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -170,6 +174,17 @@ public final class ShellController {
         })
         eventTokens.append(bus.observe("border_show") { [weak self] _ in self?.setBorderEnabled(true) })
         eventTokens.append(bus.observe("border_hide") { [weak self] _ in self?.setBorderEnabled(false) })
+        // Apply a theme by name, as the picker would: `kshell trigger theme_apply Stark`.
+        eventTokens.append(bus.observe("theme_apply") { [weak self] payload in
+            guard let self else { return }
+            let name = payload.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let config = self.loader.config.themeLauncher
+            guard let theme = config.themes.first(where: { $0.name.lowercased() == name }) else { return }
+            _ = ThemeApplier.apply(theme, config: config)
+            self.loader.reloadNow()
+        })
+        // Replay the Stark HUD's boot sequence.
+        eventTokens.append(bus.observe("hud_boot") { _ in HudBoot.play() })
         eventTokens.append(bus.observe("visualiser_toggle") { [weak self] _ in
             guard let self else { return }
             self.setVisualiserEnabled(!self.visualiserEnabled)
@@ -416,6 +431,13 @@ public final class ShellController {
                 border.orderFrontRegardless()
             }
         }
+        for hud in hudFrames {
+            if fullscreenDisplays.contains(FullscreenWatch.displayID(hud.frameScreen) ?? 0) {
+                hud.orderOut(nil)
+            } else {
+                hud.orderFrontRegardless()
+            }
+        }
         for panel in visualisers {
             if fullscreenDisplays.contains(FullscreenWatch.displayID(panel.visualiserScreen) ?? 0) {
                 panel.dismiss()
@@ -553,6 +575,8 @@ public final class ShellController {
     private func rebuildBars() {
         for bar in bars { bar.dismiss() }
         for border in borders { border.orderOut(nil) }
+        for hud in hudFrames { hud.orderOut(nil) }
+        hudFrames.removeAll()
 
         let screens: [NSScreen]
         if viewModel.appearance.display == "main" {
@@ -603,6 +627,16 @@ public final class ShellController {
             border.orderFrontRegardless()
             return border
         } : []
+
+        // Stark: brackets and a running light over the frame, above its glass.
+        if usesSurface, Hud.active {
+            let inset = CGFloat(borderConfig.inset + borderConfig.thickness)
+            hudFrames = screens.map { screen in
+                let hud = HudFramePanel(screen: screen, inset: inset, radius: CGFloat(borderConfig.radius))
+                hud.orderFrontRegardless()
+                return hud
+            }
+        }
 
         if manualHidden {
             for bar in bars { bar.setRevealed(false, animated: false) }

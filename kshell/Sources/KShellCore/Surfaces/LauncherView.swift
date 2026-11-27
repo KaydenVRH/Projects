@@ -114,6 +114,11 @@ struct LauncherView: View {
 
     // MARK: - pieces
 
+    /// The search box's outline: a capsule, or cut corners under the HUD.
+    private var fieldShape: AnyShape {
+        palette.hud ? AnyShape(ChamferShape(cut: 8)) : AnyShape(Capsule(style: .continuous))
+    }
+
     /// The search box: a capsule that lights up while it has the keyboard, with
     /// a magnifier that wiggles on every keystroke.
     private var field: some View {
@@ -141,10 +146,10 @@ struct LauncherView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
         .background(
-            Capsule(style: .continuous)
+            fieldShape
                 .fill(Color.white.opacity(focused ? 0.09 : 0.05))
                 .overlay(
-                    Capsule(style: .continuous)
+                    fieldShape
                         .stroke(accent.opacity(focused ? 0.6 : 0.15), lineWidth: 1.2)
                 )
                 .shadow(color: accent.opacity(focused ? 0.3 : 0), radius: 12)

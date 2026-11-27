@@ -127,8 +127,14 @@ struct NowPlayingCard: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ArtworkHero(player: player, path: path, tint: tint, dim: dim)
-                .padding(.top, 20)
+            Group {
+                if Hud.isHud(theme) {
+                    HudCover(player: player, path: path, tint: tint)
+                } else {
+                    ArtworkHero(player: player, path: path, tint: tint, dim: dim)
+                }
+            }
+            .padding(.top, 20)
             titles
                 .padding(.top, 18)
             WaveProgress(player: player, tint: tint, dim: dim, font: bar.fontFamily)
@@ -185,7 +191,7 @@ struct NowPlayingCard: View {
             SkipButton(symbol: "backward.fill", colour: foreground) { player.previous() }
                 .disabled(!player.hasTrack)
             Spacer(minLength: 0)
-            PlayButton(playing: player.isPlaying, tint: tint, tintColour: tintColour) { player.toggle() }
+            PlayButton(playing: player.isPlaying, tint: tint, tintColour: tintColour, hud: Hud.isHud(theme)) { player.toggle() }
             Spacer(minLength: 0)
             SkipButton(symbol: "forward.fill", colour: foreground) { player.next() }
                 .disabled(!player.hasTrack)
@@ -501,6 +507,8 @@ struct PlayButton: View {
     let playing: Bool
     let tint: Color
     let tintColour: NSColor?
+    /// Stark: a hexagon in a turning ring.
+    var hud = false
     let action: () -> Void
 
     @State private var hovering = false
@@ -508,12 +516,22 @@ struct PlayButton: View {
     var body: some View {
         Button(action: action) {
             ZStack {
-                RoundedRectangle(cornerRadius: playing ? 28 : 16, style: .continuous)
-                    .fill(tint)
-                    .shadow(color: tint.opacity(hovering ? 0.7 : 0.45), radius: hovering ? 16 : 10, y: 4)
+                if hud {
+                    SpinningRing(colour: tint.opacity(playing ? 0.8 : 0.3), dash: [3, 4], width: 1.2, period: playing ? 3 : 12)
+                        .frame(width: 66, height: 66)
+                    HexagonShape()
+                        .fill(tint.opacity(playing ? 0.9 : 0.25))
+                        .overlay(HexagonShape().stroke(tint, lineWidth: 1.5))
+                        .shadow(color: tint.opacity(hovering ? 0.9 : 0.6), radius: hovering ? 14 : 8)
+                        .frame(width: 58, height: 50)
+                } else {
+                    RoundedRectangle(cornerRadius: playing ? 28 : 16, style: .continuous)
+                        .fill(tint)
+                        .shadow(color: tint.opacity(hovering ? 0.7 : 0.45), radius: hovering ? 16 : 10, y: 4)
+                }
                 Image(systemName: playing ? "pause.fill" : "play.fill")
                     .font(.system(size: 20, weight: .bold))
-                    .foregroundColor(tintColour.map(prefersDarkText) ?? true ? .black.opacity(0.82) : .white)
+                    .foregroundColor(hud && !playing ? tint : (tintColour.map(prefersDarkText) ?? true ? .black.opacity(0.82) : .white))
                     .contentTransition(.symbolEffect(.replace.downUp))
                     .offset(x: playing ? 0 : 1.5)
             }
@@ -522,7 +540,7 @@ struct PlayButton: View {
         }
         .pressBounce()
         .scaleEffect(hovering ? 1.06 : 1)
-        .rotationEffect(.degrees(playing ? 0 : -6))
+        .rotationEffect(.degrees(playing || hud ? 0 : -6))
         .onHover { hovering = $0 }
         .animation(.kBouncy, value: playing)
         .animation(.kHover, value: hovering)
@@ -739,5 +757,100 @@ struct WaveLine: View {
             }
         }
         .frame(height: 18)
+    }
+}
+
+// MARK: - the HUD cover
+
+/// Stark: the cover as a disc at the heart of a projection. Two dashed rings
+/// turn around it in opposite directions, a ring of spectrum bars flares out
+/// from it with the music, and four brackets lock on to it.
+private struct HudCover: View {
+    @ObservedObject var player: MusicPlayer
+    let path: String?
+    let tint: Color
+
+    var body: some View {
+        ZStack {
+            RadialSpectrum(spectrum: player.spectrum, tint: tint, playing: player.isPlaying, inner: 84)
+                .frame(width: 236, height: 236)
+            SpinningRing(colour: tint.opacity(0.75), dash: [2, 4], width: 2, period: player.isPlaying ? 9 : 30)
+                .frame(width: 186, height: 186)
+            SpinningRing(colour: tint.opacity(0.45), dash: [40, 14], width: 1, period: player.isPlaying ? 14 : 40, clockwise: false)
+                .frame(width: 204, height: 204)
+            BracketShape(arm: 16)
+                .stroke(tint, lineWidth: 1.6)
+                .shadow(color: tint, radius: 5)
+                .frame(width: 214, height: 214)
+            disc
+                .id(path ?? "none")
+                .transition(.asymmetric(
+                    insertion: .scale(scale: 0.2).combined(with: .opacity),
+                    removal: .scale(scale: 1.4).combined(with: .opacity)
+                ))
+        }
+        .frame(width: 236, height: 236)
+        .padding(.vertical, -20)
+        .saturation(player.isPlaying || !player.hasTrack ? 1 : 0.6)
+        .animation(.kBouncy, value: path)
+        .animation(.kBouncy, value: player.isPlaying)
+    }
+
+    private var disc: some View {
+        ZStack {
+            Circle().fill(tint.opacity(0.12))
+            if let image = ArtworkCache.shared.image(path) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                HexagonShape()
+                    .stroke(tint, lineWidth: 1.5)
+                    .frame(width: 60, height: 52)
+                Image(systemName: "music.note")
+                    .font(.system(size: 24, weight: .light))
+                    .foregroundColor(tint)
+            }
+        }
+        .frame(width: 160, height: 160)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(tint.opacity(0.8), lineWidth: 1.5))
+        .shadow(color: tint.opacity(0.6), radius: 14)
+    }
+}
+
+/// The spectrum as bars standing out from a circle, mirrored left and right
+/// with the bass at the top.
+private struct RadialSpectrum: View {
+    @ObservedObject var spectrum: AudioSpectrum
+    let tint: Color
+    let playing: Bool
+    let inner: CGFloat
+
+    var body: some View {
+        Canvas { context, size in
+            let bands = spectrum.bands
+            let centre = CGPoint(x: size.width / 2, y: size.height / 2)
+            let count = 72
+            let reach = min(size.width, size.height) / 2 - inner
+            var path = Path()
+            for index in 0..<count {
+                let angle = Double(index) / Double(count) * 2 * .pi - .pi / 2
+                let fold = index <= count / 2 ? index : count - index
+                var value: CGFloat = 0
+                if playing, !bands.isEmpty {
+                    let at = min(bands.count - 1, fold * (bands.count * 2 / 3) / (count / 2))
+                    value = CGFloat(bands[at])
+                }
+                let length = 3 + value * reach
+                let from = CGPoint(x: centre.x + cos(angle) * inner, y: centre.y + sin(angle) * inner)
+                let to = CGPoint(x: centre.x + cos(angle) * (inner + length), y: centre.y + sin(angle) * (inner + length))
+                path.move(to: from)
+                path.addLine(to: to)
+            }
+            context.stroke(path, with: .color(tint.opacity(playing ? 0.85 : 0.3)),
+                           style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
+        }
     }
 }

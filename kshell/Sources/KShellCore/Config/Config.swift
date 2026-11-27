@@ -48,6 +48,9 @@ public struct Theme {
     /// Secondary accent (statusline insert mode, etc.).
     public var mid: RGBA? = nil
     public var background: RGBA? = nil
+    /// Special effects the theme switches on: `hud` is the Stark HUD (which the
+    /// theme named Stark gets anyway).
+    public var effects: String? = nil
 
     public init() {}
 }
@@ -367,6 +370,7 @@ public struct ShellConfig {
             if let v = RGBA.parse(t.string("foreground")) { theme.foreground = v }
             if let v = RGBA.parse(t.string("dim")) { theme.dim = v }
             if let v = RGBA.parse(t.string("mid")) { theme.mid = v }
+            if let v = t.string("effects") { theme.effects = v.lowercased() }
             if let v = RGBA.parse(t.string("background")) { theme.background = v }
         }
 

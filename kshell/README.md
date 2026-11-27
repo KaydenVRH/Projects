@@ -204,6 +204,30 @@ especially). `Surfaces/Motion.swift` is the one place they are tuned:
   - **Themes:** the picker fans each theme's colours out as discs.
   - **Media island:** takes the cover's colour, with the same wave line and
     controls as the music panel.
+- **The Stark HUD** (`Surfaces/Hud.swift`) is the trademark theme's own look,
+  which no other theme gets. It turns on for the theme named Stark, or any
+  theme with `effects = "hud"` in `[theme]`:
+  - **Switching to it** plays a boot sequence across every display: the screen
+    dims, rings blossom out of a hex core, a status log types itself out, and
+    a scan line sweeps down. `kshell trigger hud_boot` replays it.
+  - **Menus** power on with a hologram flicker and draw their corner brackets
+    in. They carry scanlines, a slow falling scan band and a glowing outline.
+  - **Inside menus**, rows are hard-edged cells with cut corners, and the
+    selection is a targeting reticle that glides between them. Headers put
+    their icon in a hexagon inside a turning ring, with titles in spaced
+    capitals. Key hints read `[KEY] LABEL`, and icons and toggles go hexagonal
+    and angular.
+  - **The frame** gets glowing corner brackets and a light that runs round the
+    screen's edge.
+  - **The bar** gets a ruled, glowing baseline with a periodic sweep, and the
+    focused workspace sits in a bracket.
+  - **The music card** turns the cover into a disc inside counter-rotating
+    rings, with the spectrum flaring out of it as a ring of bars and a
+    hexagonal play button.
+  - Everything that loops is a Core Animation animation, so it runs in the
+    render server instead of redrawing the shell every frame.
+  - `kshell trigger theme_apply <name>` applies any theme by name, as the
+    picker would.
 - **Reduce motion** in macOS's Accessibility settings is respected: panels then
   appear in place.
 
@@ -688,6 +712,8 @@ Sources/KShellCore/
   Surfaces/BarView.swift         SwiftUI left/center/right widget rows
   Surfaces/Motion.swift          springs, display-synced clock, shared animations
   Surfaces/MusicNowPlaying.swift the music panel's now-playing card
+  Surfaces/Kit.swift             shared menu components (soft and HUD styles)
+  Surfaces/Hud.swift             the Stark HUD: chrome, frame, bar trim, boot
   Surfaces/VisualiserPanel.swift cava-style bars on the desktop (Canvas, tap-fed)
   Music/AudioSpectrum.swift      mixer tap -> FFT -> smoothed log-spaced bands
   Bluetooth/                     paired devices + connect/disconnect (IOBluetooth)

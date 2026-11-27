@@ -33,6 +33,8 @@ public final class MediaIslandPanel: NSPanel {
     private var glass: SurfaceGlass?
     private var localGlass: NSVisualEffectView?
     private var mask = CAShapeLayer()
+    /// The Stark HUD's brackets and scanlines.
+    private var chrome: HudChromeView?
     private lazy var motion = PanelMotion(screen: targetScreen)
     /// Which way is away from the bar: the island's bounce goes that way, so
     /// the window carries slack on that side while it moves.
@@ -141,6 +143,11 @@ public final class MediaIslandPanel: NSPanel {
 
         host.autoresizingMask = [.width, .height]
         container.addSubview(host)
+        if Hud.active {
+            let chrome = HudChromeView(frame: .zero)
+            container.addSubview(chrome)
+            self.chrome = chrome
+        }
         contentView = container
 
         // Without the frame there is no shared surface to borrow, so the island
@@ -239,6 +246,10 @@ public final class MediaIslandPanel: NSPanel {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isShown else { return }
             self.motion.animate(open: true)
+            if let chrome = self.chrome {
+                chrome.powerOn()
+                HudChromeView.flicker(self.host.layer)
+            }
         }
     }
 
@@ -316,6 +327,11 @@ public final class MediaIslandPanel: NSPanel {
         // The content crossfades from the pill to the centre on the way out;
         // the bounce past open is geometry only.
         island.progress = pose.reach
+        if let chrome {
+            chrome.frame = NSRect(origin: .zero, size: local.size)
+            chrome.fit(size: local.size, style: outline)
+            chrome.alphaValue = Motion.ramp(pose.reach, from: 0.3, to: 0.8)
+        }
         glass?.setResting(rect, style: outline)
         glass?.setFade(Motion.ramp(pose.reach, from: 0, to: 0.3))
     }
@@ -481,7 +497,7 @@ struct MediaIslandView: View {
 
             HStack(spacing: 22) {
                 SkipButton(symbol: "backward.fill", colour: foreground) { monitor.control(.previous) }
-                PlayButton(playing: state.isPlaying, tint: tint, tintColour: ArtworkCache.shared.tint(state.artworkPath)) {
+                PlayButton(playing: state.isPlaying, tint: tint, tintColour: ArtworkCache.shared.tint(state.artworkPath), hud: Hud.isHud(theme)) {
                     monitor.control(.playPause)
                 }
                 SkipButton(symbol: "forward.fill", colour: foreground) { monitor.control(.next) }

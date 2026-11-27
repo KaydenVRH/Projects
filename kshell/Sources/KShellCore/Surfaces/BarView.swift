@@ -32,6 +32,14 @@ public struct BarView: View {
                         }
                     }
                 }
+                .overlay(alignment: .bottom) {
+                    // Stark: a ruled, glowing baseline with a light sweeping it.
+                    if Hud.isHud(viewModel.theme) {
+                        HudBarTrim()
+                            .frame(height: 6)
+                            .allowsHitTesting(false)
+                    }
+                }
         }
     }
 
@@ -113,14 +121,26 @@ private struct WidgetItemView: View {
                     }
                 }
                 .padding(.horizontal, model.paddingX)
-                .padding(.horizontal, model.active ? 4 : 0)
+                .padding(.horizontal, model.active ? (Hud.isHud(theme) ? 7 : 4) : 0)
                 .background {
                     if model.active {
-                        Capsule()
-                            .fill(labelColor.opacity(0.2))
-                            .overlay(Capsule().stroke(labelColor.opacity(0.35), lineWidth: 1))
+                        if Hud.isHud(theme) {
+                            // Stark: a targeting bracket instead of a pill.
+                            ZStack {
+                                ChamferShape(cut: 4).fill(labelColor.opacity(0.14))
+                                BracketShape(arm: 5)
+                                    .stroke(labelColor, lineWidth: 1.5)
+                                    .shadow(color: labelColor.opacity(0.9), radius: 3)
+                            }
                             .padding(.vertical, 5)
                             .matchedGeometryEffect(id: "active", in: pill)
+                        } else {
+                            Capsule()
+                                .fill(labelColor.opacity(0.2))
+                                .overlay(Capsule().stroke(labelColor.opacity(0.35), lineWidth: 1))
+                                .padding(.vertical, 5)
+                                .matchedGeometryEffect(id: "active", in: pill)
+                        }
                     }
                 }
                 .contentShape(Rectangle())
