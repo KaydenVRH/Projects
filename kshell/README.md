@@ -159,12 +159,39 @@ draws only content, masked to the same outline. With the frame off, a panel goes
 back to its own frosted material and convex corners (`SheetShape`), flush with the
 screen's edge.
 
-Panels arrive quickly and stop dead at their resting size: the easing stays within
-0…1, so there is no bounce past the outline and the window is exactly the panel
-— every pixel of it belongs to the panel, and none of it swallows clicks meant
-for the app behind. The springiness is in the rows and selections inside the
-panel, not in its geometry. The ticker follows the display (60–120 Hz) instead of
-a fixed 60, so on a ProMotion screen the stepped glass keeps up.
+### Motion
+
+Everything moves on springs, in the spirit of the Quickshell rices (caelestia
+especially). `Surfaces/Motion.swift` is the one place they are tuned:
+
+- **Panels are two springs** (`PanelMotion`). One widens the pill along its edge
+  and settles calmly. The other reaches it out from the edge, a little slower,
+  and bounces about 6 % past the resting size before it settles. Because the
+  widening comes first and the reach follows, the panel stretches out like
+  liquid instead of scaling. A spring keeps its velocity, so a panel closed
+  half-way through opening turns round mid-flight rather than restarting. The
+  content trails the outline: it drifts in from the edge and fades up.
+- **The bounce needs room past the panel.** While a panel moves, its window
+  carries slack on the side it grows toward. Once it is at rest, the window
+  shrinks back to exactly the panel, so no invisible strip is left to swallow
+  clicks meant for the app behind. That strip was why panels stopped bouncing
+  in the first place.
+- **The springs are stepped on the display's own refresh** (a `CADisplayLink`,
+  60–120 Hz). They are integrated in 1 ms slices, so they move identically at
+  any frame rate. The media island moves the same way.
+- **Inside panels, the shared SwiftUI springs are** `.kSelect`, `.kHover`,
+  `.kLayout` and `.kBouncy`:
+  - Rows cascade in one after another, rising out of a blur, when a panel opens
+    or a list is swapped (a new filter, a new tab). Rows that only scroll into
+    view are left alone.
+  - The armed highlight in the launchers is one shape that glides from row to
+    row.
+  - Grid icons hop on hover, and buttons squash and bounce when pressed.
+  - In the bar, the focused workspace sits in a pill that springs from
+    workspace to workspace, and workspaces that appear or empty out pop in and
+    out.
+- **Reduce motion** in macOS's Accessibility settings is respected: panels then
+  appear in place.
 
 A surface's blur — and SwiftUI's adaptive text on top of it — follow the
 *window's appearance*, not the tint painted over it. So every window takes the
@@ -341,9 +368,29 @@ end.
 - Bindable on their own: `kshell trigger media_play_pause`, `media_next`,
   `media_previous`.
 
-**Music panel** — the shell's own music player: a bottom panel with a **Search**
-tab (YouTube Music, or paste a link), a **Library** tab, a **Queue** tab, and a
-player bar. It replaces an external player rather than driving one.
+**Music panel** — the shell's own music player. It is a bottom panel with a
+now-playing card on the left and tabs on the right: **Search** (YouTube Music,
+or paste a link), **Library**, **Queue** and **Playlists**. It replaces an
+external player rather than driving one.
+
+- **The now-playing card** takes its colour from the cover. The cover's most
+  vivid colour becomes the card's accent, so the player re-colours itself for
+  every song. Each part of the card:
+  - **Cover:** shown big, and it swells and glows on the bass of the live
+    spectrum. A new song is dealt in like a card, swinging in from the right
+    while the old one swings out.
+  - **Glow:** a blurred copy of the cover fills the card behind everything and
+    turns slowly while the music plays.
+  - **Progress line:** a running wave that lies flat when paused. Drag it to
+    scrub; the times follow the handle.
+  - **Spectrum ribbon:** a mirrored ribbon, with the bass in the middle.
+  - **Controls:** shuffle, previous, play/pause, next, repeat. The play button
+    rounds into a circle while playing.
+  - **Volume line**, plus a peek at the song **up next**. Click the peek to skip
+    to it.
+- **Shuffle** walks the queue in a random order and is remembered across
+  launches. The queue itself keeps its order, so turning shuffle off carries on
+  from the same song.
 
 - Searching runs `yt-dlp` and lists results with thumbnails and durations.
   Downloading extracts audio (`m4a` by default), embeds the cover and tags, and
@@ -617,6 +664,8 @@ Sources/KShellCore/
   Surfaces/BarPanel.swift        NSPanel: borderless, non-activating
   Surfaces/WindowLevel.swift     levels 17–20: above windows, under notifications
   Surfaces/BarView.swift         SwiftUI left/center/right widget rows
+  Surfaces/Motion.swift          springs, display-synced clock, shared animations
+  Surfaces/MusicNowPlaying.swift the music panel's now-playing card
   Surfaces/VisualiserPanel.swift cava-style bars on the desktop (Canvas, tap-fed)
   Music/AudioSpectrum.swift      mixer tap -> FFT -> smoothed log-spaced bands
   Bluetooth/                     paired devices + connect/disconnect (IOBluetooth)

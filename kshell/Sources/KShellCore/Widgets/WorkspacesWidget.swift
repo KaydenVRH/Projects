@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 
 /// Which workspaces the bar should currently show: the focused one, plus every
 /// workspace holding at least one window — the same rule as the sketchybar
@@ -148,8 +149,16 @@ final class WorkspaceItemRuntime: WidgetRuntime {
     func start() {
         WorkspacesMonitor.shared.subscribe(token) { [weak self] snapshot in
             guard let self else { return }
-            self.model.labelColor = (snapshot.focused == self.id) ? self.focusedColor : self.unfocusedColor
-            self.model.hidden = self.hideEmpty && !snapshot.shows(self.id)
+            let focused = snapshot.focused == self.id
+            let hidden = self.hideEmpty && !snapshot.shows(self.id)
+            guard focused != self.model.active || hidden != self.model.hidden else { return }
+            // In one transaction, so the focus pill glides to its new item and
+            // the workspaces that appear or empty out pop rather than jump.
+            withAnimation(.kBouncy) {
+                self.model.labelColor = focused ? self.focusedColor : self.unfocusedColor
+                self.model.active = focused
+                self.model.hidden = hidden
+            }
         }
     }
 

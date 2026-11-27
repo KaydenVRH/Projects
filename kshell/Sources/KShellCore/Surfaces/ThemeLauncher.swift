@@ -432,6 +432,7 @@ struct ThemeLauncherView: View {
                                 selectedIndex = index
                                 applySelection()
                             }
+                            .cascade(index, from: .trailing)
                     }
                 }
                 .padding(.horizontal, 12)
@@ -442,7 +443,7 @@ struct ThemeLauncherView: View {
             .frame(maxHeight: .infinity)
             .onChange(of: selectedIndex) { _, newValue in
                 guard themes.indices.contains(newValue) else { return }
-                withAnimation(.snappy(duration: 0.26, extraBounce: 0.24)) {
+                withAnimation(.kLayout) {
                     proxy.scrollTo(themes[newValue].name, anchor: .center)
                 }
             }
@@ -482,7 +483,7 @@ struct ThemeLauncherView: View {
                 .fill(selected ? accent.opacity(0.18) : Color.white.opacity(0.03))
         )
         .contentShape(Rectangle())
-        .animation(.snappy(duration: 0.22, extraBounce: 0.3), value: selected)
+        .animation(.kSelect, value: selected)
     }
 
     private func swatch(_ item: ThemeDefinition) -> some View {

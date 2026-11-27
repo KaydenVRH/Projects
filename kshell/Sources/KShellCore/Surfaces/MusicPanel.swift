@@ -28,8 +28,8 @@ public final class MusicPanel {
             margin: margin,
             size: { screen in
                 NSSize(
-                    width: min(screen.frame.width * 0.72, 940),
-                    height: min(screen.frame.height * 0.64, 620)
+                    width: min(screen.frame.width * 0.8, 1060),
+                    height: min(screen.frame.height * 0.66, 640)
                 )
             },
             content: { onClose in
@@ -47,9 +47,16 @@ public final class MusicPanel {
         MusicDownloads.shared.onDownloadFinished = { [weak library] in library?.refresh() }
     }
 
-    public func toggle() { overlay.toggle() }
-    public func show(animated: Bool = true) { overlay.show(animated: animated) }
-    public func hide(animated: Bool = true) { overlay.hide(animated: animated) }
+    public func toggle() { visible ? hide() : show() }
+    public func show(animated: Bool = true) {
+        // The card's spectrum needs the analyser, visualiser or not.
+        MusicPlayer.shared.spectrumWatched = true
+        overlay.show(animated: animated)
+    }
+    public func hide(animated: Bool = true) {
+        MusicPlayer.shared.spectrumWatched = false
+        overlay.hide(animated: animated)
+    }
     public var visible: Bool { overlay.visible }
 }
 
@@ -159,6 +166,8 @@ struct MusicPanelView: View {
 
     /// Search wants the field; Library leaves the keys to the panel.
     private func tabChanged(to new: Tab) {
+        // The new tab's rows cascade in, as they do when the panel opens.
+        Motion.reveal()
         if new == .search { focusedField = true } else { refocusPanel() }
     }
 
@@ -178,15 +187,30 @@ struct MusicPanelView: View {
     /// The panel's layout, kept separate from its keyboard so the two type-check
     /// independently.
     private var panel: some View {
-        VStack(spacing: 0) {
-            header
-            if naming { namingRow }
-            if !downloads.jobs.filter(\.isActive).isEmpty { downloadsStrip }
-            Divider().overlay(dim.opacity(0.18))
-            content
+        HStack(spacing: 0) {
+            // What is playing, big, on the left; the lists on the right.
+            NowPlayingCard(player: player, theme: theme, bar: bar)
+                .frame(width: 300)
+            Rectangle()
+                .fill(dim.opacity(0.18))
+                .frame(width: 1)
+                .padding(.vertical, 14)
+            VStack(spacing: 0) {
+                header
+                if naming { namingRow }
+                if !downloads.jobs.filter(\.isActive).isEmpty { downloadsStrip }
+                Divider().overlay(dim.opacity(0.18))
+                ZStack {
+                    content
+                        .id(tab)
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .offset(y: 18)).combined(with: .scale(scale: 0.97)),
+                            removal: .opacity.combined(with: .scale(scale: 1.02))
+                        ))
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Divider().overlay(dim.opacity(0.18))
-            MusicPlayerBar(player: player, theme: theme, bar: bar)
+                .clipped()
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .modifier(PanelSurface(viewModel: viewModel, edge: .bottom, fallback: SheetShape(radius: 22)))
@@ -238,7 +262,7 @@ struct MusicPanelView: View {
         guard count > 0 else { return .ignored }
         let next = min(max(0, selection + delta), count - 1)
         guard next != selection else { return .handled }
-        withAnimation(.snappy(duration: 0.17, extraBounce: 0.3)) { setSelection(next) }
+        withAnimation(.kSelect) { setSelection(next) }
         return .handled
     }
 
@@ -267,7 +291,7 @@ struct MusicPanelView: View {
                 guard playlists.playlists.indices.contains(playlistsSelection) else { return .ignored }
                 let playlist = playlists.playlists[playlistsSelection]
                 guard !playlist.tracks.isEmpty else { return .ignored }
-                withAnimation(.snappy(duration: 0.2, extraBounce: 0.2)) {
+                withAnimation(.kLayout) {
                     openedPlaylist = playlist.name
                     trackSelection = 0
                 }
@@ -369,7 +393,7 @@ struct MusicPanelView: View {
             HStack(spacing: 4) {
                 ForEach(Tab.allCases) { item in
                     Button {
-                        withAnimation(.snappy(duration: 0.24, extraBounce: 0.28)) { tab = item }
+                        withAnimation(.kBouncy) { tab = item }
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: item.icon)
@@ -394,28 +418,9 @@ struct MusicPanelView: View {
             }
 
             Spacer(minLength: 0)
-
-            Equaliser(playing: player.isPlaying, color: accent)
-                .opacity(player.hasTrack ? 1 : 0)
-
-            if player.hasTrack {
-                VStack(alignment: .trailing, spacing: 1) {
-                    Text(player.current?.displayTitle ?? "")
-                        .font(.custom(bar.fontFamily, size: 12))
-                        .foregroundColor(foreground)
-                        .lineLimit(1)
-                    Text(player.current?.displayArtist ?? "")
-                        .font(.custom(bar.fontFamily, size: 10))
-                        .foregroundColor(dim)
-                        .lineLimit(1)
-                }
-                .frame(maxWidth: 220, alignment: .trailing)
-                .transition(.move(edge: .trailing).combined(with: .opacity))
-            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .animation(.snappy(duration: 0.26, extraBounce: 0.22), value: player.hasTrack)
     }
 
     // MARK: downloads
@@ -451,7 +456,7 @@ struct MusicPanelView: View {
             }
         }
         .padding(.bottom, 10)
-        .animation(.snappy(duration: 0.26, extraBounce: 0.22), value: downloads.jobs)
+        .animation(.kLayout, value: downloads.jobs)
     }
 
     // MARK: tabs
@@ -517,6 +522,7 @@ struct MusicPanelView: View {
                                 onDownload: { downloads.download(result) }
                             )
                             .id(result.id)
+                            .cascade(downloads.results.firstIndex(of: result) ?? 0)
                         }
                     }
                     .padding(.horizontal, 12)
@@ -524,7 +530,7 @@ struct MusicPanelView: View {
                     }
                     .onChange(of: resultSelection) { _, new in
                         guard downloads.results.indices.contains(new) else { return }
-                        withAnimation(.snappy(duration: 0.21, extraBounce: 0.22)) {
+                        withAnimation(.kLayout) {
                             proxy.scrollTo(downloads.results[new].id, anchor: .center)
                         }
                     }
@@ -550,7 +556,7 @@ struct MusicPanelView: View {
                     ScrollView {
                     LazyVStack(spacing: 4) {
                         ForEach(Array(library.tracks.enumerated()), id: \.element.id) { index, track in
-                            libraryRow(index: index, track: track).id(track.id)
+                            libraryRow(index: index, track: track).id(track.id).cascade(index)
                         }
                     }
                     .padding(.horizontal, 12)
@@ -558,7 +564,7 @@ struct MusicPanelView: View {
                     }
                     .onChange(of: librarySelection) { _, new in
                         guard library.tracks.indices.contains(new) else { return }
-                        withAnimation(.snappy(duration: 0.21, extraBounce: 0.22)) {
+                        withAnimation(.kLayout) {
                             proxy.scrollTo(library.tracks[new].id, anchor: .center)
                         }
                     }
@@ -649,7 +655,7 @@ struct MusicPanelView: View {
         return VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Button {
-                    withAnimation(.snappy(duration: 0.2, extraBounce: 0.2)) { openedPlaylist = nil }
+                    withAnimation(.kLayout) { openedPlaylist = nil }
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left")
@@ -684,6 +690,7 @@ struct MusicPanelView: View {
                             ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
                                 detailRow(index: index, track: track, playlist: name)
                                     .id(track.id)
+                                    .cascade(index)
                             }
                         }
                         .padding(.horizontal, 12)
@@ -691,7 +698,7 @@ struct MusicPanelView: View {
                     }
                     .onChange(of: trackSelection) { _, new in
                         guard tracks.indices.contains(new) else { return }
-                        withAnimation(.snappy(duration: 0.2, extraBounce: 0.2)) {
+                        withAnimation(.kLayout) {
                             proxy.scrollTo(tracks[new].id, anchor: .center)
                         }
                     }
@@ -700,7 +707,7 @@ struct MusicPanelView: View {
         }
         // Esc steps out of the playlist instead of closing the whole panel.
         .onExitCommand {
-            withAnimation(.snappy(duration: 0.2, extraBounce: 0.2)) { openedPlaylist = nil }
+            withAnimation(.kLayout) { openedPlaylist = nil }
         }
     }
 
@@ -769,6 +776,7 @@ struct MusicPanelView: View {
                         ForEach(Array(playlists.playlists.enumerated()), id: \.element.id) { index, playlist in
                             playlistRow(index: index, playlist: playlist)
                                 .id(playlist.id)
+                                .cascade(index)
                         }
                     }
                     .padding(.horizontal, 12)
@@ -776,7 +784,7 @@ struct MusicPanelView: View {
                 }
                 .onChange(of: playlistsSelection) { _, new in
                     guard playlists.playlists.indices.contains(new) else { return }
-                    withAnimation(.snappy(duration: 0.21, extraBounce: 0.22)) {
+                    withAnimation(.kLayout) {
                         proxy.scrollTo(playlists.playlists[new].id, anchor: .center)
                     }
                 }
@@ -855,7 +863,7 @@ struct MusicPanelView: View {
                 }
                 .onChange(of: queueSelection) { _, new in
                     guard queue.tracks.indices.contains(new) else { return }
-                    withAnimation(.snappy(duration: 0.21, extraBounce: 0.22)) {
+                    withAnimation(.kLayout) {
                         proxy.scrollTo(queue.tracks[new].id, anchor: .center)
                     }
                 }
@@ -899,6 +907,7 @@ struct MusicPanelView: View {
                 onMove: { delta in shiftQueue(index, by: delta) }
             )
             .id(track.id)
+            .cascade(index)
         }
     }
 
@@ -946,21 +955,21 @@ struct MusicPanelView: View {
         // Inside a playlist, `h` steps back to the list rather than the previous tab.
         if openedPlaylist != nil {
             guard delta < 0 else { return .handled }
-            withAnimation(.snappy(duration: 0.2, extraBounce: 0.2)) { openedPlaylist = nil }
+            withAnimation(.kLayout) { openedPlaylist = nil }
             return .handled
         }
         let all = Tab.allCases
         guard let current = all.firstIndex(of: tab) else { return .ignored }
         let next = min(max(current + delta, 0), all.count - 1)
         guard next != current else { return .handled }
-        withAnimation(.snappy(duration: 0.24, extraBounce: 0.28)) { tab = all[next] }
+        withAnimation(.kLayout) { tab = all[next] }
         return .handled
     }
 
     /// `/` — hand the keyboard to the search field, opening that tab if needed.
     private func focusSearch() -> KeyPress.Result {
         if tab != .search {
-            withAnimation(.snappy(duration: 0.24, extraBounce: 0.28)) { tab = .search }
+            withAnimation(.kLayout) { tab = .search }
             focusedField = true
         } else {
             tabChanged(to: .search)
@@ -1042,8 +1051,8 @@ private struct SearchRow: View {
                 .stroke(accent.opacity(selected ? 0.9 : (hovering ? 0.35 : 0)), lineWidth: selected ? 1.5 : 1)
         )
         .scaleEffect(selected ? 1.01 : (hovering ? 1.008 : 1))
-        .animation(.snappy(duration: 0.17, extraBounce: 0.32), value: hovering)
-        .animation(.snappy(duration: 0.19, extraBounce: 0.32), value: selected)
+        .animation(.kHover, value: hovering)
+        .animation(.kSelect, value: selected)
         .onHover { hovering = $0 }
     }
 
@@ -1116,7 +1125,7 @@ private struct LibraryRow: View {
     var body: some View {
         HStack(spacing: 12) {
             ZStack {
-                if let path = track.artworkPath, let image = NSImage(contentsOfFile: path) {
+                if let image = ArtworkCache.shared.image(track.artworkPath) {
                     Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
                 } else {
                     Rectangle().fill(Color.white.opacity(0.06))
@@ -1195,8 +1204,8 @@ private struct LibraryRow: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onPlay)
         .onHover { hovering = $0 }
-        .animation(.snappy(duration: 0.19, extraBounce: 0.27), value: hovering)
-        .animation(.snappy(duration: 0.19, extraBounce: 0.22), value: playing)
+        .animation(.kHover, value: hovering)
+        .animation(.kLayout, value: playing)
     }
 }
 
@@ -1220,7 +1229,7 @@ private struct QueueRow: View {
     var body: some View {
         HStack(spacing: 12) {
             ZStack {
-                if let path = track.artworkPath, let image = NSImage(contentsOfFile: path) {
+                if let image = ArtworkCache.shared.image(track.artworkPath) {
                     Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
                 } else {
                     Rectangle().fill(Color.white.opacity(0.06))
@@ -1281,7 +1290,7 @@ private struct QueueRow: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onPlay)
         .onHover { hovering = $0 }
-        .animation(.snappy(duration: 0.19, extraBounce: 0.27), value: hovering)
+        .animation(.kHover, value: hovering)
     }
 
     private func control(_ symbol: String, action: @escaping () -> Void) -> some View {
@@ -1291,175 +1300,6 @@ private struct QueueRow: View {
                 .foregroundColor(dim)
         }
         .buttonStyle(.plain)
-    }
-}
-
-// MARK: - player bar
-
-private struct MusicPlayerBar: View {
-    @ObservedObject var player: MusicPlayer
-    let theme: Theme
-    let bar: BarConfig
-
-    private var accent: Color { theme.accent?.color ?? .accentColor }
-    private var foreground: Color { theme.foreground?.color ?? .white }
-    private var dim: Color { (theme.dim ?? theme.foreground)?.color ?? .gray }
-
-    var body: some View {
-        HStack(spacing: 14) {
-            artwork
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Text(player.current?.displayTitle ?? "Nothing playing")
-                        .font(.custom(bar.fontFamily, size: 13))
-                        .foregroundColor(player.current == nil ? dim : foreground)
-                        .lineLimit(1)
-                    if let track = player.current, !track.album.isEmpty {
-                        Text("· \(track.album)")
-                            .font(.custom(bar.fontFamily, size: 11))
-                            .foregroundColor(dim)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
-                    Text(player.current?.displayArtist ?? "")
-                        .font(.custom(bar.fontFamily, size: 11))
-                        .foregroundColor(accent)
-                        .lineLimit(1)
-                }
-                SeekBar(player: player, accent: accent, dim: dim, font: bar.fontFamily)
-            }
-            controls
-            volume
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-    }
-
-    private var artwork: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.06))
-            if let path = player.current?.artworkPath, let image = NSImage(contentsOfFile: path) {
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
-            } else {
-                Image(systemName: "music.note")
-                    .font(.system(size: 16))
-                    .foregroundColor(dim.opacity(0.6))
-            }
-        }
-        .frame(width: 44, height: 44)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
-        .animation(.snappy(duration: 0.27, extraBounce: 0.32), value: player.current?.path)
-    }
-
-    private var controls: some View {
-        HStack(spacing: 14) {
-            HStack(spacing: 14) {
-                button("backward.fill", size: 12) { player.previous() }
-                Button { player.toggle() } label: {
-                    ZStack {
-                        Circle()
-                            .fill(accent.opacity(player.hasTrack ? 0.9 : 0.3))
-                            .frame(width: 30, height: 30)
-                        Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(theme.background?.color ?? .black)
-                            .offset(x: player.isPlaying ? 0 : 1)
-                    }
-                }
-                .buttonStyle(.plain)
-                .scaleEffect(player.isPlaying ? 1.04 : 1)
-                .animation(.snappy(duration: 0.21, extraBounce: 0.42), value: player.isPlaying)
-                button("forward.fill", size: 12) { player.next() }
-            }
-            .disabled(!player.hasTrack)
-
-            // Repeat works without a track, so it sits outside the disabled group.
-            Button { player.cycleRepeat() } label: {
-                Image(systemName: player.repeatMode.symbol)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(player.repeatMode == .off ? dim.opacity(0.5) : accent)
-                    .overlay(alignment: .bottom) {
-                        // Both "off" and "all" use the plain repeat glyph, so a
-                        // dot marks the modes that actually loop.
-                        if player.repeatMode != .off {
-                            Circle()
-                                .fill(accent)
-                                .frame(width: 3, height: 3)
-                                .offset(y: 3)
-                        }
-                    }
-                    .frame(width: 14, height: 14)
-            }
-            .buttonStyle(.plain)
-            .help(player.repeatMode.label)
-        }
-    }
-
-    private var volume: some View {
-        HStack(spacing: 6) {
-            Image(systemName: player.volume <= 0.01 ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                .font(.system(size: 10))
-                .foregroundColor(dim)
-            Slider(value: $player.volume, in: 0...1)
-                .controlSize(.mini)
-                .frame(width: 70)
-                .tint(accent)
-        }
-    }
-
-    private func button(_ symbol: String, size: CGFloat, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: size))
-                .foregroundColor(foreground.opacity(0.85))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-private struct SeekBar: View {
-    @ObservedObject var player: MusicPlayer
-    let accent: Color
-    let dim: Color
-    let font: String
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text(MusicTrack.clock(player.position))
-                .font(.custom(font, size: 10))
-                .foregroundColor(dim)
-                .monospacedDigit()
-                .frame(width: 34, alignment: .trailing)
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(dim.opacity(0.22))
-                    Capsule()
-                        .fill(accent)
-                        .frame(width: max(0, geo.size.width * player.progress))
-                        .animation(.linear(duration: 0.5), value: player.progress)
-                }
-                .frame(height: 4)
-                .frame(maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onEnded { value in
-                            player.seek(toFraction: value.location.x / max(geo.size.width, 1))
-                        }
-                )
-            }
-            .frame(height: 12)
-            Text(MusicTrack.clock(player.duration))
-                .font(.custom(font, size: 10))
-                .foregroundColor(dim)
-                .monospacedDigit()
-                .frame(width: 34, alignment: .leading)
-        }
     }
 }
 

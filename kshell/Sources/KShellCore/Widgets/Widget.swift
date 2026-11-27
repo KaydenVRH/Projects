@@ -12,6 +12,9 @@ public final class WidgetModel: ObservableObject {
     /// When true the widget takes no space in the bar (like sketchybar's
     /// `drawing=off`), e.g. a workspace with no windows that isn't focused.
     @Published public var hidden: Bool
+    /// The one item of its kind that is current — the focused workspace. The bar
+    /// draws a pill behind it that glides from item to item.
+    @Published public var active = false
 
     /// Horizontal breathing room contributed by this widget.
     public var paddingX: Double

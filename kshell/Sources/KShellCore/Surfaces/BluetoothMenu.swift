@@ -215,6 +215,7 @@ struct BluetoothMenuView: View {
                                 selected = index
                                 controller.toggle(device)
                             }
+                            .cascade(index, from: .trailing)
                     }
                 }
                 .padding(.horizontal, 12)
@@ -225,7 +226,7 @@ struct BluetoothMenuView: View {
             .frame(maxHeight: .infinity)
             .onChange(of: selected) { _, newValue in
                 guard devices.indices.contains(newValue) else { return }
-                withAnimation(.snappy(duration: 0.26, extraBounce: 0.24)) {
+                withAnimation(.kLayout) {
                     proxy.scrollTo(devices[newValue].id, anchor: .center)
                 }
             }

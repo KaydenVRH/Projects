@@ -33,14 +33,13 @@ public final class MediaIslandPanel: NSPanel {
     private var glass: SurfaceGlass?
     private var localGlass: NSVisualEffectView?
     private var mask = CAShapeLayer()
-    private var ticker: DispatchSourceTimer?
+    private lazy var motion = PanelMotion(screen: targetScreen)
+    /// Which way is away from the bar: the island's bounce goes that way, so
+    /// the window carries slack on that side while it moves.
+    private let growsDown: Bool
+    private var windowOrigin: CGPoint
     private var activationObserver: NSObjectProtocol?
-    private var progress: CGFloat = 0
     private var isShown = false
-
-    /// How long the island takes to unfurl, and to fold back.
-    static let openDuration: TimeInterval = 0.34
-    static let closeDuration: TimeInterval = 0.20
 
     /// - Parameters:
     ///   - barFrame: the bar's visible rectangle on screen; the island hangs off
@@ -101,6 +100,8 @@ public final class MediaIslandPanel: NSPanel {
         }
         expanded = full
         pill = small
+        growsDown = edge == .top
+        windowOrigin = full.origin
 
         island = MediaIslandState()
         host = NSHostingView(rootView: MediaIslandView(
@@ -154,7 +155,36 @@ public final class MediaIslandPanel: NSPanel {
             localGlass = effect
         }
 
-        apply(progress: 0)
+        motion.onStep = { [weak self] along, outward in
+            self?.apply(along: along, outward: outward)
+        }
+        motion.onSettle = { [weak self] open in
+            guard let self else { return }
+            if open { self.setSlack(false) } else if !self.isShown { self.finishHide() }
+        }
+        apply(along: 0, outward: 0)
+    }
+
+    /// The open rectangle plus room for the bounce, away from the bar.
+    private var slackFrame: NSRect {
+        let room = ceil((expanded.height - pill.height) * CGFloat(Spring.panelOutward.overshoot) * 1.4) + 6
+        var frame = expanded
+        frame.size.height += room
+        if growsDown { frame.origin.y -= room }
+        return frame
+    }
+
+    /// Room to bounce while moving; exactly the island at rest, so no strip
+    /// of invisible window is left over the app below.
+    private func setSlack(_ on: Bool) {
+        let target = on ? slackFrame : expanded
+        guard frame != target else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        setFrame(target, display: false)
+        windowOrigin = target.origin
+        apply(along: motion.along.value, outward: motion.outward.value)
+        CATransaction.commit()
     }
 
     public override var canBecomeKey: Bool { true }
@@ -182,7 +212,8 @@ public final class MediaIslandPanel: NSPanel {
         isShown = true
 
         glass = makeGlass?(targetScreen)
-        apply(progress: 0)
+        if !isVisible { apply(along: 0, outward: 0) }
+        setSlack(animated)
 
         Frontmost.claim()
         // Activation is asynchronous — see OverlayPanel.takeKeyboard. A panel
@@ -196,14 +227,14 @@ public final class MediaIslandPanel: NSPanel {
         }
 
         guard animated else {
-            apply(progress: 1)
+            motion.jump(open: true)
             return
         }
         // Started on the next turn: an animation begun in the same turn the
         // window is first ordered front gets skipped.
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isShown else { return }
-            self.morph(to: 1, duration: Self.openDuration, opening: true)
+            self.motion.animate(open: true)
         }
     }
 
@@ -214,66 +245,57 @@ public final class MediaIslandPanel: NSPanel {
             finishHide()
             return
         }
-        morph(to: 0, duration: Self.closeDuration, opening: false)
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.closeDuration + 0.04) { [weak self] in
-            guard let self, !self.isShown else { return }
+        setSlack(true)
+        motion.animate(open: false)
+        // The spring hides it when it settles; this covers a display that
+        // stopped ticking half-way.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self, !self.isShown, self.isVisible else { return }
             self.finishHide()
         }
     }
 
     private func finishHide() {
+        guard isVisible else { return }
         if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) }
         activationObserver = nil
-        ticker?.cancel()
-        ticker = nil
         glass?.park()
         glass = nil
         orderOut(nil)
+        motion.jump(open: false)
+        setSlack(false)
         Frontmost.handBack()
     }
 
-    /// Step the island between the pill and the full centre.
+    /// Put the island, its outline and its glass at the springs' values:
+    /// `along` widens it along the bar, `outward` drops it away from the bar
+    /// (and bounces a little past the open size).
     ///
     /// Everything — the window's content, the outline and the borrowed glass —
     /// is set to its model value each tick. Nothing is handed to Core Animation:
     /// the window server renders an effect view's blur from the layer's model
     /// geometry, so an animated frame would leave the glass behind.
-    private func morph(to target: CGFloat, duration: TimeInterval, opening: Bool) {
-        ticker?.cancel()
-        let from = progress
-        let start = CACurrentMediaTime()
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        let fps = max(60, min(Double(targetScreen.maximumFramesPerSecond), 120))
-        timer.schedule(deadline: .now(), repeating: 1.0 / fps)
-        timer.setEventHandler { [weak self] in
-            guard let self else { return }
-            let t = min(1, max(0, (CACurrentMediaTime() - start) / duration))
-            self.apply(progress: from + (target - from) * SlideEasing.value(t, opening: opening))
-            if t >= 1 {
-                self.ticker?.cancel()
-                self.ticker = nil
-            }
-        }
-        ticker = timer
-        timer.resume()
-    }
-
-    /// Put the island, its outline and its glass at `progress` (0…1).
-    private func apply(progress value: CGFloat) {
-        progress = value
+    private func apply(along: CGFloat, outward: CGFloat) {
+        let width = pill.width + (expanded.width - pill.width) * along
+        let height = pill.height + (expanded.height - pill.height) * outward
+        // Hung off the bar: a top bar's island keeps its top edge, a bottom
+        // bar's its bottom edge.
         let rect = NSRect(
-            x: pill.minX + (expanded.minX - pill.minX) * value,
-            y: pill.minY + (expanded.minY - pill.minY) * value,
-            width: pill.width + (expanded.width - pill.width) * value,
-            height: pill.height + (expanded.height - pill.height) * value
+            x: expanded.midX - width / 2,
+            y: growsDown ? expanded.maxY - height : expanded.minY,
+            width: width,
+            height: height
         )
         // The pill's radius is already the panel's: a 44pt pill at radius 22 is
         // a capsule, and the same radius at full height is the panel's corner.
         let outline = PanelStyle(radius: radius, filletRadius: 0, attachment: .none)
 
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
         let local = NSRect(
-            x: rect.minX - expanded.minX,
-            y: rect.minY - expanded.minY,
+            x: rect.minX - windowOrigin.x,
+            y: rect.minY - windowOrigin.y,
             width: rect.width,
             height: rect.height
         )
@@ -285,7 +307,9 @@ public final class MediaIslandPanel: NSPanel {
         shape.addPath(PanelGeometry.path(in: NSRect(origin: .zero, size: local.size), style: outline))
         mask.path = shape
 
-        island.progress = value
+        // The content crossfades from the pill to the centre on the way out;
+        // the bounce past open is geometry only.
+        island.progress = min(1, max(0, outward))
         glass?.setResting(rect, style: outline)
     }
 }

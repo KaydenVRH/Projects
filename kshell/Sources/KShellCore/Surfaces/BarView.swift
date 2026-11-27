@@ -9,6 +9,8 @@ import SwiftUI
 public struct BarView: View {
     @ObservedObject var viewModel: BarViewModel
     let notchWidth: CGFloat
+    /// The focus pill moves between items through this.
+    @Namespace private var pill
 
     public init(viewModel: BarViewModel, notchWidth: CGFloat = 0) {
         self.viewModel = viewModel
@@ -56,7 +58,8 @@ public struct BarView: View {
                 WidgetItemView(
                     model: runtime.model,
                     appearance: viewModel.appearance,
-                    theme: viewModel.theme
+                    theme: viewModel.theme,
+                    pill: pill
                 )
             }
         }
@@ -67,6 +70,9 @@ private struct WidgetItemView: View {
     @ObservedObject var model: WidgetModel
     let appearance: BarConfig
     let theme: Theme
+    let pill: Namespace.ID
+
+    @State private var hovered = false
 
     private var iconSize: Double {
         appearance.iconFontSize ?? appearance.fontSize + 3
@@ -98,8 +104,22 @@ private struct WidgetItemView: View {
                     }
                 }
                 .padding(.horizontal, model.paddingX)
+                .padding(.horizontal, model.active ? 4 : 0)
+                .background {
+                    if model.active {
+                        Capsule()
+                            .fill(labelColor.opacity(0.2))
+                            .overlay(Capsule().stroke(labelColor.opacity(0.35), lineWidth: 1))
+                            .padding(.vertical, 5)
+                            .matchedGeometryEffect(id: "active", in: pill)
+                    }
+                }
                 .contentShape(Rectangle())
+                .scaleEffect(hovered && model.action != nil ? 1.08 : 1)
+                .onHover { hovered = $0 }
+                .animation(.kHover, value: hovered)
                 .onTapGesture { model.action?() }
+                .transition(.scale(scale: 0.4).combined(with: .opacity))
             }
         }
     }

@@ -62,6 +62,8 @@ struct LauncherView: View {
     /// The armed row, moved with the arrow keys like the other pickers.
     @State private var selected = 0
     @FocusState private var focused: Bool
+    /// The armed highlight is one shape that glides from row to row.
+    @Namespace private var highlight
 
     private var bar: BarConfig { viewModel.appearance }
     private var theme: Theme { viewModel.theme }
@@ -91,7 +93,11 @@ struct LauncherView: View {
             search: { focused = true; return .handled },
             fieldFocused: focused
         ))
-        .onChange(of: query) { _, _ in selected = 0 }
+        .onChange(of: query) { _, _ in
+            // A new filter is a new list: let its rows cascade in.
+            Motion.reveal()
+            withAnimation(.kSelect) { selected = 0 }
+        }
         .onAppear { refocus() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             refocus()
@@ -129,9 +135,11 @@ struct LauncherView: View {
                                 theme: theme,
                                 font: bar.fontFamily,
                                 selected: index == selected,
+                                highlight: highlight,
                                 action: { onSelect(item) }
                             )
                             .id(item.id)
+                            .cascade(index)
                         }
                     }
                     .padding(.horizontal, 10)
@@ -140,7 +148,7 @@ struct LauncherView: View {
                 // Keep the armed row in view as the arrows walk past the fold.
                 .onChange(of: selected) { _, new in
                     guard results.indices.contains(new) else { return }
-                    withAnimation(.snappy(duration: 0.19, extraBounce: 0.22)) {
+                    withAnimation(.kLayout) {
                         proxy.scrollTo(results[new].id, anchor: .center)
                     }
                 }
@@ -156,10 +164,12 @@ struct LauncherView: View {
                         item: item,
                         theme: theme,
                         font: bar.fontFamily,
-                        selected: index == selected
+                        selected: index == selected,
+                        highlight: highlight
                     ) {
                         onSelect(item)
                     }
+                    .cascade(index, distance: 24)
                 }
             }
             .padding(18)
@@ -181,7 +191,7 @@ struct LauncherView: View {
     /// `g`/`G` — the ends of the list.
     private func jump(_ edge: VimEdge) -> KeyPress.Result {
         guard !results.isEmpty else { return .ignored }
-        selected = edge == .first ? 0 : results.count - 1
+        withAnimation(.kSelect) { selected = edge == .first ? 0 : results.count - 1 }
         return .handled
     }
 
@@ -190,7 +200,7 @@ struct LauncherView: View {
         guard !results.isEmpty else { return .ignored }
         let next = min(max(selected + delta, 0), results.count - 1)
         guard next != selected else { return .handled }
-        selected = next
+        withAnimation(.kSelect) { selected = next }
         return .handled
     }
 
@@ -217,6 +227,7 @@ private struct LauncherRow: View {
     let theme: Theme
     let font: String
     let selected: Bool
+    let highlight: Namespace.ID
     let action: () -> Void
 
     /// Only a tint — the armed row belongs to the arrow keys. Letting hover arm
@@ -249,19 +260,30 @@ private struct LauncherRow: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 9)
-                    .fill(selected ? accent.opacity(0.18)
-                                   : (hovered ? accent.opacity(0.09) : .clear))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 9)
-                    .stroke(accent.opacity(selected ? 0.55 : 0), lineWidth: 1)
-            )
+            // The armed row nudges right, like it was pushed by the highlight.
+            .offset(x: selected ? 4 : 0)
+            .background {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(accent.opacity(hovered && !selected ? 0.09 : 0))
+                    if selected {
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(accent.opacity(0.18))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 9)
+                                    .stroke(accent.opacity(0.55), lineWidth: 1)
+                            )
+                            .matchedGeometryEffect(id: "armed", in: highlight)
+                    }
+                }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .scaleEffect(hovered && !selected ? 1.012 : 1)
         .onHover { hovered = $0 }
+        .animation(.kHover, value: hovered)
+        .animation(.kSelect, value: selected)
     }
 
     @ViewBuilder
@@ -286,6 +308,7 @@ private struct LauncherItemView: View {
     let theme: Theme
     let font: String
     let selected: Bool
+    let highlight: Namespace.ID
     let action: () -> Void
 
     @State private var hovered = false
@@ -302,18 +325,29 @@ private struct LauncherItemView: View {
                     .frame(maxWidth: 120)
             }
             .padding(8)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(selected ? (theme.accent?.color ?? .white).opacity(0.20)
-                                   : (hovered ? (theme.accent?.color ?? .white).opacity(0.12) : .clear))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke((theme.accent?.color ?? .white).opacity(selected ? 0.55 : 0), lineWidth: 1)
-            )
+            .background {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill((theme.accent?.color ?? .white).opacity(hovered && !selected ? 0.12 : 0))
+                    if selected {
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill((theme.accent?.color ?? .white).opacity(0.20))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke((theme.accent?.color ?? .white).opacity(0.55), lineWidth: 1)
+                            )
+                            .matchedGeometryEffect(id: "armed", in: highlight)
+                    }
+                }
+            }
         }
-        .buttonStyle(.plain)
+        .pressBounce()
+        // Hovered icons hop up a little.
+        .scaleEffect(hovered ? 1.06 : 1)
+        .offset(y: hovered ? -3 : 0)
         .onHover { hovered = $0 }
+        .animation(.kBouncy, value: hovered)
+        .animation(.kSelect, value: selected)
     }
 
     @ViewBuilder

@@ -77,11 +77,56 @@ public final class MusicPlayer: NSObject, ObservableObject {
         repeatMode = mode
     }
 
+    /// Play the queue in a random order, remembered across launches. The queue
+    /// itself keeps its order; only the walk through it is shuffled, so turning
+    /// shuffle off carries on from the same song in the listed order.
+    @Published public private(set) var shuffle = UserDefaults.standard.bool(forKey: "music_shuffle_v1") {
+        didSet {
+            UserDefaults.standard.set(shuffle, forKey: "music_shuffle_v1")
+            reorder()
+        }
+    }
+
+    public func toggleShuffle() { shuffle.toggle() }
+
+    /// The order the queue is walked in: queue indices, the current one first
+    /// when shuffled.
+    private var order: [Int] = []
+
+    private func reorder() {
+        let all = Array(queue.indices)
+        guard shuffle, !all.isEmpty else {
+            order = all
+            return
+        }
+        order = [index] + all.filter { $0 != index }.shuffled()
+    }
+
+    /// The song after this one, as next would play it.
+    public var upNext: MusicTrack? {
+        guard queue.count > 1, let at = order.firstIndex(of: index) else { return nil }
+        let next = at + 1 < order.count ? order[at + 1] : (repeatMode == .off ? nil : order[0])
+        return next.map { queue[$0] }
+    }
+
     /// Live bands for the desktop visualiser.
     public let spectrum = AudioSpectrum()
     /// Whether anyone is watching the spectrum. With the visualiser switched off
     /// the analyser stays idle rather than FFT-ing into the void.
-    public var spectrumWanted = true
+    public var spectrumWanted = true {
+        didSet { refreshSpectrum() }
+    }
+    /// The music panel draws the spectrum too, so it switches the analyser on
+    /// while it is open even with the desktop visualiser off.
+    public var spectrumWatched = false {
+        didSet { refreshSpectrum() }
+    }
+
+    private var wantsSpectrum: Bool { spectrumWanted || spectrumWatched }
+
+    private func refreshSpectrum() {
+        if isPlaying { spectrum.isEnabled = wantsSpectrum }
+    }
 
     private let engine = AVAudioEngine()
     private let node = AVAudioPlayerNode()
@@ -111,6 +156,14 @@ public final class MusicPlayer: NSObject, ObservableObject {
     public var progress: Double {
         guard duration > 0 else { return 0 }
         return min(max(position / duration, 0), 1)
+    }
+
+    /// Where playback is this instant. `position` is only published twice a
+    /// second; a view redrawing every frame asks this instead, so a progress
+    /// line glides rather than stepping.
+    public func livePosition() -> Double {
+        guard isPlaying, let file else { return position }
+        return currentPosition(of: file)
     }
 
     /// What the media monitor should show, or nil when nothing is loaded.
@@ -258,6 +311,7 @@ public final class MusicPlayer: NSObject, ObservableObject {
     private func begin(_ track: MusicTrack, queue tracks: [MusicTrack], index start: Int) {
         queue = tracks
         index = min(max(start, 0), max(tracks.count - 1, 0))
+        reorder()
         history.removeAll()
         consecutiveFailures = 0
         beginPlayback(track)
@@ -267,6 +321,8 @@ public final class MusicPlayer: NSObject, ObservableObject {
     /// and by downloads finishing).
     public func enqueue(_ track: MusicTrack) {
         queue.append(track)
+        // A late arrival goes after everything already lined up, in either order.
+        order.append(queue.count - 1)
         if current == nil { beginPlayback(track) }
     }
 
@@ -308,7 +364,7 @@ public final class MusicPlayer: NSObject, ObservableObject {
         current = track
         isPlaying = true
         position = 0
-        spectrum.isEnabled = spectrumWanted
+        spectrum.isEnabled = wantsSpectrum
         startTicker()
         writeSidecar()
     }
@@ -362,7 +418,7 @@ public final class MusicPlayer: NSObject, ObservableObject {
         }
         node.play()
         isPlaying = true
-        spectrum.isEnabled = spectrumWanted
+        spectrum.isEnabled = wantsSpectrum
         startTicker()
         writeSidecar()
     }
@@ -420,6 +476,8 @@ public final class MusicPlayer: NSObject, ObservableObject {
     public func remove(_ track: MusicTrack) {
         guard let at = queue.firstIndex(of: track) else { return }
         queue.remove(at: at)
+        // Drop it from the walk and close the gap it leaves in the indices.
+        order = order.filter { $0 != at }.map { $0 > at ? $0 - 1 : $0 }
         if track == current {
             if queue.isEmpty {
                 stop()
@@ -457,17 +515,18 @@ public final class MusicPlayer: NSObject, ObservableObject {
             stop()
             return
         }
-        let next = index + step
-        if next >= queue.count {
+        if order.count != queue.count { reorder() }
+        let next = (order.firstIndex(of: index) ?? 0) + step
+        if next >= order.count {
             if auto && repeatMode == .off {
                 stop()
                 return
             }
-            index = 0
+            index = order[0]
         } else if next < 0 {
-            index = queue.count - 1
+            index = order[order.count - 1]
         } else {
-            index = next
+            index = order[next]
         }
         beginPlayback(queue[index])
     }

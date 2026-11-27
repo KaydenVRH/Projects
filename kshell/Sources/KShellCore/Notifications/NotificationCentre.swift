@@ -228,6 +228,7 @@ struct NotificationCentreView: View {
                         Section {
                             ForEach(section.items) { item in
                                 row(item, index: index(of: item), selected: index(of: item) == selected)
+                                    .cascade(index(of: item), from: .trailing)
                             }
                         } header: {
                             Text(section.title)
@@ -249,7 +250,7 @@ struct NotificationCentreView: View {
             .frame(maxHeight: .infinity)
             .onChange(of: selected) { _, newValue in
                 guard items.indices.contains(newValue) else { return }
-                withAnimation(.snappy(duration: 0.28, extraBounce: 0.10)) {
+                withAnimation(.kLayout) {
                     proxy.scrollTo(items[newValue].id, anchor: .center)
                 }
             }

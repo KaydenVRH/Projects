@@ -198,6 +198,7 @@ struct WallpaperLauncherView: View {
                             .onTapGesture {
                                 if selectedIndex == index { apply(item) } else { selectedIndex = index }
                             }
+                            .cascade(index, from: .leading)
                     }
                 }
                 .padding(.horizontal, 12)
@@ -208,7 +209,7 @@ struct WallpaperLauncherView: View {
             .frame(maxHeight: .infinity)
             .onChange(of: selectedIndex) { _, newValue in
                 guard items.indices.contains(newValue) else { return }
-                withAnimation(.snappy(duration: 0.26, extraBounce: 0.24)) {
+                withAnimation(.kLayout) {
                     proxy.scrollTo(items[newValue].id, anchor: .center)
                 }
             }
@@ -244,7 +245,7 @@ struct WallpaperLauncherView: View {
                 .fill(selected ? accent.opacity(0.18) : Color.white.opacity(0.03))
         )
         .contentShape(Rectangle())
-        .animation(.snappy(duration: 0.22, extraBounce: 0.3), value: selected)
+        .animation(.kSelect, value: selected)
     }
 
     @ViewBuilder
