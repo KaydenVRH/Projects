@@ -135,23 +135,42 @@ struct WallpaperLauncherView: View {
     let onClose: () -> Void
 
     @State private var selectedIndex = 0
+    @State private var hovered: String?
     @FocusState private var focused: Bool
+    @Namespace private var highlight
 
     private var bar: BarConfig { viewModel.appearance }
     private var theme: Theme { viewModel.theme }
     private var accent: Color { theme.accent?.color ?? .accentColor }
     private var foreground: Color { theme.foreground?.color ?? .white }
+    private var palette: KitPalette { KitPalette(theme: theme, bar: bar) }
+    private var selectedItem: WallpaperItem? {
+        items.indices.contains(selectedIndex) ? items[selectedIndex] : nil
+    }
+
+    /// Thumbnails sit two to a row.
+    private let columns = 2
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider().overlay(accent.opacity(0.25))
+            KitHeader(
+                icon: "photo.on.rectangle.angled",
+                title: "Wallpapers",
+                subtitle: "\(items.count) in \(directories.count) folder\(directories.count == 1 ? "" : "s")",
+                palette: palette
+            )
             if items.isEmpty {
                 empty
             } else {
-                list
+                preview
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
+                grid
             }
-            footer
+            KitFooter(
+                hints: [("↑↓←→", "browse"), ("⏎", "apply")],
+                palette: palette
+            ) { EmptyView() }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .modifier(PanelSurface(viewModel: viewModel, edge: .leading, fallback: sheet))
@@ -159,8 +178,10 @@ struct WallpaperLauncherView: View {
         .focusEffectDisabled()
         .focused($focused)
         .modifier(VimListKeys(move: vimMove, jump: jump))
-        .onKeyPress(.upArrow) { vimMove(-1) }
-        .onKeyPress(.downArrow) { vimMove(1) }
+        .onKeyPress(.upArrow) { vimMove(-columns) }
+        .onKeyPress(.downArrow) { vimMove(columns) }
+        .onKeyPress(.leftArrow) { vimMove(-1) }
+        .onKeyPress(.rightArrow) { vimMove(1) }
         .onKeyPress(.return) { applySelected(); return .handled }
         .onKeyPress(.escape) { onClose(); return .handled }
         .onExitCommand { onClose() }
@@ -172,40 +193,87 @@ struct WallpaperLauncherView: View {
 
     private var sheet: SheetShape { SheetShape(radius: 22, corners: .trailing) }
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "photo.on.rectangle.angled")
-                .foregroundColor(accent)
-            Text("Wallpapers")
-                .font(.custom(bar.fontFamily, size: 18))
-                .foregroundColor(foreground)
-            Spacer()
-            Text("\(items.count)")
-                .font(.custom(bar.fontFamily, size: 13))
-                .foregroundColor(foreground.opacity(0.5))
+    /// The armed wallpaper, big, drifting slowly like a desktop would show it.
+    /// Moving the selection crossfades through a blur to the next one.
+    private var preview: some View {
+        ZStack(alignment: .bottomLeading) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.white.opacity(0.05))
+                if let item = selectedItem {
+                    KenBurns(seed: item.id) { thumbnail(item) }
+                        .id(item.id)
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .scale(scale: 1.08)),
+                            removal: .opacity
+                        ))
+                }
+            }
+            .frame(height: 210)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+            LinearGradient(colors: [.clear, .black.opacity(0.65)], startPoint: .center, endPoint: .bottom)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .allowsHitTesting(false)
+
+            if let item = selectedItem {
+                HStack(alignment: .bottom) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.name)
+                            .font(.custom(bar.fontFamily, size: 16))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                        Text(item.isVideo ? "Live wallpaper" : "Still image")
+                            .font(.custom(bar.fontFamily, size: 10.5))
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                    .id("label-\(item.id)")
+                    .transition(.blurSwap)
+                    Spacer()
+                    Button { apply(item) } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "checkmark")
+                            Text("Apply")
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.black.opacity(0.8))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(accent))
+                        .shadow(color: accent.opacity(0.5), radius: 8)
+                    }
+                    .pressBounce()
+                }
+                .padding(14)
+            }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
+        .frame(height: 210)
+        .shadow(color: .black.opacity(0.35), radius: 14, y: 6)
+        .animation(.kLayout, value: selectedIndex)
     }
 
-    private var list: some View {
+    private var grid: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: 8) {
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: columns),
+                    spacing: 10
+                ) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        row(item, selected: index == selectedIndex)
+                        tile(item, selected: index == selectedIndex)
                             .id(item.id)
                             .onTapGesture {
-                                if selectedIndex == index { apply(item) } else { selectedIndex = index }
+                                if selectedIndex == index {
+                                    apply(item)
+                                } else {
+                                    withAnimation(.kSelect) { selectedIndex = index }
+                                }
                             }
                             .cascade(index, from: .leading)
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .scrollTargetLayout()
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
             }
-            .scrollTargetBehavior(.viewAligned)
             .frame(maxHeight: .infinity)
             .onChange(of: selectedIndex) { _, newValue in
                 guard items.indices.contains(newValue) else { return }
@@ -216,42 +284,50 @@ struct WallpaperLauncherView: View {
         }
     }
 
-    private func row(_ item: WallpaperItem, selected: Bool) -> some View {
-        HStack(spacing: 12) {
+    private func tile(_ item: WallpaperItem, selected: Bool) -> some View {
+        let isHovered = hovered == item.id
+        return ZStack(alignment: .bottomLeading) {
             thumbnail(item)
-                .frame(width: 132, height: 82)
+                .frame(height: 92)
+                .frame(maxWidth: .infinity)
                 .clipped()
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(selected ? accent : Color.white.opacity(0.12), lineWidth: selected ? 2 : 1)
-                )
-
-            VStack(alignment: .leading, spacing: 3) {
+                .scaleEffect(isHovered ? 1.08 : 1)
+            LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .center, endPoint: .bottom)
+            HStack(spacing: 4) {
+                if item.isVideo {
+                    Image(systemName: "play.fill").font(.system(size: 7))
+                }
                 Text(item.name)
-                    .font(.custom(bar.fontFamily, size: 14))
-                    .foregroundColor(selected ? foreground : foreground.opacity(0.7))
+                    .font(.custom(bar.fontFamily, size: 10.5))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(item.isVideo ? "Live wallpaper" : "Image")
-                    .font(.custom(bar.fontFamily, size: 11))
-                    .foregroundColor(selected ? accent : foreground.opacity(0.4))
             }
-            Spacer(minLength: 0)
+            .foregroundColor(.white.opacity(0.92))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
         }
-        .padding(8)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(selected ? accent.opacity(0.18) : Color.white.opacity(0.03))
-        )
+        .frame(height: 92)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            if selected {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(accent, lineWidth: 2.5)
+                    .shadow(color: accent.opacity(0.7), radius: 8)
+                    .matchedGeometryEffect(id: "wall-armed", in: highlight)
+            }
+        }
+        .scaleEffect(selected ? 0.96 : 1)
+        .offset(y: isHovered && !selected ? -2 : 0)
         .contentShape(Rectangle())
-        .animation(.kSelect, value: selected)
+        .onHover { inside in hovered = inside ? item.id : (hovered == item.id ? nil : hovered) }
+        .animation(.kBouncy, value: selected)
+        .animation(.kHover, value: isHovered)
     }
 
     @ViewBuilder
     private func thumbnail(_ item: WallpaperItem) -> some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.06))
+            Rectangle().fill(Color.white.opacity(0.06))
             if let image = item.image {
                 Image(nsImage: image)
                     .resizable()
@@ -268,33 +344,13 @@ struct WallpaperLauncherView: View {
         }
     }
 
-    private var footer: some View {
-        HStack {
-            Text(items.indices.contains(selectedIndex) ? items[selectedIndex].name : "—")
-                .font(.custom(bar.fontFamily, size: 12))
-                .foregroundColor(foreground)
-                .lineLimit(1)
-            Spacer()
-            Text("↑ ↓  browse     ⏎  apply")
-                .font(.custom(bar.fontFamily, size: 11))
-                .foregroundColor(foreground.opacity(0.5))
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
-    }
-
     private var empty: some View {
-        VStack(spacing: 8) {
-            Text("No wallpapers found")
-                .font(.custom(bar.fontFamily, size: 15))
-                .foregroundColor(foreground)
-            Text(directories.map(\.path).joined(separator: "\n"))
-                .font(.custom(bar.fontFamily, size: 11))
-                .foregroundColor(foreground.opacity(0.45))
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(30)
+        KitEmpty(
+            icon: "photo.on.rectangle.angled",
+            title: "No wallpapers found",
+            detail: "Looked in " + directories.map(\.path).joined(separator: ", "),
+            palette: palette
+        )
     }
 
     private func vimMove(_ delta: Int) -> KeyPress.Result {
@@ -304,13 +360,13 @@ struct WallpaperLauncherView: View {
 
     private func jump(_ edge: VimEdge) -> KeyPress.Result {
         guard !items.isEmpty else { return .ignored }
-        selectedIndex = edge == .first ? 0 : items.count - 1
+        withAnimation(.kSelect) { selectedIndex = edge == .first ? 0 : items.count - 1 }
         return .handled
     }
 
     private func move(_ delta: Int) {
         guard !items.isEmpty else { return }
-        selectedIndex = max(0, min(items.count - 1, selectedIndex + delta))
+        withAnimation(.kSelect) { selectedIndex = max(0, min(items.count - 1, selectedIndex + delta)) }
     }
 
     private func applySelected() {
@@ -332,5 +388,24 @@ struct WallpaperLauncherView: View {
     private func refocus() {
         DispatchQueue.main.async { focused = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { focused = true }
+    }
+}
+
+/// A slow pan and zoom over a still, so a preview feels alive. Each picture
+/// drifts its own way.
+struct KenBurns<Content: View>: View {
+    let seed: String
+    @ViewBuilder let content: Content
+
+    @State private var drifted = false
+
+    var body: some View {
+        let direction: CGFloat = seed.hashValue % 2 == 0 ? 1 : -1
+        content
+            .scaleEffect(drifted ? 1.14 : 1.02)
+            .offset(x: drifted ? 10 * direction : -10 * direction, y: drifted ? -6 : 4)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 9).repeatForever(autoreverses: true)) { drifted = true }
+            }
     }
 }

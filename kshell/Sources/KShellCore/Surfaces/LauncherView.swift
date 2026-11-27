@@ -74,13 +74,21 @@ struct LauncherView: View {
         query.isEmpty ? items : items.filter { $0.name.localizedCaseInsensitiveContains(query) }
     }
 
+    private var palette: KitPalette { KitPalette(theme: theme, bar: bar) }
+
     var body: some View {
         VStack(spacing: 0) {
             field
-            Divider().overlay(accent.opacity(0.25))
             switch style {
             case .list: list
             case .grid: grid
+            }
+            KitFooter(hints: [("↑↓", "move"), ("⏎", "open"), ("esc", "close")], palette: palette) {
+                Text("\(results.count) of \(items.count)")
+                    .font(.custom(bar.fontFamily, size: 10.5))
+                    .foregroundColor(foreground.opacity(0.5))
+                    .contentTransition(.numericText())
+                    .animation(.kLayout, value: results.count)
             }
         }
         .modifier(PanelSurface(viewModel: viewModel, edge: .bottom, fallback: SheetShape(radius: 22)))
@@ -106,19 +114,46 @@ struct LauncherView: View {
 
     // MARK: - pieces
 
+    /// The search box: a capsule that lights up while it has the keyboard, with
+    /// a magnifier that wiggles on every keystroke.
     private var field: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .foregroundColor(accent.opacity(0.8))
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(accent)
+                .symbolEffect(.bounce, value: query.count)
             TextField(placeholder, text: $query)
                 .textFieldStyle(.plain)
-                .font(.custom(bar.fontFamily, size: 18))
+                .font(.custom(bar.fontFamily, size: 17))
                 .foregroundColor(foreground)
                 .focused($focused)
                 .onSubmit { if let item = results[safe: selected] ?? results.first { onSelect(item) } }
+            if !query.isEmpty {
+                Button { query = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(foreground.opacity(0.45))
+                }
+                .pressBounce()
+                .transition(.scale.combined(with: .opacity))
+            }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+        .background(
+            Capsule(style: .continuous)
+                .fill(Color.white.opacity(focused ? 0.09 : 0.05))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(accent.opacity(focused ? 0.6 : 0.15), lineWidth: 1.2)
+                )
+                .shadow(color: accent.opacity(focused ? 0.3 : 0), radius: 12)
+        )
+        .padding(.horizontal, 14)
+        .padding(.top, 14)
+        .padding(.bottom, 8)
+        .animation(.kHover, value: focused)
+        .animation(.kBouncy, value: query.isEmpty)
     }
 
     @ViewBuilder
@@ -262,27 +297,17 @@ private struct LauncherRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             // The armed row nudges right, like it was pushed by the highlight.
             .offset(x: selected ? 4 : 0)
-            .background {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 9)
-                        .fill(accent.opacity(hovered && !selected ? 0.09 : 0))
-                    if selected {
-                        RoundedRectangle(cornerRadius: 9)
-                            .fill(accent.opacity(0.18))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 9)
-                                    .stroke(accent.opacity(0.55), lineWidth: 1)
-                            )
-                            .matchedGeometryEffect(id: "armed", in: highlight)
-                    }
-                }
-            }
+            .kitCard(
+                selected: selected,
+                hovered: hovered,
+                palette: KitPalette(theme: theme, font: font),
+                highlight: highlight,
+                radius: 11
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .scaleEffect(hovered && !selected ? 1.012 : 1)
         .onHover { hovered = $0 }
-        .animation(.kHover, value: hovered)
         .animation(.kSelect, value: selected)
     }
 

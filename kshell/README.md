@@ -193,6 +193,17 @@ especially). `Surfaces/Motion.swift` is the one place they are tuned:
   - In the bar, the focused workspace sits in a pill that springs from
     workspace to workspace, and workspaces that appear or empty out pop in and
     out.
+- **The menus share one look** (`Surfaces/Kit.swift`):
+  - **Header:** an icon on an accent tile that pops in, with a live subtitle.
+  - **Rows:** soft cards, with one glowing highlight that glides between them.
+  - **Devices and toggles:** round icon bubbles that pulse while a device is
+    connected, and a toggle whose knob stretches as it travels.
+  - **Key hints:** drawn as keycaps along the foot of each menu.
+  - **Wallpapers:** the picker shows the armed wallpaper big, drifting slowly,
+    over a two-column grid.
+  - **Themes:** the picker fans each theme's colours out as discs.
+  - **Media island:** takes the cover's colour, with the same wave line and
+    controls as the music panel.
 - **Reduce motion** in macOS's Accessibility settings is respected: panels then
   appear in place.
 

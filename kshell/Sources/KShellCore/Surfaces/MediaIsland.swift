@@ -396,9 +396,7 @@ struct MediaIslandView: View {
             }
             Spacer(minLength: 0)
             if state.hasTrack {
-                Image(systemName: state.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(accent)
+                Equaliser(playing: state.isPlaying, color: tint)
             }
         }
         .padding(.horizontal, 12)
@@ -407,7 +405,7 @@ struct MediaIslandView: View {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         Capsule().fill(Color.white.opacity(0.10))
-                        Capsule().fill(accent).frame(width: max(2, geo.size.width * state.progress))
+                        Capsule().fill(tint).frame(width: max(2, geo.size.width * state.progress))
                     }
                 }
                 .frame(height: 2)
@@ -431,87 +429,80 @@ struct MediaIslandView: View {
         .background(bar.background.color.opacity(style == nil ? 1 : 0))
     }
 
+    /// The cover's colour, as the music panel takes it.
+    private var tint: Color {
+        ArtworkCache.shared.tint(state.artworkPath).map(Color.init(nsColor:)) ?? accent
+    }
+
     private var track: some View {
-        VStack(spacing: 18) {
-            HStack(alignment: .top, spacing: 18) {
-                thumbnail(size: 132, artworkOnly: true)
-                VStack(alignment: .leading, spacing: 5) {
+        VStack(spacing: 14) {
+            HStack(alignment: .center, spacing: 16) {
+                thumbnail(size: 112, artworkOnly: true)
+                    .shadow(color: tint.opacity(state.isPlaying ? 0.55 : 0.2), radius: 18, y: 6)
+                    .scaleEffect(state.isPlaying ? 1 : 0.92)
+                    .animation(.kBouncy, value: state.isPlaying)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(state.source == "kshell" ? "KSHELL LIBRARY" : "NOW PLAYING")
+                        .font(.system(size: 9, weight: .bold))
+                        .tracking(1.3)
+                        .foregroundColor(tint)
                     Text(state.title)
-                        .font(.custom(bar.fontFamily, size: 19))
+                        .font(.custom(bar.fontFamily, size: 18))
                         .foregroundColor(foreground)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
+                        .id("t-\(state.title)")
+                        .transition(.blurSwap)
                     if !state.artist.isEmpty {
-                        Text(state.artist)
-                            .font(.custom(bar.fontFamily, size: 15))
-                            .foregroundColor(accent)
+                        Text(state.album.isEmpty ? state.artist : "\(state.artist) · \(state.album)")
+                            .font(.custom(bar.fontFamily, size: 12.5))
+                            .foregroundColor(foreground.opacity(0.7))
                             .lineLimit(1)
+                            .id("a-\(state.artist)\(state.album)")
+                            .transition(.blurSwap)
                     }
-                    if !state.album.isEmpty {
-                        Text(state.album)
-                            .font(.custom(bar.fontFamily, size: 13))
-                            .foregroundColor(dim)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
-                    Text(state.source == "kshell" ? "kshell library" : "now playing")
-                        .font(.custom(bar.fontFamily, size: 11))
-                        .foregroundColor(dim.opacity(0.7))
                 }
+                .animation(.kBouncy, value: state.title)
                 Spacer(minLength: 0)
             }
-            .frame(height: 132)
 
-            progress
-            controls
+            VStack(spacing: 4) {
+                WaveLine(progress: state.progress, playing: state.isPlaying, tint: tint, dim: dim)
+                HStack {
+                    Text(clock(state.position))
+                    Spacer()
+                    Text(state.duration > 0 ? "-" + clock(max(0, state.duration - state.position)) : "--:--")
+                }
+                .font(.custom(bar.fontFamily, size: 10))
+                .foregroundColor(dim)
+                .monospacedDigit()
+            }
+
+            HStack(spacing: 22) {
+                SkipButton(symbol: "backward.fill", colour: foreground) { monitor.control(.previous) }
+                PlayButton(playing: state.isPlaying, tint: tint, tintColour: ArtworkCache.shared.tint(state.artworkPath)) {
+                    monitor.control(.playPause)
+                }
+                SkipButton(symbol: "forward.fill", colour: foreground) { monitor.control(.next) }
+            }
+            .frame(maxWidth: .infinity)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
-    }
-
-    private var progress: some View {
-        VStack(spacing: 6) {
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.12))
-                    Capsule().fill(accent).frame(width: max(2, geo.size.width * state.progress))
-                }
-            }
-            .frame(height: 4)
-            HStack {
-                Text(clock(state.position))
-                Spacer()
-                Text(state.duration > 0 ? clock(state.duration) : "--:--")
-            }
-            .font(.custom(bar.fontFamily, size: 11))
-            .foregroundColor(dim)
+        .background {
+            AmbientArt(path: state.artworkPath, tint: tint, playing: state.isPlaying)
+                .opacity(0.9)
         }
-    }
-
-    private var controls: some View {
-        HStack(spacing: 26) {
-            button("backward.end.fill", size: 20) { monitor.control(.previous) }
-            button(state.isPlaying ? "pause.circle.fill" : "play.circle.fill", size: 40) {
-                monitor.control(.playPause)
-            }
-            button("forward.end.fill", size: 20) { monitor.control(.next) }
-        }
-        .frame(maxWidth: .infinity)
+        .clipped()
     }
 
     private var idle: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "music.note.list")
-                .font(.system(size: 30))
-                .foregroundColor(dim.opacity(0.6))
-            Text("Nothing playing")
-                .font(.custom(bar.fontFamily, size: 15))
-                .foregroundColor(foreground)
-            Text("Start something in the music panel")
-                .font(.custom(bar.fontFamily, size: 11))
-                .foregroundColor(dim)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        KitEmpty(
+            icon: "music.note.list",
+            title: "Nothing playing",
+            detail: "Start something in the music panel",
+            palette: KitPalette(theme: theme, bar: bar)
+        )
     }
 
     /// The one piece both layouts share, so the artwork is continuous across the
@@ -539,19 +530,6 @@ struct MediaIslandView: View {
                 .stroke(Color.white.opacity(0.10), lineWidth: 1)
         )
         .shadow(color: artworkOnly ? .black.opacity(0.45) : .clear, radius: 12, y: 5)
-    }
-
-    private func button(_ symbol: String, size: CGFloat, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: size, weight: .regular))
-                .foregroundColor(foreground)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-        }
     }
 
     // MARK: - helpers

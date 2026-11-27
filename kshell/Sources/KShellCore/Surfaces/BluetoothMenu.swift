@@ -71,9 +71,12 @@ struct BluetoothMenuView: View {
     let onClose: () -> Void
 
     @State private var selected = 0
+    @State private var hovered: String?
     @FocusState private var focused: Bool
+    @Namespace private var highlight
 
     private var bar: BarConfig { viewModel.appearance }
+    private var palette: KitPalette { KitPalette(theme: theme, bar: bar) }
     private var theme: Theme { viewModel.theme }
     private var accent: Color { theme.accent?.color ?? .accentColor }
     private var foreground: Color { theme.foreground?.color ?? .white }
@@ -84,7 +87,6 @@ struct BluetoothMenuView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(accent.opacity(0.22))
             if devices.isEmpty {
                 empty
             } else {
@@ -121,85 +123,50 @@ struct BluetoothMenuView: View {
     // MARK: - chrome
 
     private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "dot.radiowaves.left.and.right")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(accent)
-            Text("Bluetooth")
-                .font(.custom(bar.fontFamily, size: 18))
-                .foregroundColor(foreground)
-            Spacer()
-            Button(action: { controller.togglePower() }) {
-                HStack(spacing: 5) {
-                    Image(systemName: "power")
-                        .font(.system(size: 10, weight: .bold))
-                    Text(controller.isPowered ? "On" : "Off")
-                        .font(.custom(bar.fontFamily, size: 11))
-                }
-                .foregroundColor(controller.isPowered ? accent : dim)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule().fill(
-                        controller.isPowered
-                            ? accent.opacity(0.16)
-                            : Color.white.opacity(0.06)
-                    )
-                )
-            }
-            .buttonStyle(.plain)
-            .help("Turn Bluetooth \(controller.isPowered ? "off" : "on") (p)")
+        KitHeader(
+            icon: "dot.radiowaves.left.and.right",
+            title: "Bluetooth",
+            subtitle: controller.isPowered
+                ? "\(devices.filter(\.isConnected).count) connected · \(devices.count) paired"
+                : "Radio off",
+            palette: palette
+        ) {
+            KitToggle(isOn: controller.isPowered, palette: palette) { controller.togglePower() }
+                .help("Turn Bluetooth \(controller.isPowered ? "off" : "on") (p)")
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
     }
 
     private var footer: some View {
-        VStack(spacing: 6) {
-            Divider().overlay(accent.opacity(0.12))
+        VStack(spacing: 0) {
             if let message = controller.message {
-                Text(message)
-                    .font(.custom(bar.fontFamily, size: 11))
-                    .foregroundColor(.orange)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                    Text(message).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                }
+                .font(.custom(bar.fontFamily, size: 11))
+                .foregroundColor(.orange)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            HStack(spacing: 10) {
-                Text("\(devices.count) paired")
-                    .font(.custom(bar.fontFamily, size: 11))
-                    .foregroundColor(foreground.opacity(0.45))
-                Spacer()
-                Text("j/k  ·  ⏎ connect  ·  p power  ·  r refresh")
-                    .font(.custom(bar.fontFamily, size: 10))
-                    .foregroundColor(foreground.opacity(0.40))
-            }
+            KitFooter(
+                hints: [("⏎", "connect"), ("p", "power"), ("r", "refresh")],
+                palette: palette
+            ) { EmptyView() }
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 8)
-        .padding(.bottom, 10)
+        .animation(.kLayout, value: controller.message)
     }
 
     private var empty: some View {
-        VStack(spacing: 9) {
-            Image(systemName: controller.isPowered
-                  ? "dot.radiowaves.left.and.right"
-                  : "bolt.horizontal.circle")
-                .font(.system(size: 26, weight: .thin))
-                .foregroundColor(accent.opacity(0.65))
-            Text(controller.isPowered ? "No paired devices" : "Bluetooth is off")
-                .font(.custom(bar.fontFamily, size: 15))
-                .foregroundColor(foreground)
-            Text(controller.isPowered
-                 ? "Pair a device in System Settings → Bluetooth and it appears here."
-                 : "Press p to turn it back on.")
-                .font(.custom(bar.fontFamily, size: 11))
-                .foregroundColor(foreground.opacity(0.45))
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 260)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(30)
+        KitEmpty(
+            icon: controller.isPowered ? "dot.radiowaves.left.and.right" : "bolt.horizontal.circle",
+            title: controller.isPowered ? "No paired devices" : "Bluetooth is off",
+            detail: controller.isPowered
+                ? "Pair a device in System Settings → Bluetooth and it appears here."
+                : "Press p, or flip the switch, to turn it back on.",
+            palette: palette
+        )
     }
 
     // MARK: - the list
@@ -212,7 +179,7 @@ struct BluetoothMenuView: View {
                         row(device, selected: index == selected)
                             .id(device.id)
                             .onTapGesture {
-                                selected = index
+                                withAnimation(.kSelect) { selected = index }
                                 controller.toggle(device)
                             }
                             .cascade(index, from: .trailing)
@@ -235,11 +202,9 @@ struct BluetoothMenuView: View {
 
     private func row(_ device: BluetoothDevice, selected: Bool) -> some View {
         HStack(spacing: 12) {
-            icon(for: device)
-                .frame(width: 26, height: 26)
-                .foregroundColor(device.isConnected ? accent : foreground.opacity(0.72))
+            IconBubble(symbol: symbol(for: device), active: device.isConnected, palette: palette)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(device.name)
                     .font(.custom(bar.fontFamily, size: 13.5))
                     .foregroundColor(foreground)
@@ -253,17 +218,11 @@ struct BluetoothMenuView: View {
 
             trailing(for: device)
         }
-        .padding(.horizontal, 11)
+        .padding(.horizontal, 10)
         .padding(.vertical, 9)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(selected ? accent.opacity(0.14) : Color.white.opacity(0.025))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(selected ? accent.opacity(0.55) : Color.clear, lineWidth: 1)
-        )
+        .kitCard(selected: selected, hovered: hovered == device.id, palette: palette, highlight: highlight)
         .contentShape(Rectangle())
+        .onHover { inside in hovered = inside ? device.id : (hovered == device.id ? nil : hovered) }
     }
 
     @ViewBuilder
@@ -273,23 +232,14 @@ struct BluetoothMenuView: View {
                 .controlSize(.small)
                 .scaleEffect(0.7)
                 .frame(width: 22, height: 22)
-        } else if device.isConnected {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 15))
-                .foregroundColor(accent)
+                .transition(.scale.combined(with: .opacity))
         } else {
-            Text("Off")
-                .font(.custom(bar.fontFamily, size: 10))
-                .foregroundColor(dim.opacity(0.8))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(Color.white.opacity(0.06)))
+            StatusPill(text: device.isConnected ? "On" : "Off", lit: device.isConnected, palette: palette)
+                .transition(.scale.combined(with: .opacity))
         }
     }
 
-    @ViewBuilder
-    private func icon(for device: BluetoothDevice) -> some View {
-        let symbol: String = {
+    private func symbol(for device: BluetoothDevice) -> String {
             switch device.kind {
             case .headphones: return "headphones"
             case .speaker: return "hifispeaker.fill"
@@ -303,22 +253,19 @@ struct BluetoothMenuView: View {
             case .computer: return "desktopcomputer"
             case .other: return "dot.radiowaves.left.and.right"
             }
-        }()
-        Image(systemName: symbol)
-            .font(.system(size: 15, weight: .regular))
     }
 
     // MARK: - keys
 
     private func vimMove(_ delta: Int) -> KeyPress.Result {
         guard !devices.isEmpty else { return .ignored }
-        selected = max(0, min(devices.count - 1, selected + delta))
+        withAnimation(.kSelect) { selected = max(0, min(devices.count - 1, selected + delta)) }
         return .handled
     }
 
     private func jump(_ edge: VimEdge) -> KeyPress.Result {
         guard !devices.isEmpty else { return .ignored }
-        selected = edge == .first ? 0 : devices.count - 1
+        withAnimation(.kSelect) { selected = edge == .first ? 0 : devices.count - 1 }
         return .handled
     }
 

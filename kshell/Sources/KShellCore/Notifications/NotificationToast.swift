@@ -139,6 +139,8 @@ struct NotificationToastView: View {
     let onDismiss: () -> Void
 
     @State private var hovering = false
+    /// Drives the icon's pop as the card lands.
+    @State private var arrived = false
 
     private var bar: BarConfig { viewModel.appearance }
     private var theme: Theme { viewModel.theme }
@@ -147,9 +149,16 @@ struct NotificationToastView: View {
     private var dim: Color { (theme.dim ?? theme.foreground)?.color ?? .gray }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 11) {
-            icon
-                .frame(width: 28, height: 28)
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(tint.opacity(0.18))
+                icon
+                    .frame(width: 26, height: 26)
+            }
+            .frame(width: 38, height: 38)
+            .scaleEffect(arrived ? 1 : 0.4)
+            .rotationEffect(.degrees(arrived ? 0 : -25))
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
@@ -186,12 +195,22 @@ struct NotificationToastView: View {
                         .padding(5)
                         .background(Circle().fill(Color.white.opacity(0.10)))
                 }
-                .buttonStyle(.plain)
-                .transition(.opacity)
+                .pressBounce()
+                .transition(.scale.combined(with: .opacity))
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.leading, 18)
+        .padding(.trailing, 14)
         .padding(.vertical, 12)
+        .overlay(alignment: .leading) {
+            // The tone as a lit edge, the same as in the centre.
+            Capsule()
+                .fill(tint)
+                .frame(width: 3)
+                .padding(.vertical, 14)
+                .padding(.leading, 7)
+                .shadow(color: tint.opacity(0.7), radius: 5)
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .modifier(PanelSurface(
             viewModel: viewModel,
@@ -201,8 +220,11 @@ struct NotificationToastView: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onOpen)
         .onHover { inside in
-            withAnimation(.easeOut(duration: 0.15)) { hovering = inside }
+            withAnimation(.kHover) { hovering = inside }
             onHover(inside)
+        }
+        .onAppear {
+            withAnimation(.kBouncy.delay(0.12)) { arrived = true }
         }
     }
 

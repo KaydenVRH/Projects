@@ -105,19 +105,20 @@ struct NotificationCentreView: View {
     @State private var selected = 0
     @State private var hovering: String?
     @FocusState private var focused: Bool
+    @Namespace private var highlight
 
     private var bar: BarConfig { viewModel.appearance }
     private var theme: Theme { viewModel.theme }
     private var accent: Color { theme.accent?.color ?? .accentColor }
     private var foreground: Color { theme.foreground?.color ?? .white }
     private var dim: Color { (theme.dim ?? theme.foreground)?.color ?? .gray }
+    private var palette: KitPalette { KitPalette(theme: theme, bar: bar) }
     private var sheet: SheetShape { SheetShape(radius: 22, corners: .leading) }
     private var items: [KShellNotification] { store.items }
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(accent.opacity(0.22))
             if items.isEmpty {
                 empty
             } else {
@@ -155,67 +156,63 @@ struct NotificationCentreView: View {
     // MARK: - chrome
 
     private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "bell.fill")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(accent)
-            Text("Notifications")
-                .font(.custom(bar.fontFamily, size: 18))
-                .foregroundColor(foreground)
-            Spacer()
-            if store.unread > 0 {
-                Text("\(store.unread) new")
-                    .font(.custom(bar.fontFamily, size: 10.5))
-                    .foregroundColor(bar.background.color)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(accent))
-            }
-            Button(action: { store.clear(); selected = 0 }) {
-                Text("Clear")
+        KitHeader(
+            icon: "bell.fill",
+            title: "Notifications",
+            subtitle: items.isEmpty ? "All caught up" : "\(items.count) \(items.count == 1 ? "notification" : "notifications")",
+            palette: palette
+        ) {
+            HStack(spacing: 8) {
+                if store.unread > 0 {
+                    Text("\(store.unread) new")
+                        .font(.custom(bar.fontFamily, size: 10.5))
+                        .foregroundColor(.black.opacity(0.78))
+                        .contentTransition(.numericText())
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(accent))
+                        .transition(.scale.combined(with: .opacity))
+                }
+                Button {
+                    withAnimation(.kLayout) {
+                        store.clear()
+                        selected = 0
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "trash")
+                        Text("Clear")
+                    }
                     .font(.custom(bar.fontFamily, size: 11))
-                    .foregroundColor(dim)
+                    .foregroundColor(foreground.opacity(0.8))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(Color.white.opacity(0.08)))
+                }
+                .pressBounce()
+                .opacity(items.isEmpty ? 0.35 : 1)
+                .disabled(items.isEmpty)
             }
-            .buttonStyle(.plain)
-            .opacity(items.isEmpty ? 0.35 : 1)
-            .disabled(items.isEmpty)
+            .animation(.kBouncy, value: store.unread)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
     }
 
     private var footer: some View {
-        HStack(spacing: 10) {
-            Text("\(items.count) \(items.count == 1 ? "notification" : "notifications")")
-                .font(.custom(bar.fontFamily, size: 11))
-                .foregroundColor(foreground.opacity(0.45))
-            Spacer()
-            Text("j/k move  ·  ⏎ open  ·  x dismiss  ·  C clear")
-                .font(.custom(bar.fontFamily, size: 10.5))
-                .foregroundColor(foreground.opacity(0.40))
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
+        KitFooter(
+            hints: [("⏎", "open"), ("x", "dismiss"), ("C", "clear")],
+            palette: palette
+        ) { EmptyView() }
     }
 
     private var empty: some View {
-        VStack(spacing: 9) {
-            Image(systemName: "bell.slash")
-                .font(.system(size: 26, weight: .thin))
-                .foregroundColor(accent.opacity(0.65))
-            Text("Nothing here yet")
-                .font(.custom(bar.fontFamily, size: 15))
-                .foregroundColor(foreground)
-            Text(isMirroring()
-                 ? "Notifications from macOS appear here as they arrive."
-                 : "Post one with  kshell notify \"Title\" \"Body\"")
-                .font(.custom(bar.fontFamily, size: 11))
-                .foregroundColor(foreground.opacity(0.45))
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 260)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(30)
+        KitEmpty(
+            icon: "bell.slash",
+            title: "Nothing here yet",
+            detail: isMirroring()
+                ? "Notifications from macOS appear here as they arrive."
+                : "Post one with  kshell notify \"Title\" \"Body\"",
+            palette: palette
+        )
     }
 
     // MARK: - the list
@@ -229,14 +226,19 @@ struct NotificationCentreView: View {
                             ForEach(section.items) { item in
                                 row(item, index: index(of: item), selected: index(of: item) == selected)
                                     .cascade(index(of: item), from: .trailing)
+                                    .transition(.asymmetric(
+                                        insertion: .move(edge: .top).combined(with: .opacity),
+                                        removal: .move(edge: .trailing).combined(with: .opacity).combined(with: .scale(scale: 0.8))
+                                    ))
                             }
                         } header: {
-                            Text(section.title)
-                                .font(.custom(bar.fontFamily, size: 10.5))
-                                .foregroundColor(dim)
+                            Text(section.title.uppercased())
+                                .font(.system(size: 9.5, weight: .bold))
+                                .tracking(1.2)
+                                .foregroundColor(accent.opacity(0.85))
                                 .textCase(nil)
                                 .padding(.horizontal, 6)
-                                .padding(.vertical, 4)
+                                .padding(.vertical, 5)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(bar.background.color.opacity(0.92))
                         }
@@ -259,8 +261,13 @@ struct NotificationCentreView: View {
 
     private func row(_ item: KShellNotification, index: Int, selected: Bool) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            icon(for: item)
-                .frame(width: 28, height: 28)
+            ZStack {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(tint(item).opacity(0.16))
+                icon(for: item)
+                    .frame(width: 24, height: 24)
+            }
+            .frame(width: 36, height: 36)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
@@ -289,34 +296,33 @@ struct NotificationCentreView: View {
             }
 
             if selected || hovering == item.id {
-                Button(action: { store.dismiss(item.id) }) {
+                Button(action: { withAnimation(.kLayout) { store.dismiss(item.id) } }) {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundColor(dim)
                         .padding(5)
                         .background(Circle().fill(Color.white.opacity(0.10)))
                 }
-                .buttonStyle(.plain)
+                .pressBounce()
                 .help("Dismiss")
+                .transition(.scale.combined(with: .opacity))
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 9)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(selected ? accent.opacity(0.14) : Color.white.opacity(hovering == item.id ? 0.05 : 0.025))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(selected ? accent.opacity(0.55) : Color.clear, lineWidth: 1)
-        )
+        .padding(.leading, 14)
+        .padding(.trailing, 10)
+        .padding(.vertical, 10)
         .overlay(alignment: .leading) {
-            Circle()
+            // The card's tone, as a lit edge.
+            Capsule()
                 .fill(tint(item))
-                .frame(width: 5, height: 5)
-                .offset(x: -2.5)
-                .opacity(item.source == .kshell ? 1 : 0)
+                .frame(width: 3)
+                .padding(.vertical, 10)
+                .padding(.leading, 5)
+                .shadow(color: tint(item).opacity(0.6), radius: 4)
+                .opacity(item.source == .kshell ? 1 : 0.35)
         }
+        .kitCard(selected: selected, hovered: hovering == item.id, palette: palette, highlight: highlight)
+        .animation(.kHover, value: hovering)
         .contentShape(Rectangle())
         .onTapGesture {
             self.selected = index
@@ -383,7 +389,7 @@ struct NotificationCentreView: View {
 
     private func move(_ delta: Int) {
         guard !items.isEmpty else { return }
-        selected = max(0, min(items.count - 1, selected + delta))
+        withAnimation(.kSelect) { selected = max(0, min(items.count - 1, selected + delta)) }
     }
 
     private func openSelected() {
@@ -400,7 +406,7 @@ struct NotificationCentreView: View {
     private func dismissSelected() {
         guard items.indices.contains(selected) else { return }
         let item = items[selected]
-        store.dismiss(item.id)
+        withAnimation(.kLayout) { store.dismiss(item.id) }
         selected = min(selected, max(0, items.count - 1))
     }
 

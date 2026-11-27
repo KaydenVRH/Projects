@@ -344,7 +344,7 @@ private struct BeatPulse<Content: View>: View {
 
 /// The cover again, tiny and blurred to a glow that fills the card and turns
 /// slowly while the song plays.
-private struct AmbientArt: View {
+struct AmbientArt: View {
     let path: String?
     let tint: Color
     let playing: Bool
@@ -455,7 +455,7 @@ private struct WaveProgress: View {
 
 /// A sine wave from the left edge to `progress`, tapering in at the start so it
 /// grows out of the line rather than starting mid-swing.
-private struct Wave: Shape {
+struct Wave: Shape {
     var progress: Double
     var amplitude: CGFloat
     var phase: Double
@@ -491,7 +491,7 @@ private struct Wave: Shape {
 
 /// The big play button: a squircle that rounds into a circle while it plays,
 /// with the glyph morphing between play and pause.
-private struct PlayButton: View {
+struct PlayButton: View {
     let playing: Bool
     let tint: Color
     let tintColour: NSColor?
@@ -524,7 +524,7 @@ private struct PlayButton: View {
 }
 
 /// Previous / next: the glyph kicks in the direction it skips when pressed.
-private struct SkipButton: View {
+struct SkipButton: View {
     let symbol: String
     let colour: Color
     let action: () -> Void
@@ -699,5 +699,39 @@ private struct BlurSwap: ViewModifier {
             .offset(y: amount * 10)
             .scaleEffect(1 - abs(amount) * 0.08)
             .opacity(1 - Double(abs(amount)))
+    }
+}
+
+/// A wave progress line for anything with a progress and a playing state — the
+/// media island's, where the music panel's own is bound to the player.
+struct WaveLine: View {
+    let progress: Double
+    let playing: Bool
+    let tint: Color
+    let dim: Color
+
+    var body: some View {
+        TimelineView(.animation(paused: !playing)) { context in
+            let phase = context.date.timeIntervalSinceReferenceDate * 7
+            GeometryReader { geo in
+                let x = geo.size.width * min(1, max(0, progress))
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(dim.opacity(0.25))
+                        .frame(width: max(0, geo.size.width - x - 6), height: 3)
+                        .offset(x: x + 6)
+                    Wave(progress: min(1, max(0, progress)), amplitude: playing ? 3 : 0, phase: phase)
+                        .stroke(tint, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                        .animation(.kBouncy, value: playing)
+                    Capsule()
+                        .fill(tint)
+                        .frame(width: 4, height: 14)
+                        .shadow(color: tint.opacity(0.6), radius: 3)
+                        .offset(x: x - 2)
+                }
+                .frame(height: geo.size.height)
+            }
+        }
+        .frame(height: 18)
     }
 }

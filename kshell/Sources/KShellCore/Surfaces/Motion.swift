@@ -34,7 +34,7 @@ public struct Spring: Sendable, Equatable {
     /// Reaching out from the edge. Loosely damped: past the moment it arrives
     /// this spring is the panel's jelly wobble (see `PanelPose`), and a few
     /// decaying swings are what make it read as jelly rather than a bump.
-    public static let panelOutward = Spring(response: 0.5, damping: 0.36)
+    public static let panelOutward = Spring(response: 0.34, damping: 0.4)
     /// Widening along the edge: a touch quicker and calmer, so a panel spreads
     /// first and then reaches out — the stretch that makes it read as liquid.
     public static let panelAlong = Spring(response: 0.38, damping: 0.82)

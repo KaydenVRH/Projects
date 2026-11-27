@@ -347,7 +347,9 @@ struct ThemeLauncherView: View {
     let onClose: () -> Void
 
     @State private var selectedIndex: Int
+    @State private var hovered: String?
     @FocusState private var focused: Bool
+    @Namespace private var highlight
 
     init(
         viewModel: BarViewModel,
@@ -372,11 +374,11 @@ struct ThemeLauncherView: View {
     private var sheet: SheetShape { SheetShape(radius: 22, corners: .leading) }
     private var activeName: String? { store.activeName ?? theme.name }
     private var themes: [ThemeDefinition] { store.themes }
+    private var palette: KitPalette { KitPalette(theme: theme, bar: bar) }
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(accent.opacity(0.25))
             if themes.isEmpty {
                 empty
             } else {
@@ -404,21 +406,12 @@ struct ThemeLauncherView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "paintpalette.fill")
-                .foregroundColor(accent)
-            Text("Themes")
-                .font(.custom(bar.fontFamily, size: 18))
-                .foregroundColor(foreground)
-            Spacer()
-            if let activeName {
-                Text(activeName)
-                    .font(.custom(bar.fontFamily, size: 12))
-                    .foregroundColor(accent)
-            }
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
+        KitHeader(
+            icon: "paintpalette.fill",
+            title: "Themes",
+            subtitle: activeName.map { "Wearing \($0)" } ?? "\(themes.count) themes",
+            palette: palette
+        )
     }
 
     private var list: some View {
@@ -451,91 +444,83 @@ struct ThemeLauncherView: View {
     }
 
     private func row(_ item: ThemeDefinition, selected: Bool, active: Bool) -> some View {
-        HStack(spacing: 12) {
-            swatch(item)
-                .frame(width: 76, height: 36)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(selected ? accent : Color.white.opacity(0.12), lineWidth: selected ? 2 : 1)
-                )
+        let open = selected || hovered == item.name
+        return HStack(spacing: 14) {
+            orbs(item, fanned: open)
+                .frame(width: 100, height: 40, alignment: .leading)
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(item.name)
-                        .font(.custom(bar.fontFamily, size: 15))
-                        .foregroundColor(selected ? foreground : foreground.opacity(0.75))
-                    if active {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(accent)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(item.name)
+                    .font(.custom(bar.fontFamily, size: 14.5))
+                    .foregroundColor(selected ? foreground : foreground.opacity(0.78))
+                HStack(spacing: 4) {
+                    ForEach(targets(item), id: \.self) { target in
+                        Text(target)
+                            .font(.custom(bar.fontFamily, size: 9))
+                            .foregroundColor(foreground.opacity(0.55))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.white.opacity(0.07)))
                     }
                 }
-                Text(targets(item))
-                    .font(.custom(bar.fontFamily, size: 11))
-                    .foregroundColor(foreground.opacity(0.4))
             }
             Spacer(minLength: 0)
+            if active {
+                StatusPill(text: "Active", lit: true, palette: palette)
+                    .transition(.scale.combined(with: .opacity))
+            }
         }
-        .padding(9)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(selected ? accent.opacity(0.18) : Color.white.opacity(0.03))
-        )
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .kitCard(selected: selected, hovered: hovered == item.name, palette: palette, highlight: highlight)
         .contentShape(Rectangle())
-        .animation(.kSelect, value: selected)
+        .onHover { inside in hovered = inside ? item.name : (hovered == item.name ? nil : hovered) }
+        .animation(.kBouncy, value: open)
+        .animation(.kBouncy, value: active)
     }
 
-    private func swatch(_ item: ThemeDefinition) -> some View {
-        HStack(spacing: 0) {
-            chip(item.background)
-            chip(item.accent)
-            chip(item.highlight)
-            chip(item.dim)
+    /// The theme's colours as overlapping discs that fan out when the row is
+    /// armed or under the pointer — the background disc carries the others.
+    private func orbs(_ item: ThemeDefinition, fanned: Bool) -> some View {
+        let colours = [item.background, item.accent, item.highlight, item.dim]
+        return HStack(spacing: fanned ? 3 : -9) {
+            ForEach(Array(colours.enumerated()), id: \.offset) { index, hex in
+                Circle()
+                    .fill(hex.flatMap { RGBA(hex: $0) }?.color ?? Color.white.opacity(0.08))
+                    .overlay(Circle().stroke(Color.white.opacity(0.22), lineWidth: 1))
+                    .frame(width: 22, height: 22)
+                    .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
+                    .zIndex(Double(colours.count - index))
+                    .offset(y: fanned ? (index % 2 == 0 ? -3 : 3) : 0)
+                    .rotationEffect(.degrees(fanned ? Double(index) * 6 - 9 : 0))
+            }
         }
-    }
-
-    private func chip(_ hex: String?) -> some View {
-        let color = hex.flatMap { RGBA(hex: $0) }?.color ?? Color.white.opacity(0.08)
-        return color.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// Which tools this theme touches.
-    private func targets(_ item: ThemeDefinition) -> String {
+    private func targets(_ item: ThemeDefinition) -> [String] {
         var parts: [String] = []
         if item.kitty?.isEmpty == false { parts.append("kitty") }
         if item.nvim?.isEmpty == false { parts.append("nvim") }
-        parts.append("kshell")
         if item.wallpaper?.isEmpty == false { parts.append("wallpaper") }
-        return parts.joined(separator: " · ")
+        return parts
     }
 
     private var footer: some View {
-        HStack {
+        KitFooter(hints: [("↑↓", "browse"), ("⏎", "apply")], palette: palette) {
             Text("\(themes.count) themes")
-                .font(.custom(bar.fontFamily, size: 12))
-                .foregroundColor(foreground.opacity(0.55))
-            Spacer()
-            Text("↑ ↓  browse     ⏎  apply")
-                .font(.custom(bar.fontFamily, size: 11))
+                .font(.custom(bar.fontFamily, size: 10.5))
                 .foregroundColor(foreground.opacity(0.5))
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
     }
 
     private var empty: some View {
-        VStack(spacing: 8) {
-            Text("No themes configured")
-                .font(.custom(bar.fontFamily, size: 15))
-                .foregroundColor(foreground)
-            Text("Add [[theme_launcher.themes]] entries to config.toml")
-                .font(.custom(bar.fontFamily, size: 11))
-                .foregroundColor(foreground.opacity(0.45))
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(30)
+        KitEmpty(
+            icon: "paintpalette",
+            title: "No themes configured",
+            detail: "Add [[theme_launcher.themes]] entries to config.toml",
+            palette: palette
+        )
     }
 
     private func vimMove(_ delta: Int) -> KeyPress.Result {
@@ -545,13 +530,13 @@ struct ThemeLauncherView: View {
 
     private func jump(_ edge: VimEdge) -> KeyPress.Result {
         guard !themes.isEmpty else { return .ignored }
-        selectedIndex = edge == .first ? 0 : themes.count - 1
+        withAnimation(.kSelect) { selectedIndex = edge == .first ? 0 : themes.count - 1 }
         return .handled
     }
 
     private func move(_ delta: Int) {
         guard !themes.isEmpty else { return }
-        selectedIndex = max(0, min(themes.count - 1, selectedIndex + delta))
+        withAnimation(.kSelect) { selectedIndex = max(0, min(themes.count - 1, selectedIndex + delta)) }
     }
 
     private func applySelection() {
