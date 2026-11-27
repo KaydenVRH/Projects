@@ -104,6 +104,8 @@ struct MusicPanelView: View {
     @FocusState private var focusedField: Bool
     @FocusState private var panelFocused: Bool
     @Namespace private var pill
+    /// The armed row's highlight glides between rows through this.
+    @Namespace private var rowGlide
 
     private var bar: BarConfig { viewModel.appearance }
     private var theme: Theme { viewModel.theme }
@@ -111,6 +113,7 @@ struct MusicPanelView: View {
     private var highlight: Color { theme.highlight?.color ?? .accentColor }
     private var foreground: Color { theme.foreground?.color ?? .white }
     private var dim: Color { (theme.dim ?? theme.foreground)?.color ?? .gray }
+    private var palette: KitPalette { KitPalette(theme: theme, bar: bar) }
 
     var body: some View {
         panel
@@ -210,6 +213,14 @@ struct MusicPanelView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipped()
+                KitFooter(hints: hints, palette: palette) {
+                    Text(status)
+                        .font(.custom(bar.fontFamily, size: 10.5))
+                        .foregroundColor(foreground.opacity(0.5))
+                        .contentTransition(.numericText())
+                }
+                .animation(.kLayout, value: tab)
+                .animation(.kLayout, value: openedPlaylist)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -388,26 +399,31 @@ struct MusicPanelView: View {
 
     // MARK: header
 
+    /// The tabs: a segmented track with one lit pill that springs from tab to
+    /// tab, its icon hopping as it lands.
     private var header: some View {
         HStack(spacing: 14) {
-            HStack(spacing: 4) {
+            HStack(spacing: 2) {
                 ForEach(Tab.allCases) { item in
+                    let on = tab == item
                     Button {
                         withAnimation(.kBouncy) { tab = item }
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: item.icon)
                                 .font(.system(size: 11, weight: .semibold))
+                                .symbolEffect(.bounce, value: on)
                             Text(item.rawValue)
                                 .font(.custom(bar.fontFamily, size: 12))
                         }
-                        .foregroundColor(tab == item ? foreground : dim)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
+                        .foregroundColor(on ? .black.opacity(0.8) : foreground.opacity(0.65))
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 7)
                         .background {
-                            if tab == item {
+                            if on {
                                 Capsule()
-                                    .fill(accent.opacity(0.22))
+                                    .fill(accent)
+                                    .shadow(color: accent.opacity(0.5), radius: 8)
                                     .matchedGeometryEffect(id: "tab", in: pill)
                             }
                         }
@@ -416,11 +432,55 @@ struct MusicPanelView: View {
                     .buttonStyle(.plain)
                 }
             }
+            .padding(3)
+            .background(Capsule().fill(Color.white.opacity(0.06)))
 
             Spacer(minLength: 0)
+
+            if tab == .queue, !queue.isEmpty {
+                Button(action: playQueue) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "play.fill").font(.system(size: 9))
+                        Text("Play queue").font(.custom(bar.fontFamily, size: 11))
+                    }
+                    .foregroundColor(accent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(accent.opacity(0.15)))
+                }
+                .pressBounce()
+                .transition(.scale.combined(with: .opacity))
+            }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.top, 14)
+        .padding(.bottom, 10)
+        .animation(.kBouncy, value: tab)
+    }
+
+    /// What the footer says on the left, per tab.
+    private var status: String {
+        switch tab {
+        case .search: return downloads.results.isEmpty ? "YouTube Music" : "\(downloads.results.count) results"
+        case .library: return "\(library.tracks.count) tracks"
+        case .queue: return "\(queue.count) queued"
+        case .playlists:
+            if let name = openedPlaylist { return name }
+            return "\(playlists.count) playlists"
+        }
+    }
+
+    /// The keys that matter on this tab.
+    private var hints: [(key: String, label: String)] {
+        if naming { return [("⏎", "save"), ("esc", "cancel")] }
+        switch tab {
+        case .search: return [("⏎", "download"), ("/", "search"), ("h l", "tabs")]
+        case .library: return [("⏎", "play"), ("a", "queue"), ("space", "pause"), ("h l", "tabs")]
+        case .queue: return [("⏎", "play"), ("x", "remove"), ("J K", "move"), ("s", "save")]
+        case .playlists:
+            if openedPlaylist != nil { return [("⏎", "play"), ("x", "remove"), ("h", "back")] }
+            return [("⏎", "open"), ("p", "play"), ("x", "delete")]
+        }
     }
 
     // MARK: downloads
@@ -441,17 +501,24 @@ struct MusicPanelView: View {
                         .foregroundColor(dim)
                         .monospacedDigit()
                 }
-                .overlay(alignment: .bottomLeading) {
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background {
                     GeometryReader { geo in
-                        Capsule()
-                            .fill(accent.opacity(0.7))
-                            .frame(width: max(2, geo.size.width * job.progress), height: 2)
-                            .animation(.linear(duration: 0.25), value: job.progress)
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                .fill(Color.white.opacity(0.05))
+                            // The card fills with the accent as it downloads.
+                            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                .fill(LinearGradient(
+                                    colors: [accent.opacity(0.08), accent.opacity(0.28)],
+                                    startPoint: .leading, endPoint: .trailing))
+                                .frame(width: max(22, geo.size.width * job.progress))
+                                .animation(.kLayout, value: job.progress)
+                        }
                     }
-                    .frame(height: 2)
-                    .offset(y: 8)
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 14)
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
@@ -473,9 +540,11 @@ struct MusicPanelView: View {
 
     private var searchTab: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundColor(dim)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(accent)
+                    .symbolEffect(.bounce, value: query.count)
                 TextField("Search YouTube Music, or paste a link…", text: $query)
                     .textFieldStyle(.plain)
                     .font(.custom(bar.fontFamily, size: 13))
@@ -488,18 +557,30 @@ struct MusicPanelView: View {
                     Button { downloads.search(query) } label: {
                         Text("Search")
                             .font(.custom(bar.fontFamily, size: 11))
-                            .foregroundColor(accent)
+                            .foregroundColor(.black.opacity(0.8))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(accent))
                     }
-                    .buttonStyle(.plain)
+                    .pressBounce()
+                    .transition(.scale.combined(with: .opacity))
                 }
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 15)
             .padding(.vertical, 10)
             .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.white.opacity(0.05))
+                Capsule(style: .continuous)
+                    .fill(Color.white.opacity(focusedField ? 0.09 : 0.05))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .stroke(accent.opacity(focusedField ? 0.6 : 0.15), lineWidth: 1.2)
+                    )
+                    .shadow(color: accent.opacity(focusedField ? 0.3 : 0), radius: 12)
             )
-            .padding(16)
+            .animation(.kHover, value: focusedField)
+            .animation(.kBouncy, value: query.isEmpty)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
 
             if downloads.results.isEmpty {
                 emptyState(
@@ -518,6 +599,8 @@ struct MusicPanelView: View {
                                 selected: result.id == downloads.results[safe: resultSelection]?.id,
                                 accent: accent, dim: dim, foreground: foreground,
                                 font: bar.fontFamily,
+                                palette: palette,
+                                highlight: rowGlide,
                                 existing: library.tracks.contains { $0.path.contains("[\(result.id)]") },
                                 onDownload: { downloads.download(result) }
                             )
@@ -592,6 +675,8 @@ struct MusicPanelView: View {
             dim: dim,
             foreground: foreground,
             font: bar.fontFamily,
+            palette: palette,
+            highlight: rowGlide,
             onPlay: { player.play(library.tracks, startAt: index) },
             onRemove: {
                 library.remove(track)
@@ -619,13 +704,16 @@ struct MusicPanelView: View {
             Text(queue.count == 1 ? "1 track" : "\(queue.count) tracks")
                 .font(.custom(bar.fontFamily, size: 10))
                 .foregroundColor(dim)
-            Text("enter save · esc cancel")
-                .font(.custom(bar.fontFamily, size: 10))
-                .foregroundColor(dim.opacity(0.7))
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(accent.opacity(0.08))
+        .padding(.horizontal, 15)
+        .padding(.vertical, 9)
+        .background(
+            Capsule(style: .continuous)
+                .fill(accent.opacity(0.1))
+                .overlay(Capsule(style: .continuous).stroke(accent.opacity(0.5), lineWidth: 1.2))
+        )
+        .padding(.horizontal, 14)
+        .padding(.bottom, 8)
         .transition(.move(edge: .top).combined(with: .opacity))
     }
 
@@ -657,25 +745,28 @@ struct MusicPanelView: View {
                 Button {
                     withAnimation(.kLayout) { openedPlaylist = nil }
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 10) {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 9, weight: .semibold))
-                        Text(name)
-                            .font(.custom(bar.fontFamily, size: 11))
-                            .lineLimit(1)
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(dim)
+                        PlaylistMosaic(tracks: tracks, accent: accent, size: 40)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(name)
+                                .font(.custom(bar.fontFamily, size: 15))
+                                .foregroundColor(foreground)
+                                .lineLimit(1)
+                            Text(tracks.count == 1 ? "1 track" : "\(tracks.count) tracks")
+                                .font(.custom(bar.fontFamily, size: 10.5))
+                                .foregroundColor(foreground.opacity(0.55))
+                        }
                     }
-                    .foregroundColor(dim)
                 }
-                .buttonStyle(.plain)
+                .pressBounce()
 
                 Spacer(minLength: 0)
-
-                Text("enter play · x remove · h back")
-                    .font(.custom(bar.fontFamily, size: 10))
-                    .foregroundColor(dim.opacity(0.8))
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
 
             if tracks.isEmpty {
                 emptyState(
@@ -719,6 +810,16 @@ struct MusicPanelView: View {
                 .font(.custom(bar.fontFamily, size: 10))
                 .foregroundColor(dim.opacity(0.7))
                 .frame(width: 22, alignment: .trailing)
+            ZStack {
+                RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.06))
+                if let image = ArtworkCache.shared.image(track.artworkPath) {
+                    Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+                } else {
+                    Image(systemName: "music.note").font(.system(size: 11)).foregroundColor(dim.opacity(0.7))
+                }
+            }
+            .frame(width: 32, height: 32)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
             VStack(alignment: .leading, spacing: 1) {
                 Text(track.displayTitle)
                     .font(.custom(bar.fontFamily, size: 12))
@@ -747,29 +848,17 @@ struct MusicPanelView: View {
             .help("remove from playlist")
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(armed ? accent.opacity(0.16) : Color.clear)
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.vertical, 8)
+        .kitCard(selected: armed, palette: palette, highlight: rowGlide, radius: 11)
+        .contentShape(RoundedRectangle(cornerRadius: 11))
         .onTapGesture {
-            trackSelection = index
+            withAnimation(.kSelect) { trackSelection = index }
             _ = activate()
         }
     }
 
     private var playlistsList: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("s saves the queue · p plays · enter opens")
-                    .font(.custom(bar.fontFamily, size: 10))
-                    .foregroundColor(dim.opacity(0.8))
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 8)
-
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 4) {
@@ -798,14 +887,20 @@ struct MusicPanelView: View {
             guard let current = player.current else { return false }
             return playlist.tracks.contains(current)
         }()
-        return HStack(spacing: 10) {
-            Image(systemName: playing ? "speaker.wave.2.fill" : "square.stack")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(playing ? accent : dim)
-                .frame(width: 16)
-            VStack(alignment: .leading, spacing: 1) {
+        return HStack(spacing: 12) {
+            PlaylistMosaic(tracks: playlist.tracks, accent: accent, size: 46)
+                .overlay(alignment: .bottomTrailing) {
+                    if playing {
+                        Equaliser(playing: player.isPlaying, color: accent)
+                            .scaleEffect(0.7)
+                            .padding(3)
+                            .background(Circle().fill(Color.black.opacity(0.55)))
+                            .offset(x: 6, y: 6)
+                    }
+                }
+            VStack(alignment: .leading, spacing: 2) {
                 Text(playlist.name)
-                    .font(.custom(bar.fontFamily, size: 12))
+                    .font(.custom(bar.fontFamily, size: 13.5))
                     .foregroundColor(foreground)
                     .lineLimit(1)
                 Text(playlist.subtitle)
@@ -822,14 +917,11 @@ struct MusicPanelView: View {
                 .foregroundColor(dim.opacity(0.6))
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(armed ? accent.opacity(0.16) : Color.clear)
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.vertical, 8)
+        .kitCard(selected: armed, palette: palette, highlight: rowGlide)
+        .contentShape(RoundedRectangle(cornerRadius: 14))
         .onTapGesture {
-            playlistsSelection = index
+            withAnimation(.kSelect) { playlistsSelection = index }
             _ = activate()
         }
     }
@@ -854,7 +946,6 @@ struct MusicPanelView: View {
 
     private var queueList: some View {
         VStack(spacing: 0) {
-            queueHeader
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 4) { queueRows }
@@ -871,25 +962,6 @@ struct MusicPanelView: View {
         }
     }
 
-    private var queueHeader: some View {
-        HStack(spacing: 10) {
-            Text("\(queue.count) queued")
-                .font(.custom(bar.fontFamily, size: 11))
-                .foregroundColor(dim)
-            Spacer(minLength: 0)
-            Button(action: playQueue) {
-                HStack(spacing: 5) {
-                    Image(systemName: "play.fill").font(.system(size: 9))
-                    Text("Play queue").font(.custom(bar.fontFamily, size: 11))
-                }
-                .foregroundColor(accent)
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 10)
-    }
-
     @ViewBuilder
     private var queueRows: some View {
         ForEach(Array(queue.tracks.enumerated()), id: \.element.id) { index, track in
@@ -902,6 +974,8 @@ struct MusicPanelView: View {
                 dim: dim,
                 foreground: foreground,
                 font: bar.fontFamily,
+                palette: palette,
+                highlight: rowGlide,
                 onPlay: { player.play(queue.tracks, startAt: index) },
                 onRemove: { removeFromQueue(track) },
                 onMove: { delta in shiftQueue(index, by: delta) }
@@ -978,19 +1052,8 @@ struct MusicPanelView: View {
     }
 
     private func emptyState(icon: String, title: String, subtitle: String) -> some View {
-        VStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 34, weight: .light))
-                .foregroundColor(accent.opacity(0.7))
-            Text(title)
-                .font(.custom(bar.fontFamily, size: 14))
-                .foregroundColor(foreground)
-            Text(subtitle)
-                .font(.custom(bar.fontFamily, size: 11))
-                .foregroundColor(dim)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .transition(.opacity)
+        KitEmpty(icon: icon, title: title, detail: subtitle, palette: palette)
+            .transition(.opacity)
     }
 }
 
@@ -1011,6 +1074,8 @@ private struct SearchRow: View {
     let dim: Color
     let foreground: Color
     let font: String
+    let palette: KitPalette
+    let highlight: Namespace.ID
     let existing: Bool
     let onDownload: () -> Void
 
@@ -1040,19 +1105,9 @@ private struct SearchRow: View {
             }
             trailing
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 7)
         .padding(.horizontal, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.white.opacity(selected ? 0.09 : (hovering ? 0.07 : 0.03)))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(accent.opacity(selected ? 0.9 : (hovering ? 0.35 : 0)), lineWidth: selected ? 1.5 : 1)
-        )
-        .scaleEffect(selected ? 1.01 : (hovering ? 1.008 : 1))
-        .animation(.kHover, value: hovering)
-        .animation(.kSelect, value: selected)
+        .kitCard(selected: selected, hovered: hovering, palette: palette, highlight: highlight)
         .onHover { hovering = $0 }
     }
 
@@ -1117,6 +1172,8 @@ private struct LibraryRow: View {
     let dim: Color
     let foreground: Color
     let font: String
+    let palette: KitPalette
+    let highlight: Namespace.ID
     let onPlay: () -> Void
     let onRemove: () -> Void
 
@@ -1182,29 +1239,22 @@ private struct LibraryRow: View {
                 .foregroundColor(dim)
                 .monospacedDigit()
         }
-        .padding(.vertical, 5)
+        .padding(.vertical, 6)
         .padding(.horizontal, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 9)
-                .fill(Color.white.opacity(playing ? 0.08 : (selected ? 0.09 : (hovering ? 0.06 : 0.02))))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 9)
-                .stroke(accent.opacity(selected ? 0.9 : 0), lineWidth: selected ? 1.5 : 1)
-        )
         .overlay(alignment: .leading) {
             if playing {
                 Capsule()
                     .fill(accent)
-                    .frame(width: 2)
-                    .padding(.vertical, 6)
+                    .frame(width: 3)
+                    .padding(.vertical, 9)
+                    .shadow(color: accent.opacity(0.7), radius: 4)
                     .transition(.scale)
             }
         }
+        .kitCard(selected: selected, hovered: hovering, palette: palette, highlight: highlight, radius: 12)
         .contentShape(Rectangle())
         .onTapGesture(perform: onPlay)
         .onHover { hovering = $0 }
-        .animation(.kHover, value: hovering)
         .animation(.kLayout, value: playing)
     }
 }
@@ -1220,6 +1270,8 @@ private struct QueueRow: View {
     let dim: Color
     let foreground: Color
     let font: String
+    let palette: KitPalette
+    let highlight: Namespace.ID
     let onPlay: () -> Void
     let onRemove: () -> Void
     let onMove: (Int) -> Void
@@ -1272,25 +1324,21 @@ private struct QueueRow: View {
                 .foregroundColor(dim)
                 .monospacedDigit()
         }
-        .padding(.vertical, 5)
+        .padding(.vertical, 6)
         .padding(.horizontal, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 9)
-                .fill(Color.white.opacity(playing ? 0.08 : (selected ? 0.09 : (hovering ? 0.06 : 0.02))))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 9)
-                .stroke(accent.opacity(selected ? 0.9 : 0), lineWidth: selected ? 1.5 : 1)
-        )
         .overlay(alignment: .leading) {
             if playing {
-                Capsule().fill(accent).frame(width: 2).padding(.vertical, 6)
+                Capsule()
+                    .fill(accent)
+                    .frame(width: 3)
+                    .padding(.vertical, 9)
+                    .shadow(color: accent.opacity(0.7), radius: 4)
             }
         }
+        .kitCard(selected: selected, hovered: hovering, palette: palette, highlight: highlight, radius: 12)
         .contentShape(Rectangle())
         .onTapGesture(perform: onPlay)
         .onHover { hovering = $0 }
-        .animation(.kHover, value: hovering)
     }
 
     private func control(_ symbol: String, action: @escaping () -> Void) -> some View {
@@ -1418,5 +1466,56 @@ private struct MusicLetterKeys: ViewModifier {
 
     private func typed(_ action: () -> KeyPress.Result) -> KeyPress.Result {
         fieldFocused ? .ignored : action()
+    }
+}
+
+/// A playlist's cover: the first four distinct covers in a 2×2 grid, or one
+/// cover, or a tinted tile when it has none.
+struct PlaylistMosaic: View {
+    let tracks: [MusicTrack]
+    let accent: Color
+    let size: CGFloat
+
+    private var covers: [NSImage] {
+        var seen = Set<String>()
+        var images: [NSImage] = []
+        for track in tracks {
+            guard let path = track.artworkPath, !seen.contains(path),
+                  let image = ArtworkCache.shared.image(path) else { continue }
+            seen.insert(path)
+            images.append(image)
+            if images.count == 4 { break }
+        }
+        return images
+    }
+
+    var body: some View {
+        let covers = self.covers
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+                .fill(LinearGradient(colors: [accent.opacity(0.4), accent.opacity(0.12)],
+                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+            if covers.count >= 4 {
+                let half = size / 2
+                VStack(spacing: 0) {
+                    HStack(spacing: 0) { cell(covers[0], half); cell(covers[1], half) }
+                    HStack(spacing: 0) { cell(covers[2], half); cell(covers[3], half) }
+                }
+            } else if let first = covers.first {
+                cell(first, size)
+            } else {
+                Image(systemName: "square.stack.fill")
+                    .font(.system(size: size * 0.36))
+                    .foregroundColor(.white.opacity(0.8))
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+        .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
+    }
+
+    private func cell(_ image: NSImage, _ side: CGFloat) -> some View {
+        Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+            .frame(width: side, height: side).clipped()
     }
 }
