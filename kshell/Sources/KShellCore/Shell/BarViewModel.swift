@@ -15,6 +15,9 @@ public final class BarViewModel: ObservableObject {
     @Published public var left: [WidgetRuntime]
     @Published public var center: [WidgetRuntime]
     @Published public var right: [WidgetRuntime]
+    /// The audio visualiser, when it is drawn inside the bar (behind the
+    /// widgets) rather than along the bottom of the screen.
+    @Published public var barVisualiser: VisualiserConfig?
 
     public init(config: ShellConfig) {
         appearance = config.bar

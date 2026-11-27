@@ -304,7 +304,10 @@ public final class ShellController {
             screens = NSScreen.screens
         }
 
-        guard visualiserEnabled, !screens.isEmpty else {
+        // Inside the bar: the bar draws it, so there are no strips to build.
+        viewModel.barVisualiser = visualiserEnabled && config.inBar ? config : nil
+
+        guard visualiserEnabled, !config.inBar, !screens.isEmpty else {
             for panel in visualisers { panel.dismiss() }
             visualisers.removeAll()
             return

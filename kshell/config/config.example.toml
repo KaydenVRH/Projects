@@ -570,6 +570,8 @@ opacity = 0.8
 mirror  = 0.35          # reflection under the baseline; 0 turns it off
 fade    = 0.5           # seconds to fade in and out
 display = "all"         # all | main
+placement = "screen"   # screen (strip along the bottom) | bar (behind the bar's widgets)
+bar_opacity = 0.38      # how strong the bars are inside the bar
 
 # Notifications. kshell keeps its own centre: a right-edge sidebar (j/k to walk,
 # enter to open, x dismiss, C clear) plus a card that slides out of the right

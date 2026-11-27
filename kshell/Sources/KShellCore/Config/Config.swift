@@ -196,6 +196,14 @@ public struct VisualiserConfig {
     public var fade: Double = 0.5
     /// `all` shows it on every display; `main` only the main display.
     public var display: String = "all"
+    /// `screen` is the strip along the bottom of the screen; `bar` draws the
+    /// bars inside the bar instead, behind its widgets.
+    public var placement: String = "screen"
+    /// How strong the bars are inside the bar — faint enough that the widgets'
+    /// text stays readable over them.
+    public var barOpacity: Double = 0.38
+
+    public var inBar: Bool { placement == "bar" }
 
     public init() {}
 }
@@ -436,6 +444,8 @@ public struct ShellConfig {
             if let v = table.number("mirror") { visualiser.mirror = min(max(v, 0), 1) }
             if let v = table.number("fade") { visualiser.fade = max(0, v) }
             if let v = table.string("display") { visualiser.display = v.lowercased() }
+            if let v = table.string("placement") { visualiser.placement = v.lowercased() }
+            if let v = table.number("bar_opacity") { visualiser.barOpacity = min(max(v, 0), 1) }
         }
         var notifications = NotificationsConfig()
         if let table = root.table("notifications") {

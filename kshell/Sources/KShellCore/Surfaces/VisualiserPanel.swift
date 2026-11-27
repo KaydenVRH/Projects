@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import QuartzCore
+import SwiftUI
 
 /// The desktop audio visualiser: a strip of cava-style bars that rises while
 /// music plays and fades away when it stops.
@@ -260,5 +261,60 @@ final class VisualiserBarsView: NSView {
             colors: colors.map(\.cgColor) as CFArray,
             locations: locations
         )
+    }
+}
+
+// MARK: - in the bar
+
+/// The visualiser drawn inside the bar, behind its widgets: the same bars as
+/// the screen strip, rising from the bar's bottom edge, kept faint so the text
+/// on top stays readable. Levels go straight into the view as they arrive, as
+/// they do for the strip, so SwiftUI never re-renders the bar per frame.
+struct BarVisualiser: NSViewRepresentable {
+    let config: VisualiserConfig
+    let theme: Theme
+
+    func makeNSView(context: Context) -> VisualiserBarsView {
+        let view = VisualiserBarsView(frame: .zero)
+        view.wantsLayer = true
+        view.alphaValue = MusicPlayer.shared.isPlaying ? 1 : 0
+        context.coordinator.attach(view)
+        return view
+    }
+
+    func updateNSView(_ view: VisualiserBarsView, context: Context) {
+        var inBar = config
+        inBar.mirror = 0
+        inBar.opacity = config.barOpacity
+        view.apply(config: inBar, theme: theme)
+        context.coordinator.fade = config.fade
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        var fade: Double = 0.5
+        private var observers: [AnyCancellable] = []
+
+        func attach(_ view: VisualiserBarsView) {
+            observers = [
+                MusicPlayer.shared.spectrum.$bands
+                    .receive(on: RunLoop.main)
+                    .sink { [weak view] values in view?.setBands(values) },
+                // Rise with the music and sink away when it stops; the bars
+                // keep draining behind the fade.
+                MusicPlayer.shared.$isPlaying
+                    .removeDuplicates()
+                    .receive(on: RunLoop.main)
+                    .sink { [weak view, weak self] playing in
+                        guard let view else { return }
+                        NSAnimationContext.runAnimationGroup { context in
+                            context.duration = max(0.05, self?.fade ?? 0.5)
+                            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                            view.animator().alphaValue = playing ? 1 : 0
+                        }
+                    },
+            ]
+        }
     }
 }

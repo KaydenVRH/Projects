@@ -538,7 +538,15 @@ window ignores the mouse.
   mirror  = 0.35          # reflection under the baseline; 0 turns it off
   fade    = 0.5           # seconds to fade in and out
   display = "all"         # all | main
+  placement   = "screen"  # screen | bar
+  bar_opacity = 0.38      # how strong the bars are inside the bar
   ```
+- `placement = "bar"` draws the bars inside the bar instead of along the bottom
+  of the screen. They rise from the bar's bottom edge, over its background and
+  behind its widgets, faint enough (`bar_opacity`) that the text stays
+  readable. They fade in with the music and out when it stops. The levels go
+  straight into an AppKit view, as they do for the strip, so the bar's SwiftUI
+  content is not redrawn on every frame.
 
 ### Notification centre (`[notifications]`)
 

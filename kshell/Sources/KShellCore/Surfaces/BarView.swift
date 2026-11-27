@@ -22,7 +22,16 @@ public struct BarView: View {
             content(totalWidth: geometry.size.width)
                 .padding(.horizontal, viewModel.appearance.paddingX)
                 .frame(width: geometry.size.width, height: geometry.size.height)
-                .background(viewModel.appearance.background.color)
+                .background {
+                    ZStack {
+                        viewModel.appearance.background.color
+                        // Music, behind the widgets.
+                        if let config = viewModel.barVisualiser {
+                            BarVisualiser(config: config, theme: viewModel.theme)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                }
         }
     }
 
