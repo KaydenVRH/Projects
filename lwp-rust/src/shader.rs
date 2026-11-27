@@ -906,7 +906,15 @@ unsafe fn create_window(mtm: MainThreadMarker, frame: NSRect, gpu: &Gpu) -> Scre
     layer.setFramebufferOnly(true);
     layer.setOpaque(true);
 
-    let scale = 2.0f64;
+    // Drawn at one pixel per point and scaled up by the compositor: four times
+    // fewer pixels than Retina, which these soft, glowing shaders barely show,
+    // and it is what keeps a full-screen shader from saturating the GPU the
+    // desktop needs. LWP_SHADER_SCALE=2 for full Retina.
+    let scale = std::env::var("LWP_SHADER_SCALE")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .map(|v| v.clamp(0.25, 2.0))
+        .unwrap_or(1.0);
     let drawable = objc2_core_foundation::CGSize {
         width: frame.size.width * scale,
         height: frame.size.height * scale,
@@ -932,8 +940,22 @@ fn spawn_renderer(gpu: Arc<Gpu>, layer: LayerRef, size: [f64; 2]) {
         let start = Instant::now();
         let mut frame: u32 = 0;
         let res = [size[0] as f32, size[1] as f32];
+        // A wallpaper needs no more than 30 frames a second; drawing at the
+        // display's 120 just burns GPU time the windows on top of it want.
+        let fps = std::env::var("LWP_SHADER_FPS")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .map(|v| v.clamp(5.0, 120.0))
+            .unwrap_or(30.0);
+        let period = std::time::Duration::from_secs_f64(1.0 / fps);
+        let mut next = Instant::now();
 
         while !SHOULD_QUIT.load(Ordering::SeqCst) {
+            let now = Instant::now();
+            if now < next {
+                thread::sleep(next - now);
+            }
+            next = (next + period).max(Instant::now());
             unsafe {
                 let Some(drawable) = layer.nextDrawable() else {
                     thread::sleep(std::time::Duration::from_millis(8));

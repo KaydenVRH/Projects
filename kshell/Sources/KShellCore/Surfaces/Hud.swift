@@ -112,8 +112,10 @@ final class HudChromeView: NSView {
             ?? CGPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), cornerWidth: 14, cornerHeight: 14, transform: nil)
         outline.path = path
         outline.frame = bounds
+        outline.bakeGlow(shape: path, width: 1)
         brackets.frame = bounds
         brackets.path = Self.bracketPath(in: bounds.insetBy(dx: 9, dy: 9), arm: 18)
+        brackets.bakeGlow(shape: brackets.path, width: 2)
         ticks.frame = bounds
         ticks.path = Self.tickPath(in: bounds)
         scanline.frame = CGRect(x: 0, y: 0, width: size.width, height: 1)
@@ -143,13 +145,7 @@ final class HudChromeView: NSView {
         fall.repeatCount = .infinity
         sweep.add(fall, forKey: "fall")
 
-        let breathe = CABasicAnimation(keyPath: "shadowRadius")
-        breathe.fromValue = 4
-        breathe.toValue = 9
-        breathe.duration = 1.6
-        breathe.autoreverses = true
-        breathe.repeatCount = .infinity
-        brackets.add(breathe, forKey: "breathe")
+        brackets.add(breathing(from: 0.55, period: 1.6), forKey: "breathe")
     }
 
     /// A hologram switching on: the content stutters up to full strength.
@@ -202,6 +198,7 @@ final class HudFramePanel: NSPanel {
     let frameScreen: NSScreen
     private let trace = CAShapeLayer()
     private let runner = CAShapeLayer()
+    private let runnerGlow = CAShapeLayer()
     private let corners = CAShapeLayer()
 
     init(screen: NSScreen, inset: CGFloat, radius: CGFloat) {
@@ -231,6 +228,7 @@ final class HudFramePanel: NSPanel {
         trace.shadowRadius = 5
         trace.shadowOpacity = 0.9
         trace.shadowOffset = .zero
+        trace.bakeGlow(shape: path, width: 1)
         root.layer?.addSublayer(trace)
 
         // A short bright dash that runs the whole way round every few seconds.
@@ -239,12 +237,19 @@ final class HudFramePanel: NSPanel {
         runner.strokeColor = Hud.ice.cgColor
         runner.lineWidth = 2
         runner.lineCap = .round
-        runner.shadowColor = Hud.accent.cgColor
-        runner.shadowRadius = 8
-        runner.shadowOpacity = 1
-        runner.shadowOffset = .zero
         runner.strokeStart = 0
         runner.strokeEnd = 0.04
+        // Its glow is a wide, faint stroke riding with it, not a shadow: the
+        // visible part of the path changes every frame, so a shadow would be
+        // recomputed every frame.
+        runnerGlow.path = path
+        runnerGlow.fillColor = nil
+        runnerGlow.strokeColor = Hud.accent.withAlphaComponent(0.25).cgColor
+        runnerGlow.lineWidth = 9
+        runnerGlow.lineCap = .round
+        runnerGlow.strokeStart = 0
+        runnerGlow.strokeEnd = 0.04
+        root.layer?.addSublayer(runnerGlow)
         root.layer?.addSublayer(runner)
 
         corners.path = HudChromeView.bracketPath(in: opening.insetBy(dx: 10, dy: 10), arm: 34)
@@ -256,6 +261,7 @@ final class HudFramePanel: NSPanel {
         corners.shadowRadius = 7
         corners.shadowOpacity = 1
         corners.shadowOffset = .zero
+        corners.bakeGlow(shape: corners.path, width: 2)
         root.layer?.addSublayer(corners)
 
         animate()
@@ -266,21 +272,18 @@ final class HudFramePanel: NSPanel {
         run.values = [0, 0.96]
         let runEnd = CAKeyframeAnimation(keyPath: "strokeEnd")
         runEnd.values = [0.04, 1]
+        // One lap in four seconds, then a rest: the path spans the screen, so
+        // while it runs the whole screen is recomposited every frame.
+        run.duration = 4
+        runEnd.duration = 4
         let group = CAAnimationGroup()
         group.animations = [run, runEnd]
-        group.duration = 7
+        group.duration = 14
         group.repeatCount = .infinity
         group.timingFunction = CAMediaTimingFunction(name: .linear)
         runner.add(group, forKey: "run")
+        runnerGlow.add(group, forKey: "run")
 
-        let pulse = CABasicAnimation(keyPath: "opacity")
-        pulse.fromValue = 0.55
-        pulse.toValue = 1
-        pulse.duration = 1.8
-        pulse.autoreverses = true
-        pulse.repeatCount = .infinity
-        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        corners.add(pulse, forKey: "pulse")
 
         let draw = CABasicAnimation(keyPath: "strokeEnd")
         draw.fromValue = 0
@@ -354,6 +357,7 @@ final class HudBarTrimView: NSView {
         CATransaction.setDisableActions(true)
         let width = bounds.width
         baseline.frame = CGRect(x: 0, y: 0, width: width, height: 1)
+        baseline.shadowPath = CGPath(rect: baseline.bounds, transform: nil)
         ticks.frame = bounds
         let path = CGMutablePath()
         var x: CGFloat = 24

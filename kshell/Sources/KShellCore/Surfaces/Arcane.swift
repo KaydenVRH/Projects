@@ -135,6 +135,33 @@ public enum Arcane {
     }
 }
 
+extension CALayer {
+    /// Make a glowing layer cheap to composite: give its shadow the exact shape
+    /// (so Core Animation needn't render the layer offscreen to find one) and
+    /// cache the result as a bitmap. Glows breathe by animating opacity, which a
+    /// cached bitmap can do for free — animating the shadow's radius instead
+    /// re-blurred a screen-sized outline every frame and pinned the GPU.
+    func bakeGlow(shape: CGPath?, width: CGFloat) {
+        if let shape {
+            shadowPath = shape.copy(strokingWithWidth: max(width, 1), lineCap: .round, lineJoin: .round, miterLimit: 4)
+        }
+        shouldRasterize = true
+        rasterizationScale = NSScreen.main?.backingScaleFactor ?? 2
+    }
+}
+
+/// A slow breath of opacity, for a baked glow.
+func breathing(from low: Float, period: CFTimeInterval) -> CABasicAnimation {
+    let breathe = CABasicAnimation(keyPath: "opacity")
+    breathe.fromValue = low
+    breathe.toValue = 1
+    breathe.duration = period
+    breathe.autoreverses = true
+    breathe.repeatCount = .infinity
+    breathe.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+    return breathe
+}
+
 /// A menu's chrome, for whichever theme draws one over its content.
 protocol ThemeChrome: NSView {
     func fit(size: NSSize, style: PanelStyle?)
@@ -203,6 +230,7 @@ final class ArcaneChromeView: NSView, ThemeChrome {
         outline.frame = bounds
         outline.path = style.map { PanelGeometry.path(in: bounds.insetBy(dx: 0.6, dy: 0.6), style: $0) }
             ?? CGPath(roundedRect: bounds.insetBy(dx: 0.6, dy: 0.6), cornerWidth: 16, cornerHeight: 16, transform: nil)
+        outline.bakeGlow(shape: outline.path, width: outline.lineWidth)
         motes.frame = bounds
         motes.emitterPosition = CGPoint(x: size.width / 2, y: 0)
         motes.emitterSize = CGSize(width: size.width * 0.9, height: 1)
@@ -216,14 +244,7 @@ final class ArcaneChromeView: NSView, ThemeChrome {
     func powerOn() {
         Arcane.burst(burst, strength: 1, for: 0.25)
 
-        let breathe = CABasicAnimation(keyPath: "shadowRadius")
-        breathe.fromValue = 5
-        breathe.toValue = 14
-        breathe.duration = 2.2
-        breathe.autoreverses = true
-        breathe.repeatCount = .infinity
-        breathe.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        outline.add(breathe, forKey: "breathe")
+        outline.add(breathing(from: 0.45, period: 2.2), forKey: "breathe")
 
         let glide = CABasicAnimation(keyPath: "position.x")
         glide.fromValue = -bounds.width * 0.3
@@ -263,52 +284,59 @@ final class ArcaneFramePanel: NSPanel {
         let bounds = root.bounds
         let opening = bounds.insetBy(dx: inset, dy: inset)
 
-        let edge = CAShapeLayer()
-        edge.path = CGPath(roundedRect: opening, cornerWidth: radius, cornerHeight: radius, transform: nil)
-        edge.fillColor = nil
-        edge.strokeColor = Arcane.violet.withAlphaComponent(0.6).cgColor
-        edge.lineWidth = 1.2
-        edge.shadowColor = Arcane.violet.cgColor
-        edge.shadowRadius = 9
-        edge.shadowOpacity = 1
-        edge.shadowOffset = .zero
-        root.layer?.addSublayer(edge)
-
-        let breathe = CABasicAnimation(keyPath: "shadowRadius")
-        breathe.fromValue = 6
-        breathe.toValue = 16
-        breathe.duration = 3
-        breathe.autoreverses = true
-        breathe.repeatCount = .infinity
-        breathe.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        edge.add(breathe, forKey: "breathe")
-
-        let hue = CABasicAnimation(keyPath: "strokeColor")
-        hue.fromValue = Arcane.violet.withAlphaComponent(0.6).cgColor
-        hue.toValue = Arcane.rose.withAlphaComponent(0.6).cgColor
-        hue.duration = 5
-        hue.autoreverses = true
-        hue.repeatCount = .infinity
-        edge.add(hue, forKey: "hue")
+        // The edge glows violet, warming to rose along the bottom, baked once and
+        // left still. These layers span the whole screen, and anything that
+        // changes on a screen-sized layer — even its opacity — makes the window
+        // server recomposite the whole screen, glass and all, every frame. The
+        // life comes from the particles, whose layers are kept to thin strips.
+        let path = CGPath(roundedRect: opening, cornerWidth: radius, cornerHeight: radius, transform: nil)
+        for (index, colour) in [Arcane.violet, Arcane.rose].enumerated() {
+            let edge = CAShapeLayer()
+            edge.frame = bounds
+            edge.path = path
+            edge.fillColor = nil
+            edge.strokeColor = colour.withAlphaComponent(0.6).cgColor
+            edge.lineWidth = 1.2
+            edge.shadowColor = colour.cgColor
+            edge.shadowRadius = 10
+            edge.shadowOpacity = 1
+            edge.shadowOffset = .zero
+            edge.bakeGlow(shape: path, width: 1.2)
+            if index == 1 {
+                // rose only along the bottom, fading out up the sides
+                let fade = CAGradientLayer()
+                fade.frame = bounds
+                fade.colors = [NSColor.black.cgColor, NSColor.clear.cgColor]
+                fade.startPoint = CGPoint(x: 0.5, y: 0)
+                fade.endPoint = CGPoint(x: 0.5, y: 0.45)
+                edge.mask = fade
+            }
+            root.layer?.addSublayer(edge)
+        }
 
         // motes rising off the bottom edge, and a few drifting up each side
+        // Each emitter's layer is only the strip its particles live in, so the
+        // screen is redrawn there and nowhere else.
         let floor = CAEmitterLayer()
-        floor.frame = bounds
+        floor.frame = CGRect(x: 0, y: 0, width: bounds.width, height: 260)
+        floor.masksToBounds = true
         floor.emitterShape = .line
         floor.emitterPosition = CGPoint(x: bounds.midX, y: inset)
         floor.emitterSize = CGSize(width: opening.width, height: 1)
         floor.renderMode = .additive
-        floor.emitterCells = Arcane.cells(rate: 3, velocity: 30, lifetime: 5, scale: 0.3)
+        floor.emitterCells = Arcane.cells(rate: 1.6, velocity: 30, lifetime: 5, scale: 0.3)
         root.layer?.addSublayer(floor)
 
         for x in [opening.minX, opening.maxX] {
             let side = CAEmitterLayer()
-            side.frame = bounds
+            let strip: CGFloat = 90
+            side.frame = CGRect(x: x - strip / 2, y: 0, width: strip, height: bounds.height)
+            side.masksToBounds = true
             side.emitterShape = .line
-            side.emitterPosition = CGPoint(x: x, y: bounds.midY)
+            side.emitterPosition = CGPoint(x: strip / 2, y: bounds.midY)
             side.emitterSize = CGSize(width: 1, height: opening.height * 0.9)
             side.renderMode = .additive
-            side.emitterCells = Arcane.cells(rate: 0.9, velocity: 14, lifetime: 4, scale: 0.26)
+            side.emitterCells = Arcane.cells(rate: 0.45, velocity: 14, lifetime: 4, scale: 0.26)
             root.layer?.addSublayer(side)
         }
     }
@@ -323,6 +351,10 @@ final class ArcaneCursorTrail {
     private var panels: [(NSPanel, CAEmitterLayer)] = []
     private var timer: DispatchSourceTimer?
     private var last = NSPoint(x: -1, y: -1)
+    private var resting = true
+    private var restStamp = UUID()
+    /// Displays a full-screen app has taken over.
+    private var hiddenScreens: [NSRect] = []
 
     init() {
         panels = NSScreen.screens.map { screen in
@@ -350,7 +382,6 @@ final class ArcaneCursorTrail {
             }
             emitter.emitterCells = cells
             root.layer?.addSublayer(emitter)
-            panel.orderFrontRegardless()
             return (panel, emitter)
         }
         let timer = DispatchSource.makeTimerSource(queue: .main)
@@ -364,6 +395,25 @@ final class ArcaneCursorTrail {
         let mouse = NSEvent.mouseLocation
         let moved = hypot(mouse.x - last.x, mouse.y - last.y)
         last = mouse
+        // Resting: stop shedding, and once the last sparks have faded take the
+        // windows off screen — a screen-sized window, even an empty one, costs
+        // the window server a composite every frame something beneath it moves.
+        if moved < 0.5 {
+            if resting { return }
+            resting = true
+            for (_, emitter) in panels { emitter.birthRate = 0 }
+            let stamp = UUID()
+            restStamp = stamp
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
+                guard let self, self.resting, self.restStamp == stamp else { return }
+                for (panel, _) in self.panels { panel.orderOut(nil) }
+            }
+            return
+        }
+        if resting {
+            for (panel, _) in panels where !hiddenScreens.contains(panel.frame) { panel.orderFrontRegardless() }
+        }
+        resting = false
         for (panel, emitter) in panels {
             let frame = panel.frame
             guard frame.contains(mouse) else {
@@ -375,7 +425,7 @@ final class ArcaneCursorTrail {
             emitter.emitterPosition = CGPoint(x: mouse.x - frame.minX, y: mouse.y - frame.minY)
             CATransaction.commit()
             // The faster it moves, the more it sheds; resting, it sheds nothing.
-            emitter.birthRate = moved < 0.5 ? 0 : Float(min(1, moved / 25))
+            emitter.birthRate = Float(min(1, moved / 25))
         }
     }
 
@@ -388,8 +438,10 @@ final class ArcaneCursorTrail {
 
     /// Get out of the way of a full-screen app on `screen`, or come back.
     func setHidden(_ hidden: Bool, on screen: NSScreen) {
-        for (panel, _) in panels where panel.frame == screen.frame {
-            if hidden { panel.orderOut(nil) } else { panel.orderFrontRegardless() }
+        hiddenScreens.removeAll { $0 == screen.frame }
+        if hidden { hiddenScreens.append(screen.frame) }
+        for (panel, _) in panels where panel.frame == screen.frame && hidden {
+            panel.orderOut(nil)
         }
     }
 }
@@ -442,6 +494,7 @@ final class ArcaneBarTrimView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         glow.frame = CGRect(x: 0, y: 0, width: bounds.width, height: 1)
+        glow.shadowPath = CGPath(rect: glow.bounds, transform: nil)
         sparkles.frame = bounds
         sparkles.emitterPosition = CGPoint(x: bounds.midX, y: 2)
         sparkles.emitterSize = CGSize(width: bounds.width * 0.95, height: 1)
@@ -491,6 +544,9 @@ struct MagicCircle: View {
 
     var body: some View {
         ZStack {
+            // The glow is a still, blurred ring under the moving parts: a shadow
+            // on the spinning layers would be re-rendered every frame.
+            Circle().stroke(violet.opacity(0.7), lineWidth: lineWidth * 4).blur(radius: 5)
             Circle().stroke(violet.opacity(0.85), lineWidth: lineWidth)
             SpinningRing(colour: rose.opacity(0.8), dash: [1.5, 3, 5, 3], width: lineWidth * 1.6, period: period)
                 .padding(lineWidth * 4)
@@ -502,7 +558,6 @@ struct MagicCircle: View {
                     .padding(lineWidth * 8)
             }
         }
-        .shadow(color: violet.opacity(0.9), radius: 6)
     }
 }
 

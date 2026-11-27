@@ -885,7 +885,6 @@ private struct ArcaneCover: View {
         ZStack {
             RadialSpectrum(spectrum: player.spectrum, tint: tint, playing: player.isPlaying, inner: 92)
                 .frame(width: 236, height: 236)
-                .blur(radius: 1.5)
                 .opacity(0.8)
             MagicCircle(violet: tint, rose: rose, lineWidth: 1.2, period: player.isPlaying ? 16 : 40)
                 .frame(width: 210, height: 210)
