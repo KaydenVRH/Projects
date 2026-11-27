@@ -159,10 +159,24 @@ final class BluetoothRuntime: MetricRuntime {
         super.init(spec: spec, theme: theme, defaultIcon: "\u{f293}")
     }
 
+    /// The controller is read off the main thread: its first use waits on the
+    /// Bluetooth permission prompt, and on the main thread that froze the whole
+    /// shell — every panel and the bar — until the prompt was answered, which
+    /// happens again after each rebuild (a new binary is a new app to macOS).
+    private let queue = DispatchQueue(label: "kshell.bluetooth-widget")
+    private var reading = false
+
     override func tick() {
-        let state = IOBluetoothHostController.default()?.powerState
-        let on = state == kBluetoothHCIPowerStateON
-        model.icon = on ? "\u{f293}" : "\u{f294}"   // bluetooth-b / bluetooth
-        model.label = on ? "" : "off"
+        guard !reading else { return }
+        reading = true
+        queue.async { [weak self] in
+            let on = IOBluetoothHostController.default()?.powerState == kBluetoothHCIPowerStateON
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.reading = false
+                self.model.icon = on ? "\u{f293}" : "\u{f294}"   // bluetooth-b / bluetooth
+                self.model.label = on ? "" : "off"
+            }
+        }
     }
 }

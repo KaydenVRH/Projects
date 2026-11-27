@@ -190,8 +190,8 @@ public final class OverlayPanel: NSPanel {
         self.host = host
         contentView = container
 
-        motion.onStep = { [weak self] along, outward in
-            self?.apply(along: along, outward: outward)
+        motion.onStep = { [weak self] pose in
+            self?.apply(pose)
         }
         motion.onSettle = { [weak self] open in
             guard let self else { return }
@@ -202,22 +202,30 @@ public final class OverlayPanel: NSPanel {
                 self.finishHide() // a no-op once it is already gone
             }
         }
-        apply(along: 0, outward: 0)
+        apply(.closed)
+    }
+
+    /// How far the panel travels out from its edge.
+    private var travel: CGFloat {
+        (edge == .top || edge == .bottom)
+            ? size.height - seedFrame.height
+            : size.width - seedFrame.width
     }
 
     /// The window while the panel moves: the shown frame, plus room for the
-    /// bounce on the side the panel grows toward.
+    /// jelly — out from the edge, and a little on both sides along it.
     private var slackFrame: NSRect {
-        let travel = (edge == .top || edge == .bottom)
-            ? size.height - seedFrame.height
-            : size.width - seedFrame.width
-        let room = ceil(travel * CGFloat(Spring.panelOutward.overshoot) * 1.4) + 6
+        let room = Jelly.slack(travel: travel)
         var frame = shownFrame
         switch edge {
-        case .bottom: frame.size.height += room
-        case .top: frame.origin.y -= room; frame.size.height += room
-        case .leading: frame.size.width += room
-        case .trailing: frame.origin.x -= room; frame.size.width += room
+        case .bottom, .top:
+            frame.size.height += room.out
+            if edge == .top { frame.origin.y -= room.out }
+            frame = frame.insetBy(dx: -room.side, dy: 0)
+        case .leading, .trailing:
+            frame.size.width += room.out
+            if edge == .trailing { frame.origin.x -= room.out }
+            frame = frame.insetBy(dx: 0, dy: -room.side)
         }
         return frame
     }
@@ -230,7 +238,7 @@ public final class OverlayPanel: NSPanel {
         CATransaction.setDisableActions(true)
         setFrame(target, display: false)
         windowOrigin = target.origin
-        apply(along: motion.along.value, outward: motion.outward.value)
+        apply(motion.pose)
         CATransaction.commit()
     }
 
@@ -288,7 +296,7 @@ public final class OverlayPanel: NSPanel {
 
         // Take a piece of the frame's glass, if the frame is providing it.
         glass = makeGlass?(targetScreen)
-        if !isVisible { apply(along: 0, outward: 0) }
+        if !isVisible { apply(.closed) }
         setSlack(animated)
         Motion.reveal()
 
@@ -386,24 +394,24 @@ public final class OverlayPanel: NSPanel {
         if takesKeyboard { Frontmost.handBack() }
     }
 
-    /// Put the panel, its outline, its content and its glass at the springs'
-    /// values: `along` widens the pill along its edge, `outward` reaches it out.
+    /// Put the panel, its outline, its content and its glass at `pose`.
     ///
     /// Everything is set to its model value each tick rather than animated: the
     /// window server renders an effect view's blur from the layer's model
     /// geometry, so an animated frame or mask would leave the glass behind.
-    private func apply(along: CGFloat, outward: CGFloat) {
+    private func apply(_ pose: PanelPose) {
         let seed = seedFrame
         func mix(_ a: CGFloat, _ b: CGFloat, _ t: CGFloat) -> CGFloat { a + (b - a) * t }
         let alongX = edge == .top || edge == .bottom
-        let tx = alongX ? along : outward
-        let ty = alongX ? outward : along
-        let rect = NSRect(
+        let tx = alongX ? pose.along : pose.reach
+        let ty = alongX ? pose.reach : pose.along
+        let grown = NSRect(
             x: mix(seed.minX, shownFrame.minX, tx),
             y: mix(seed.minY, shownFrame.minY, ty),
             width: mix(seed.width, shownFrame.width, tx),
             height: mix(seed.height, shownFrame.height, ty)
         )
+        let rect = Jelly.shape(grown, edge: edge, wobble: pose.wobble, travel: travel)
         let style = self.style ?? fallbackStyle
 
         CATransaction.begin()
@@ -426,13 +434,24 @@ public final class OverlayPanel: NSPanel {
         ))
         mask.path = shape
 
-        // The content keeps its final size and stays pinned to the anchored
-        // edge, so the growing outline reveals it. It is centred along the edge,
-        // which is the axis the pill grows about. It also trails the outline a
-        // little — drifting in from the edge and fading up — so it reads as
-        // carried out by the panel rather than uncovered by it.
-        if let host {
-            let drift = (1 - outward) * Self.contentDrift
+        guard let host else {
+            glass?.setResting(rect, style: style)
+            return
+        }
+        if pose.wobble != 0 {
+            // Wobbling: the content is squished with the jelly — laid out at
+            // its own size and drawn into the deformed rectangle.
+            host.frame = NSRect(origin: .zero, size: local.size)
+            host.bounds = NSRect(origin: .zero, size: size)
+            host.alphaValue = 1
+        } else {
+            // Growing: the content keeps its final size and stays pinned to the
+            // anchored edge, so the growing outline reveals it. It is centred
+            // along the edge, which is the axis the pill grows about. It also
+            // trails the outline a little — drifting in from the edge and
+            // fading up — so it reads as carried out by the panel rather than
+            // uncovered by it.
+            let drift = (1 - pose.reach) * Self.contentDrift
             var origin = CGPoint.zero
             switch edge {
             case .bottom: origin = CGPoint(x: (local.width - size.width) / 2, y: -drift)
@@ -441,7 +460,8 @@ public final class OverlayPanel: NSPanel {
             case .trailing: origin = CGPoint(x: local.width - size.width + drift, y: (local.height - size.height) / 2)
             }
             host.frame = NSRect(origin: origin, size: size)
-            host.alphaValue = Motion.ramp(min(outward, along + 0.2), from: 0.1, to: 0.65)
+            host.bounds = NSRect(origin: .zero, size: size)
+            host.alphaValue = Motion.ramp(min(pose.reach, pose.along + 0.2), from: 0.1, to: 0.65)
         }
 
         glass?.setResting(rect, style: style)

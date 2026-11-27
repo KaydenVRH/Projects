@@ -155,22 +155,26 @@ public final class MediaIslandPanel: NSPanel {
             localGlass = effect
         }
 
-        motion.onStep = { [weak self] along, outward in
-            self?.apply(along: along, outward: outward)
+        motion.onStep = { [weak self] pose in
+            self?.apply(pose)
         }
         motion.onSettle = { [weak self] open in
             guard let self else { return }
             if open { self.setSlack(false) } else if !self.isShown { self.finishHide() }
         }
-        apply(along: 0, outward: 0)
+        apply(.closed)
     }
 
-    /// The open rectangle plus room for the bounce, away from the bar.
+    private var travel: CGFloat { expanded.height - pill.height }
+    private var jellyEdge: OverlayEdge { growsDown ? .top : .bottom }
+
+    /// The open rectangle plus room for the jelly: away from the bar, and a
+    /// little either side.
     private var slackFrame: NSRect {
-        let room = ceil((expanded.height - pill.height) * CGFloat(Spring.panelOutward.overshoot) * 1.4) + 6
-        var frame = expanded
-        frame.size.height += room
-        if growsDown { frame.origin.y -= room }
+        let room = Jelly.slack(travel: travel)
+        var frame = expanded.insetBy(dx: -room.side, dy: 0)
+        frame.size.height += room.out
+        if growsDown { frame.origin.y -= room.out }
         return frame
     }
 
@@ -183,7 +187,7 @@ public final class MediaIslandPanel: NSPanel {
         CATransaction.setDisableActions(true)
         setFrame(target, display: false)
         windowOrigin = target.origin
-        apply(along: motion.along.value, outward: motion.outward.value)
+        apply(motion.pose)
         CATransaction.commit()
     }
 
@@ -212,7 +216,7 @@ public final class MediaIslandPanel: NSPanel {
         isShown = true
 
         glass = makeGlass?(targetScreen)
-        if !isVisible { apply(along: 0, outward: 0) }
+        if !isVisible { apply(.closed) }
         setSlack(animated)
 
         Frontmost.claim()
@@ -267,25 +271,24 @@ public final class MediaIslandPanel: NSPanel {
         Frontmost.handBack()
     }
 
-    /// Put the island, its outline and its glass at the springs' values:
-    /// `along` widens it along the bar, `outward` drops it away from the bar
-    /// (and bounces a little past the open size).
+    /// Put the island, its outline and its glass at `pose`: widening along the
+    /// bar, dropping away from it, then wobbling like jelly once it is open.
     ///
     /// Everything — the window's content, the outline and the borrowed glass —
     /// is set to its model value each tick. Nothing is handed to Core Animation:
     /// the window server renders an effect view's blur from the layer's model
     /// geometry, so an animated frame would leave the glass behind.
-    private func apply(along: CGFloat, outward: CGFloat) {
-        let width = pill.width + (expanded.width - pill.width) * along
-        let height = pill.height + (expanded.height - pill.height) * outward
+    private func apply(_ pose: PanelPose) {
+        let width = pill.width + (expanded.width - pill.width) * pose.along
+        let height = pill.height + (expanded.height - pill.height) * pose.reach
         // Hung off the bar: a top bar's island keeps its top edge, a bottom
         // bar's its bottom edge.
-        let rect = NSRect(
+        let rect = Jelly.shape(NSRect(
             x: expanded.midX - width / 2,
             y: growsDown ? expanded.maxY - height : expanded.minY,
             width: width,
             height: height
-        )
+        ), edge: jellyEdge, wobble: pose.wobble, travel: travel)
         // The pill's radius is already the panel's: a 44pt pill at radius 22 is
         // a capsule, and the same radius at full height is the panel's corner.
         let outline = PanelStyle(radius: radius, filletRadius: 0, attachment: .none)
@@ -301,6 +304,9 @@ public final class MediaIslandPanel: NSPanel {
         )
         container.frame = local
         host.frame = NSRect(origin: .zero, size: local.size)
+        // While it wobbles the content is squished with it rather than
+        // reflowed: laid out at the open size, drawn into the jelly.
+        if pose.wobble != 0 { host.bounds = NSRect(origin: .zero, size: expanded.size) }
         localGlass?.frame = NSRect(origin: .zero, size: local.size)
 
         let shape = CGMutablePath()
@@ -309,7 +315,7 @@ public final class MediaIslandPanel: NSPanel {
 
         // The content crossfades from the pill to the centre on the way out;
         // the bounce past open is geometry only.
-        island.progress = min(1, max(0, outward))
+        island.progress = pose.reach
         glass?.setResting(rect, style: outline)
     }
 }

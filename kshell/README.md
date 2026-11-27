@@ -164,18 +164,21 @@ screen's edge.
 Everything moves on springs, in the spirit of the Quickshell rices (caelestia
 especially). `Surfaces/Motion.swift` is the one place they are tuned:
 
-- **Panels are two springs** (`PanelMotion`). One widens the pill along its edge
-  and settles calmly. The other reaches it out from the edge, a little slower,
-  and bounces about 6 % past the resting size before it settles. Because the
-  widening comes first and the reach follows, the panel stretches out like
-  liquid instead of scaling. A spring keeps its velocity, so a panel closed
-  half-way through opening turns round mid-flight rather than restarting. The
-  content trails the outline: it drifts in from the edge and fades up.
-- **The bounce needs room past the panel.** While a panel moves, its window
-  carries slack on the side it grows toward. Once it is at rest, the window
-  shrinks back to exactly the panel, so no invisible strip is left to swallow
-  clicks meant for the app behind. That strip was why panels stopped bouncing
-  in the first place.
+- **Panels are two springs** (`PanelMotion`). One widens the pill along its
+  edge. The other reaches it out from the edge, and once the panel has arrived
+  that spring's swing becomes a **jelly wobble**. The panel stretches out and
+  narrows, then squashes and bulges, a few times over and smaller each time.
+  The content inside is squished along with it, so the whole thing reads as one
+  soft body (`PanelPose`, `Jelly`). The wobble is a fixed depth in points (up to
+  about 28), not a fraction of the panel, so tall panels don't fling. A spring
+  keeps its velocity, so a panel closed half-way through opening turns round
+  mid-flight. While a panel grows, the content drifts in from the edge and
+  fades up.
+- **The jelly needs room past the panel.** While a panel moves, its window
+  carries slack out from the edge and a little on each side. Once it is at
+  rest, the window shrinks back to exactly the panel, so no invisible strip is
+  left to swallow clicks meant for the app behind. That strip was why panels
+  stopped bouncing in the first place.
 - **The springs are stepped on the display's own refresh** (a `CADisplayLink`,
   60–120 Hz). They are integrated in 1 ms slices, so they move identically at
   any frame rate. The media island moves the same way.

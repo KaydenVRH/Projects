@@ -31,8 +31,10 @@ public struct Spring: Sendable, Equatable {
         return exp(-damping * .pi / sqrt(1 - damping * damping))
     }
 
-    /// Reaching out from the edge: quick, with a visible bounce.
-    public static let panelOutward = Spring(response: 0.44, damping: 0.66)
+    /// Reaching out from the edge. Loosely damped: past the moment it arrives
+    /// this spring is the panel's jelly wobble (see `PanelPose`), and a few
+    /// decaying swings are what make it read as jelly rather than a bump.
+    public static let panelOutward = Spring(response: 0.5, damping: 0.36)
     /// Widening along the edge: a touch quicker and calmer, so a panel spreads
     /// first and then reaches out — the stretch that makes it read as liquid.
     public static let panelAlong = Spring(response: 0.38, damping: 0.82)
@@ -119,17 +121,78 @@ final class FrameClock: NSObject {
     }
 }
 
+/// Where a panel is in its morph, as `PanelMotion` hands it out each frame.
+///
+/// On the way out the panel simply grows (`reach` 0 → 1). Once it has arrived,
+/// the outward spring's swing about 1 stops being growth and becomes `wobble`:
+/// squash and stretch around the resting size, the panel getting taller and
+/// thinner, then shorter and wider, a few times over. That swing is drawn at a
+/// fixed depth in points (`Jelly`), not scaled by the panel's size, so a tall
+/// panel doesn't fling itself a hundred points past its rest.
+struct PanelPose: Equatable {
+    /// 0…1 along the edge.
+    var along: CGFloat
+    /// 0…1 out from the edge.
+    var reach: CGFloat
+    /// The jelly swing once arrived: positive is stretched out from the edge
+    /// (and squeezed along it), negative squashed.
+    var wobble: CGFloat
+
+    static let closed = PanelPose(along: 0, reach: 0, wobble: 0)
+}
+
+/// How a pose's wobble becomes a shape.
+enum Jelly {
+    /// Points of stretch per unit of wobble, for a panel that travels `travel`
+    /// points out from its edge. With the outward spring's ~30 % first swing
+    /// that is a stretch of up to ~28 pt, then ~9 pt the other way, then ~3.
+    static func depth(travel: CGFloat) -> CGFloat { min(90, travel * 0.4) }
+    /// How much narrower a panel gets per point it stretches — the volume it
+    /// keeps, which is what makes the swing read as squish.
+    static let squeeze: CGFloat = 1.15
+    /// The room a window needs for the jelly: out from the edge, and on each
+    /// side along it (the squashed swing is wider than the panel).
+    static func slack(travel: CGFloat) -> (out: CGFloat, side: CGFloat) {
+        let peak = depth(travel: travel) * CGFloat(Spring.panelOutward.overshoot)
+        return (ceil(peak * 1.15) + 4, ceil(peak * CGFloat(Spring.panelOutward.overshoot) * squeeze) + 6)
+    }
+
+    /// `rest` deformed by `wobble`: stretched (or squashed) away from `edge`,
+    /// squeezed (or bulged) along it about its centre.
+    static func shape(_ rest: NSRect, edge: OverlayEdge, wobble: CGFloat, travel: CGFloat) -> NSRect {
+        guard wobble != 0 else { return rest }
+        let stretch = wobble * depth(travel: travel)
+        let across = -stretch * squeeze
+        var rect = rest
+        switch edge {
+        case .bottom, .top:
+            rect.size.height += stretch
+            if edge == .top { rect.origin.y -= stretch }
+            rect.size.width += across
+            rect.origin.x -= across / 2
+        case .leading, .trailing:
+            rect.size.width += stretch
+            if edge == .trailing { rect.origin.x -= stretch }
+            rect.size.height += across
+            rect.origin.y -= across / 2
+        }
+        return rect
+    }
+}
+
 /// The two springs a panel's morph is made of — along the edge it is anchored to
 /// and out from it — and the clock that steps them.
 final class PanelMotion {
     private(set) var along = SpringValue(0)
     private(set) var outward = SpringValue(0)
     private var opening = false
+    /// Whether the panel has reached its size on this opening: from then on the
+    /// outward spring's swing is jelly, not growth.
+    private var arrived = false
     private var clock: FrameClock?
 
-    /// Each frame: (along, outward), 0 = the seed pill, 1 = open. Outward may
-    /// briefly pass 1 while it bounces.
-    var onStep: ((CGFloat, CGFloat) -> Void)?
+    /// Each frame, where the panel is.
+    var onStep: ((PanelPose) -> Void)?
     /// Once both springs are at rest; the argument is whether it is open.
     var onSettle: ((Bool) -> Void)?
 
@@ -142,6 +205,13 @@ final class PanelMotion {
     deinit { clock?.stop() }
 
     var isMoving: Bool { clock?.isRunning ?? false }
+
+    var pose: PanelPose {
+        if arrived {
+            return PanelPose(along: along.value, reach: 1, wobble: outward.value - 1)
+        }
+        return PanelPose(along: along.value, reach: min(1, outward.value), wobble: 0)
+    }
 
     func animate(open: Bool) {
         opening = open
@@ -158,8 +228,9 @@ final class PanelMotion {
         opening = open
         along = SpringValue(open ? 1 : 0)
         outward = SpringValue(open ? 1 : 0)
+        arrived = open
         clock?.stop()
-        onStep?(along.value, outward.value)
+        onStep?(pose)
         onSettle?(open)
     }
 
@@ -171,15 +242,20 @@ final class PanelMotion {
             along.value = max(0, along.value)
             outward.value = max(0, outward.value)
         }
-        // Widening along the edge never bounces past the panel: it has no room
-        // to, and a sideways wobble reads as a glitch rather than weight.
+        // Widening along the edge never overshoots on its own; the jelly's
+        // squash is what moves the sides once the panel has arrived.
         along.value = min(1, along.value)
-        let done = along.isSettled && outward.isSettled
+        if opening, outward.value >= 1 { arrived = true }
+        if !opening, outward.value < 1 { arrived = false }
+        // At rest once the wobble is under half a point: the last swings of a
+        // loose spring take ages to die out and nobody can see them.
+        let still = abs(outward.value - outward.target) < 0.004 && abs(outward.velocity) < 0.06
+        let done = along.isSettled && still
         if done {
             along.settle()
             outward.settle()
         }
-        onStep?(along.value, outward.value)
+        onStep?(pose)
         if done { onSettle?(opening) }
         return !done
     }
