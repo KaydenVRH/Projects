@@ -250,7 +250,11 @@ final class PanelMotion {
         // At rest once the wobble is under half a point: the last swings of a
         // loose spring take ages to die out and nobody can see them.
         let still = abs(outward.value - outward.target) < 0.004 && abs(outward.velocity) < 0.06
-        let done = along.isSettled && still
+        // Closing is done once the panel is all but the pill: the last
+        // fraction of a point of a critically damped spring takes as long as
+        // the rest of the close, and it is exactly the bit that looked stuck.
+        let gone = !opening && outward.value < 0.03 && along.value < 0.06
+        let done = gone || (along.isSettled && still)
         if done {
             along.settle()
             outward.settle()

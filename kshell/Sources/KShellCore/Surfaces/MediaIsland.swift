@@ -317,6 +317,7 @@ public final class MediaIslandPanel: NSPanel {
         // the bounce past open is geometry only.
         island.progress = pose.reach
         glass?.setResting(rect, style: outline)
+        glass?.setFade(Motion.ramp(pose.reach, from: 0, to: 0.3))
     }
 }
 

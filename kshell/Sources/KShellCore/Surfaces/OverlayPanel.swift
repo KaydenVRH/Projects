@@ -436,6 +436,7 @@ public final class OverlayPanel: NSPanel {
 
         guard let host else {
             glass?.setResting(rect, style: style)
+            glass?.setFade(Motion.ramp(pose.reach, from: 0, to: 0.3))
             return
         }
         if pose.wobble != 0 {
@@ -465,5 +466,6 @@ public final class OverlayPanel: NSPanel {
         }
 
         glass?.setResting(rect, style: style)
+        glass?.setFade(Motion.ramp(pose.reach, from: 0, to: 0.3))
     }
 }

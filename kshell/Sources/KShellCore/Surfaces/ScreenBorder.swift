@@ -364,9 +364,17 @@ public final class SurfaceGlass {
         )
     }
 
+    /// How visible the glass is, 0…1. The panel fades it through its smallest
+    /// sizes, so a closing panel melts away rather than leaving a pill of glass
+    /// behind for the frame it takes to be put away.
+    public func setFade(_ alpha: CGFloat) {
+        clip.alphaValue = min(1, max(0, alpha))
+    }
+
     /// Clear of the screen, ready for the next panel.
     public func park() {
         isInUse = false
+        clip.alphaValue = 1
         clip.frame = NSRect(x: screenFrame.maxX + 50, y: screenFrame.minY, width: 1, height: 1)
     }
 }
