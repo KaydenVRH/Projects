@@ -24,7 +24,9 @@ items so the loop has no seam. Hardware decode, ~3% CPU.
 resolution. Nothing is stored: the picture is computed.
 
 Built-ins: `plasma`, `aurora`, `rings`, `stark` (a workshop hologram: a light-grid
-floor, a gyroscope of rings around a hex core, data panels and signal tears).
+floor, a gyroscope of rings around a hex core, data panels and signal tears),
+`arcane` (a summoning circle of runes and stars, a pillar of light, orbiting orbs
+and spiralling sparks).
 
 A shader file only has to define the fragment stage — lwp supplies the vertex
 shader, the `VOut` struct and the uniforms:
