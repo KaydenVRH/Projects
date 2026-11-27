@@ -50,7 +50,8 @@ public final class BarViewModel: ObservableObject {
         return PanelStyle(
             radius: panelSurface.radius,
             filletRadius: panelSurface.filletRadius,
-            attachment: edge.attachment
+            attachment: edge.attachment,
+            cut: Neon.isNeon(theme) ? Neon.panelCut : 0
         )
     }
 

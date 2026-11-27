@@ -75,7 +75,7 @@ struct KitHeader<Trailing: View>: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 2) {
-                    ChromaText(text: title.uppercased(), font: .system(size: 18, weight: .black).italic(),
+                    DecodingChromaText(text: title.uppercased(), font: .system(size: 18, weight: .black).italic(),
                                magenta: palette.accent, cyan: palette.highlight, foreground: palette.foreground)
                     BlinkingCursor(colour: palette.highlight)
                 }

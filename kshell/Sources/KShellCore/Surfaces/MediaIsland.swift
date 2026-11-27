@@ -27,8 +27,16 @@ public final class MediaIslandPanel: NSPanel {
     private let style: PanelStyle?
     private let makeGlass: ((NSScreen) -> SurfaceGlass?)?
 
+    /// The window's content: the island (`container`, masked to its outline)
+    /// and, unmasked over it, the light Neon's motion throws.
+    private let root = NSView()
     private let container = NSView()
     private let host: NSHostingView<MediaIslandView>
+    /// Neon islands come and go on their own timeline (see `NeonPanelMotion`).
+    private lazy var neonMotion = NeonPanelMotion(screen: targetScreen)
+    private var neonLights: NeonPanelLights?
+    private let bloom = CALayer()
+    private var neonDriven = false
     private let island: MediaIslandState
     private var glass: SurfaceGlass?
     private var localGlass: NSVisualEffectView?
@@ -151,7 +159,9 @@ public final class MediaIslandPanel: NSPanel {
             container.addSubview(chrome)
             self.chrome = chrome
         }
-        contentView = container
+        root.wantsLayer = true
+        root.addSubview(container)
+        contentView = root
 
         // Without the frame there is no shared surface to borrow, so the island
         // draws its own material exactly as the launchers do.
@@ -165,10 +175,21 @@ public final class MediaIslandPanel: NSPanel {
             localGlass = effect
         }
 
+        bloom.backgroundColor = NSColor.white.cgColor
+        bloom.opacity = 0
+        container.layer?.addSublayer(bloom)
+
         motion.onStep = { [weak self] pose in
             self?.apply(pose)
         }
         motion.onSettle = { [weak self] open in
+            guard let self else { return }
+            if open { self.setSlack(false) } else if !self.isShown { self.finishHide() }
+        }
+        neonMotion.onStep = { [weak self] frame in
+            self?.applyNeon(frame)
+        }
+        neonMotion.onSettle = { [weak self] open in
             guard let self else { return }
             if open { self.setSlack(false) } else if !self.isShown { self.finishHide() }
         }
@@ -181,7 +202,8 @@ public final class MediaIslandPanel: NSPanel {
     /// The open rectangle plus room for the jelly: away from the bar, and a
     /// little either side.
     private var slackFrame: NSRect {
-        let room = Jelly.slack(travel: travel)
+        var room = Jelly.slack(travel: travel)
+        if Neon.active { room = (max(room.out, 30), max(room.side, 16)) }
         var frame = expanded.insetBy(dx: -room.side, dy: 0)
         frame.size.height += room.out
         if growsDown { frame.origin.y -= room.out }
@@ -197,7 +219,7 @@ public final class MediaIslandPanel: NSPanel {
         CATransaction.setDisableActions(true)
         setFrame(target, display: false)
         windowOrigin = target.origin
-        apply(motion.pose)
+        if neonDriven { applyNeon(neonMotion.frame) } else { apply(motion.pose) }
         CATransaction.commit()
     }
 
@@ -248,14 +270,21 @@ public final class MediaIslandPanel: NSPanel {
         // window is first ordered front gets skipped.
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isShown else { return }
-            self.motion.animate(open: true)
+            if Neon.active, !Motion.reduced {
+                self.neonDriven = true
+                if self.neonLights == nil {
+                    let lights = NeonPanelLights()
+                    self.root.layer?.addSublayer(lights.layer)
+                    self.neonLights = lights
+                }
+                self.neonMotion.open()
+            } else {
+                self.motion.animate(open: true)
+            }
             if let chrome = self.chrome {
                 chrome.powerOn()
                 if Hud.active { HudChromeView.flicker(self.host.layer) }
-                if Neon.active {
-                    Neon.strike(self.host.layer)
-                    Neon.jolt(self.host.layer)
-                }
+                if Neon.active { Neon.strike(self.host.layer) }
             }
         }
     }
@@ -268,9 +297,8 @@ public final class MediaIslandPanel: NSPanel {
             return
         }
         setSlack(true)
-        motion.animate(open: false)
+        if neonDriven { neonMotion.close() } else { motion.animate(open: false) }
         chrome?.powerOff()
-        if Neon.active { Neon.jolt(host.layer) }
         // The spring hides it when it settles; this covers a display that
         // stopped ticking half-way.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
@@ -286,6 +314,10 @@ public final class MediaIslandPanel: NSPanel {
         glass?.park()
         glass = nil
         orderOut(nil)
+        neonDriven = false
+        neonMotion.reset()
+        neonLights?.clear()
+        bloom.opacity = 0
         motion.jump(open: false)
         setSlack(false)
         Frontmost.handBack()
@@ -309,10 +341,64 @@ public final class MediaIslandPanel: NSPanel {
             width: width,
             height: height
         ), edge: jellyEdge, wobble: pose.wobble, travel: travel)
-        // The pill's radius is already the panel's: a 44pt pill at radius 22 is
-        // a capsule, and the same radius at full height is the panel's corner.
-        let outline = PanelStyle(radius: radius, filletRadius: 0, attachment: .none)
+        place(rect, outline: outline, squash: pose.wobble != 0, progress: pose.reach,
+              glassFade: Motion.ramp(pose.reach, from: 0, to: 0.3),
+              chromeAlpha: Motion.ramp(pose.reach, from: 0.3, to: 0.8))
+    }
 
+    /// The pill's radius is already the panel's: a 44pt pill at radius 22 is a
+    /// capsule, and the same radius at full height is the panel's corner.
+    private var outline: PanelStyle {
+        PanelStyle(radius: radius, filletRadius: 0, attachment: .none, cut: Neon.active ? Neon.panelCut * 0.7 : 0)
+    }
+
+    /// Neon's way: a line igniting under the bar, extruding away from it and
+    /// jittering as it locks on; closing, a CRT squashed to a line and a dot.
+    private func applyNeon(_ frame: NeonPanelMotion.Frame) {
+        let width = max(6, expanded.width * frame.length)
+        let height = max(2, min(expanded.height * frame.depth, expanded.height + 22))
+        var rect = NSRect(
+            x: expanded.midX - width / 2 + frame.jitter,
+            y: growsDown ? expanded.maxY - height : expanded.minY,
+            width: width,
+            height: height
+        )
+        if frame.closing {
+            let squashed = max(2, rect.height * (1 - frame.collapse))
+            rect = NSRect(x: rect.minX, y: rect.midY - squashed / 2, width: rect.width, height: squashed)
+            let pinched = max(3, rect.width * (1 - frame.shrink))
+            rect = NSRect(x: rect.midX - pinched / 2, y: rect.minY, width: pinched, height: rect.height)
+        }
+        place(rect, outline: outline, squash: frame.closing, pinned: !frame.closing,
+              // the full centre throughout, revealed by the outline
+              progress: 1,
+              glassFade: frame.closing ? 1 - frame.shrink : 1,
+              chromeAlpha: frame.closing ? 1 - frame.shrink : Motion.ramp(frame.depth, from: 0.05, to: 0.5))
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        bloom.frame = container.bounds
+        bloom.opacity = Float(frame.bloom * 0.55)
+        host.alphaValue = frame.closing ? 1 - frame.shrink : 1
+        CATransaction.commit()
+        neonLights?.place(frame, rect: rect.offsetBy(dx: -windowOrigin.x, dy: -windowOrigin.y),
+                          edge: growsDown ? .top : .bottom)
+    }
+
+    /// Put the island, its outline and its glass at `rect`.
+    ///
+    /// Everything — the window's content, the outline and the borrowed glass —
+    /// is set to its model value each tick. Nothing is handed to Core Animation:
+    /// the window server renders an effect view's blur from the layer's model
+    /// geometry, so an animated frame would leave the glass behind.
+    private func place(
+        _ rect: NSRect,
+        outline: PanelStyle,
+        squash: Bool,
+        pinned: Bool = false,
+        progress: CGFloat,
+        glassFade: CGFloat,
+        chromeAlpha: CGFloat
+    ) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
@@ -323,10 +409,21 @@ public final class MediaIslandPanel: NSPanel {
             height: rect.height
         )
         container.frame = local
-        host.frame = NSRect(origin: .zero, size: local.size)
+        if pinned {
+            // Laid out at the open size, hung off the bar and centred, so the
+            // growing outline reveals it.
+            host.frame = NSRect(
+                x: (local.width - expanded.width) / 2,
+                y: growsDown ? local.height - expanded.height : 0,
+                width: expanded.width,
+                height: expanded.height
+            )
+        } else {
+            host.frame = NSRect(origin: .zero, size: local.size)
+        }
         // While it wobbles the content is squished with it rather than
         // reflowed: laid out at the open size, drawn into the jelly.
-        if pose.wobble != 0 { host.bounds = NSRect(origin: .zero, size: expanded.size) }
+        if squash { host.bounds = NSRect(origin: .zero, size: expanded.size) }
         localGlass?.frame = NSRect(origin: .zero, size: local.size)
 
         let shape = CGMutablePath()
@@ -335,14 +432,14 @@ public final class MediaIslandPanel: NSPanel {
 
         // The content crossfades from the pill to the centre on the way out;
         // the bounce past open is geometry only.
-        island.progress = pose.reach
+        island.progress = progress
         if let chrome {
             chrome.frame = NSRect(origin: .zero, size: local.size)
             chrome.fit(size: local.size, style: outline)
-            chrome.alphaValue = Motion.ramp(pose.reach, from: 0.3, to: 0.8)
+            chrome.alphaValue = chromeAlpha
         }
         glass?.setResting(rect, style: outline)
-        glass?.setFade(Motion.ramp(pose.reach, from: 0, to: 0.3))
+        glass?.setFade(glassFade)
     }
 }
 

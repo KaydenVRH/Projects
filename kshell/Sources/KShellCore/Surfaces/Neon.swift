@@ -19,6 +19,9 @@ public enum Neon {
     static var cyan = NSColor(red: 0, green: 0.94, blue: 1, alpha: 1)
     static var yellow = NSColor(red: 1, green: 0.82, blue: 0.25, alpha: 1)
 
+    /// How much the big corner of a panel is cut off (see `PanelStyle.cut`).
+    static let panelCut: CGFloat = 26
+
     public static func isNeon(_ theme: Theme) -> Bool {
         theme.effects == "neon" || theme.name?.lowercased() == "neon"
     }
@@ -43,15 +46,6 @@ public enum Neon {
         strike.fillMode = .backwards
         layer?.add(strike, forKey: "strike")
     }
-
-    /// A glitch: the layer jolts sideways a few times and settles.
-    static func jolt(_ layer: CALayer?) {
-        let jolt = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        jolt.values = [0, -9, 6, 0, 0, 4, -3, 0]
-        jolt.keyTimes = [0, 0.1, 0.18, 0.26, 0.55, 0.62, 0.7, 1]
-        jolt.duration = 0.45
-        layer?.add(jolt, forKey: "jolt")
-    }
 }
 
 // MARK: - menus
@@ -66,8 +60,6 @@ final class NeonChromeView: NSView, ThemeChrome {
     private let scanline = CALayer()
     private let tracking = CAGradientLayer()
     private var slices: [CALayer] = []
-    /// The bright line a CRT collapses to as it switches off.
-    private let collapse = CAGradientLayer()
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -101,20 +93,6 @@ final class NeonChromeView: NSView, ThemeChrome {
             tube.shadowOffset = .zero
             layer?.addSublayer(tube)
         }
-
-        collapse.colors = [
-            Neon.cyan.withAlphaComponent(0).cgColor,
-            NSColor.white.cgColor,
-            Neon.magenta.withAlphaComponent(0).cgColor,
-        ]
-        collapse.startPoint = CGPoint(x: 0.5, y: 0)
-        collapse.endPoint = CGPoint(x: 0.5, y: 1)
-        collapse.opacity = 0
-        collapse.shadowColor = Neon.cyan.cgColor
-        collapse.shadowRadius = 8
-        collapse.shadowOpacity = 1
-        collapse.shadowOffset = .zero
-        layer?.addSublayer(collapse)
 
         for index in 0..<7 {
             let slice = CALayer()
@@ -152,9 +130,6 @@ final class NeonChromeView: NSView, ThemeChrome {
             let x = CGFloat((index * 29) % 50) / 100 * (size.width - width)
             slice.frame = CGRect(x: x, y: y, width: width, height: CGFloat(2 + index % 3 * 3))
         }
-        collapse.bounds = CGRect(x: 0, y: 0, width: size.width, height: 6)
-        collapse.position = CGPoint(x: size.width / 2, y: size.height / 2)
-        collapse.shadowPath = CGPath(rect: collapse.bounds.insetBy(dx: 0, dy: 2), transform: nil)
         CATransaction.commit()
     }
 
@@ -203,9 +178,8 @@ final class NeonChromeView: NSView, ThemeChrome {
         }
     }
 
-    /// Switching off like an old CRT: the tubes stutter out, the tape tears,
-    /// and the picture collapses into a bright line across the middle that
-    /// shrinks to nothing — over the panel's own close, not instead of it.
+    /// Switching off: the tubes stutter out and the tape tears, while the panel
+    /// itself collapses like a CRT (see `NeonPanelMotion`).
     func powerOff() {
         let now = CACurrentMediaTime()
         for (index, tube) in [tubeA, tubeB].enumerated() {
@@ -227,18 +201,6 @@ final class NeonChromeView: NSView, ThemeChrome {
             flash.beginTime = now + Double(index % 4) * 0.025
             slice.add(flash, forKey: "flash")
         }
-        let line = CAAnimationGroup()
-        let fade = CAKeyframeAnimation(keyPath: "opacity")
-        fade.values = [0, 1, 1, 0]
-        fade.keyTimes = [0, 0.15, 0.7, 1]
-        let squeeze = CAKeyframeAnimation(keyPath: "transform.scale.x")
-        squeeze.values = [1, 1, 0.02]
-        squeeze.keyTimes = [0, 0.35, 1]
-        squeeze.timingFunctions = [CAMediaTimingFunction(name: .linear), CAMediaTimingFunction(name: .easeIn)]
-        line.animations = [fade, squeeze]
-        line.duration = 0.3
-        line.beginTime = now + 0.04
-        collapse.add(line, forKey: "collapse")
     }
 }
 
@@ -652,6 +614,53 @@ struct ChromaText: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) {
                 withAnimation(.linear(duration: 0.05)) { glitch = false }
                 schedule()
+            }
+        }
+    }
+}
+
+/// `ChromaText` that decodes itself when it appears: every character starts as
+/// noise and they lock in left to right, the way a readout comes up on a
+/// screen. Changing text decodes again.
+struct DecodingChromaText: View {
+    let text: String
+    let font: Font
+    let magenta: Color
+    let cyan: Color
+    var foreground: Color = .white
+
+    @State private var locked = Int.max
+    @State private var tick = 0
+
+    private static let noise = Array("▓▒░#%&@$*+=<>/\\|01ﾊﾐﾋｰｳｼﾅﾓﾆｻﾜﾂｵﾘｱﾎﾃﾏｹﾒｴｶｷﾑﾕﾗｾﾈｽﾀﾇﾍ")
+
+    private var shown: String {
+        guard locked < text.count else { return text }
+        return String(text.enumerated().map { index, character in
+            if index < locked || character == " " { return character }
+            return Self.noise[(index * 7 + tick * 13) % Self.noise.count]
+        })
+    }
+
+    var body: some View {
+        ChromaText(text: shown, font: font, magenta: magenta, cyan: cyan, foreground: foreground)
+            .onAppear(perform: decode)
+            .onChange(of: text) { _, _ in decode() }
+    }
+
+    private func decode() {
+        guard !Motion.reduced else {
+            locked = Int.max
+            return
+        }
+        locked = 0
+        let count = text.count
+        // ~0.4 s whatever the length: a few frames of noise, then a lock per step
+        let steps = 14
+        for step in 0...steps + 3 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.03 * Double(step)) {
+                tick = step
+                locked = step < 3 ? 0 : (step == steps + 3 ? Int.max : (step - 3) * max(1, count) / steps)
             }
         }
     }

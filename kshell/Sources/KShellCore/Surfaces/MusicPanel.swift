@@ -460,7 +460,9 @@ struct MusicPanelView: View {
 
     /// The search box's outline: a capsule, or cut corners under the HUD.
     private var fieldShape: AnyShape {
-        palette.hud ? AnyShape(ChamferShape(cut: 8)) : AnyShape(Capsule(style: .continuous))
+        if palette.hud { return AnyShape(ChamferShape(cut: 8)) }
+        if palette.neon { return AnyShape(SlantShape(slant: 12)) }
+        return AnyShape(Capsule(style: .continuous))
     }
 
     /// What the footer says on the left, per tab.

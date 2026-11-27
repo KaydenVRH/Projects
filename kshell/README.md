@@ -282,10 +282,21 @@ especially). `Surfaces/Motion.swift` is the one place they are tuned:
       blinking cursor;
     - the selection is a slanted magenta cell with a cyan echo and a ▶;
     - key hints are slanted tags.
-  - **Closing a menu** switches it off like an old CRT: the tubes stutter out,
-    the tape tears, and a bright line collapses across the middle — over the
-    panel's own close. While a menu is open, a bad patch of tape tears across
-    it now and then.
+  - **Panels have their own shape and motion.** Free corners are cut off
+    straight — one big cut, one small — and they meet the frame with straight
+    flanges instead of curved fillets (`PanelStyle.cut`; the glass, the mask
+    and the tubes all share the one outline).
+  - **Opening** is a timeline, not jelly (`NeonPanelMotion`): a line ignites
+    along the edge, spreading from its centre; the panel extrudes out of it on
+    a snappy spring with a scan head riding its leading edge; it lands with a
+    few hard digital steps sideways, a signal locking on. Header titles decode
+    out of noise left to right, and list rows cut in from alternating sides
+    with a flicker instead of rising out of a blur.
+  - **Closing** is an old CRT switching off: the picture runs white as it
+    squashes into a line through its middle, the line pinches into a dot, the
+    dot flashes out. The launchers, menus, notification cards and the media
+    island all go this way. While a menu is open, a bad patch of tape tears
+    across it now and then.
   - **The frame** is two neon tubes, with flickering signs in its corners.
   - **The desktop** has street signs behind the windows: ネオン街 ("neon town")
     down the right in a cyan box, one character buzzing now and then like a

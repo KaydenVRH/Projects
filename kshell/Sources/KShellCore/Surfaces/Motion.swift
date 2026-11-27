@@ -307,6 +307,9 @@ struct Cascade: ViewModifier {
     var from: Edge = .bottom
 
     @State private var shown = false
+    /// Neon: the row's sideways glitch and flicker as it arrives.
+    @State private var glitchX: CGFloat = 0
+    @State private var flicker: Double = 1
 
     private var start: CGSize {
         switch from {
@@ -318,21 +321,53 @@ struct Cascade: ViewModifier {
     }
 
     func body(content: Content) -> some View {
+        if Neon.active {
+            neonBody(content)
+        } else {
+            content
+                .opacity(shown ? 1 : 0)
+                .offset(shown ? .zero : start)
+                .scaleEffect(shown ? 1 : 0.94)
+                .blur(radius: shown ? 0 : 6)
+                .onAppear {
+                    // A row scrolled into view long after the panel opened is just
+                    // there; only a fresh panel or list cascades.
+                    let since = CACurrentMediaTime() - Motion.lastReveal
+                    guard since < 0.6, !Motion.reduced else {
+                        shown = true
+                        return
+                    }
+                    let delay = 0.05 + Double(min(index, cap)) * 0.028
+                    withAnimation(.kLayout.delay(delay)) { shown = true }
+                }
+        }
+    }
+
+    /// Neon: no easing at all. The row cuts in a little to one side (they
+    /// alternate), flickers, and snaps into place in hard steps — a signal
+    /// locking on, not something floating up.
+    private func neonBody(_ content: Content) -> some View {
         content
-            .opacity(shown ? 1 : 0)
-            .offset(shown ? .zero : start)
-            .scaleEffect(shown ? 1 : 0.94)
-            .blur(radius: shown ? 0 : 6)
+            .opacity(shown ? flicker : 0)
+            .offset(x: glitchX)
             .onAppear {
-                // A row scrolled into view long after the panel opened is just
-                // there; only a fresh panel or list cascades.
                 let since = CACurrentMediaTime() - Motion.lastReveal
                 guard since < 0.6, !Motion.reduced else {
                     shown = true
                     return
                 }
-                let delay = 0.05 + Double(min(index, cap)) * 0.028
-                withAnimation(.kLayout.delay(delay)) { shown = true }
+                let side: CGFloat = index % 2 == 0 ? 1 : -1
+                let delay = 0.12 + Double(min(index, cap)) * 0.022
+                let steps: [(Double, CGFloat, Double)] = [
+                    (0, 14 * side, 0.5), (0.03, -6 * side, 0.15), (0.06, 3 * side, 0.9), (0.09, 0, 0.6), (0.12, 0, 1),
+                ]
+                for (at, x, alpha) in steps {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay + at) {
+                        shown = true
+                        glitchX = x
+                        flicker = alpha
+                    }
+                }
             }
     }
 }

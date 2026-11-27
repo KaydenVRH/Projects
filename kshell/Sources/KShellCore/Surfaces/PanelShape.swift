@@ -32,15 +32,33 @@ public struct PanelStyle: Equatable, Sendable {
     public var filletRadius: CGFloat
     /// The side sitting against the frame, if any.
     public var attachment: PanelAttachment
+    /// Neon: cut the free corners off straight instead of rounding them — the
+    /// corner leading away from the frame by this much, the other by under half
+    /// — and meet the frame with straight flanges instead of curved fillets.
+    /// 0 is the usual rounded panel.
+    public var cut: CGFloat
 
     public init(
         radius: CGFloat = SheetShape.defaultRadius,
         filletRadius: CGFloat = 22,
-        attachment: PanelAttachment = .none
+        attachment: PanelAttachment = .none,
+        cut: CGFloat = 0
     ) {
         self.radius = radius
         self.filletRadius = filletRadius
         self.attachment = attachment
+        self.cut = cut
+    }
+
+    /// The big cut's corner: the one a reader's eye lands on first. The other
+    /// free corner gets the small cut.
+    var bigCut: SheetShape.Corners {
+        switch attachment {
+        case .none, .bottom: return .topLeading
+        case .top: return .bottomTrailing
+        case .leading: return .topTrailing
+        case .trailing: return .topLeading
+        }
     }
 
     /// Corners rounded convexly: everything except the attached side.
@@ -72,6 +90,7 @@ public struct PanelStyle: Equatable, Sendable {
 /// the panel's material flows into the frame instead of stopping at a corner.
 public enum PanelGeometry {
     public static func path(in rect: CGRect, style: PanelStyle) -> CGPath {
+        if style.cut > 0 { return cutPath(in: rect, style: style) }
         let radius = max(0, min(style.radius, min(rect.width, rect.height) / 2))
         let fillet = max(0, min(style.filletRadius, min(rect.width, rect.height) / 2))
         let convex = style.convexCorners
@@ -118,6 +137,55 @@ public enum PanelGeometry {
 
     private enum Corner {
         case topLeading, topTrailing, bottomLeading, bottomTrailing
+    }
+
+    /// The Neon outline: free corners cut off straight (one big, one small),
+    /// attached ones meeting the frame in straight 45° flanges.
+    private static func cutPath(in rect: CGRect, style: PanelStyle) -> CGPath {
+        let limit = min(rect.width, rect.height) / 2
+        let convex = style.convexCorners
+        func cut(_ corner: SheetShape.Corners) -> CGFloat {
+            guard convex.contains(corner) else { return 0 }
+            let size = style.bigCut.contains(corner) ? style.cut : style.cut * 0.4
+            return max(0, min(size, limit))
+        }
+        let tl = cut(.topLeading), tr = cut(.topTrailing)
+        let bl = cut(.bottomLeading), br = cut(.bottomTrailing)
+
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY + bl))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - tl))
+        path.addLine(to: CGPoint(x: rect.minX + tl, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX - tr, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - tr))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + br))
+        path.addLine(to: CGPoint(x: rect.maxX - br, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.minX + bl, y: rect.minY))
+        path.closeSubpath()
+
+        let flange = max(0, min(style.filletRadius, limit))
+        guard flange > 0 else { return path }
+        for corner in corners(of: style.filletCorners) {
+            // the fillet's wedge with its arc pulled straight
+            let wedge = filletPath(corner, in: rect, radius: flange, attachment: style.attachment)
+            var points: [CGPoint] = []
+            wedge.applyWithBlock { element in
+                let e = element.pointee
+                switch e.type {
+                case .moveToPoint, .addLineToPoint: points.append(e.points[0])
+                case .addQuadCurveToPoint: points.append(e.points[1])
+                case .addCurveToPoint: points.append(e.points[2])
+                default: break
+                }
+            }
+            guard points.count >= 3 else { continue }
+            let corner = points[0], outward = points[1], along = points[points.count - 1]
+            path.move(to: corner)
+            path.addLine(to: outward)
+            path.addLine(to: along)
+            path.closeSubpath()
+        }
+        return path
     }
 
     private static func corners(of set: SheetShape.Corners) -> [Corner] {

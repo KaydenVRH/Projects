@@ -75,8 +75,18 @@ public final class OverlayPanel: NSPanel {
     /// The outline to step while the frame is off: same rounding, no fillets.
     private let fallbackStyle: PanelStyle
 
+    /// The window's content: the panel (`container`, masked to its outline) and,
+    /// over it unmasked, the light Neon's motion throws.
+    private let root = NSView()
     private let container = NSView()
     private let mask = CAShapeLayer()
+    /// Neon panels come and go on their own timeline (see `NeonPanelMotion`).
+    private lazy var neonMotion = NeonPanelMotion(screen: targetScreen)
+    private var neonLights: NeonPanelLights?
+    /// The picture running white as a Neon panel collapses, inside its outline.
+    private let bloom = CALayer()
+    /// Whether this showing is on the Neon timeline rather than the springs.
+    private var neonDriven = false
     private weak var host: NSView?
     /// The Stark HUD's brackets and scanlines, over the content.
     private var chrome: ThemeChrome?
@@ -144,7 +154,8 @@ public final class OverlayPanel: NSPanel {
         self.makeGlass = glass
         self.takesKeyboard = takesKeyboard
         self.fallbackStyle = style
-            ?? PanelStyle(radius: SheetShape.defaultRadius, filletRadius: 0, attachment: .none)
+            ?? PanelStyle(radius: SheetShape.defaultRadius, filletRadius: 0, attachment: .none,
+                          cut: Neon.active ? Neon.panelCut : 0)
 
         // A popup that doesn't take the keyboard must not activate the app when
         // clicked, or a stray notification would steal the front from a terminal.
@@ -198,10 +209,26 @@ public final class OverlayPanel: NSPanel {
             container.addSubview(chrome)
             self.chrome = chrome
         }
-        contentView = container
+        bloom.backgroundColor = NSColor.white.cgColor
+        bloom.opacity = 0
+        container.layer?.addSublayer(bloom)
+        root.wantsLayer = true
+        root.addSubview(container)
+        contentView = root
 
         motion.onStep = { [weak self] pose in
             self?.apply(pose)
+        }
+        neonMotion.onStep = { [weak self] frame in
+            self?.applyNeon(frame)
+        }
+        neonMotion.onSettle = { [weak self] open in
+            guard let self else { return }
+            if open {
+                self.setSlack(false)
+            } else if !self.isShown {
+                self.finishHide()
+            }
         }
         motion.onSettle = { [weak self] open in
             guard let self else { return }
@@ -225,7 +252,11 @@ public final class OverlayPanel: NSPanel {
     /// The window while the panel moves: the shown frame, plus room for the
     /// jelly — out from the edge, and a little on both sides along it.
     private var slackFrame: NSRect {
-        let room = Jelly.slack(travel: travel)
+        var room = Jelly.slack(travel: travel)
+        if Neon.active {
+            // the landing overshoot (capped at 22 pt) and the lock-on jitter
+            room = (max(room.out, 30), max(room.side, 16))
+        }
         var frame = shownFrame
         switch edge {
         case .bottom, .top:
@@ -248,7 +279,7 @@ public final class OverlayPanel: NSPanel {
         CATransaction.setDisableActions(true)
         setFrame(target, display: false)
         windowOrigin = target.origin
-        apply(motion.pose)
+        if neonDriven { applyNeon(neonMotion.frame) } else { apply(motion.pose) }
         CATransaction.commit()
     }
 
@@ -327,14 +358,21 @@ public final class OverlayPanel: NSPanel {
         // window is first ordered front is skipped.
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isShown else { return }
-            self.motion.animate(open: true)
+            if Neon.active, !Motion.reduced {
+                self.neonDriven = true
+                if self.neonLights == nil {
+                    let lights = NeonPanelLights()
+                    self.root.layer?.addSublayer(lights.layer)
+                    self.neonLights = lights
+                }
+                self.neonMotion.open()
+            } else {
+                self.motion.animate(open: true)
+            }
             if let chrome = self.chrome {
                 chrome.powerOn()
                 if Hud.active { HudChromeView.flicker(self.host?.layer) }
-                if Neon.active {
-                    Neon.strike(self.host?.layer)
-                    Neon.jolt(self.host?.layer)
-                }
+                if Neon.active { Neon.strike(self.host?.layer) }
             }
         }
     }
@@ -349,9 +387,12 @@ public final class OverlayPanel: NSPanel {
         }
         // Interrupting an opening bounce: it may still be past the panel.
         setSlack(true)
-        motion.animate(open: false)
+        if neonDriven {
+            neonMotion.close()
+        } else {
+            motion.animate(open: false)
+        }
         chrome?.powerOff()
-        if Neon.active { Neon.jolt(host?.layer) }
         // The spring hides it when it settles; this only covers a display that
         // stopped ticking (asleep, unplugged) half-way.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
@@ -408,17 +449,18 @@ public final class OverlayPanel: NSPanel {
         glass = nil
         orderOut(nil)
         // Back to the pill, off screen, ready for the next opening.
+        neonDriven = false
+        neonMotion.reset()
+        neonLights?.clear()
+        bloom.opacity = 0
         motion.jump(open: false)
         setSlack(false)
         // The keyboard came with us; give it back now the panel is gone.
         if takesKeyboard { Frontmost.handBack() }
     }
 
-    /// Put the panel, its outline, its content and its glass at `pose`.
-    ///
-    /// Everything is set to its model value each tick rather than animated: the
-    /// window server renders an effect view's blur from the layer's model
-    /// geometry, so an animated frame or mask would leave the glass behind.
+    /// Put the panel where the springs have it: a pill swelling out of the
+    /// edge, then jelly once it has arrived.
     private func apply(_ pose: PanelPose) {
         let seed = seedFrame
         func mix(_ a: CGFloat, _ b: CGFloat, _ t: CGFloat) -> CGFloat { a + (b - a) * t }
@@ -432,8 +474,81 @@ public final class OverlayPanel: NSPanel {
             height: mix(seed.height, shownFrame.height, ty)
         )
         let rect = Jelly.shape(grown, edge: edge, wobble: pose.wobble, travel: travel)
-        let style = self.style ?? fallbackStyle
+        place(
+            rect,
+            style: style ?? fallbackStyle,
+            squash: pose.wobble != 0,
+            drift: (1 - pose.reach) * Self.contentDrift,
+            hostAlpha: Motion.ramp(min(pose.reach, pose.along + 0.2), from: 0.1, to: 0.65),
+            glassFade: Motion.ramp(pose.reach, from: 0, to: 0.3),
+            chromeAlpha: Motion.ramp(pose.reach, from: 0.2, to: 0.7)
+        )
+    }
 
+    /// Put the panel where Neon's timeline has it: a line along the edge
+    /// extruding out, jittering as it lands; or, closing, squashed into a line
+    /// and pinched to a dot.
+    private func applyNeon(_ frame: NeonPanelMotion.Frame) {
+        let full = shownFrame
+        let alongX = edge == .top || edge == .bottom
+        let fullLength = alongX ? full.width : full.height
+        let fullDepth = alongX ? full.height : full.width
+        let length = max(6, fullLength * frame.length)
+        // past 1 it overshoots, but never by more than the window's slack
+        let depth = max(2, min(fullDepth * frame.depth, fullDepth + 22))
+        var rect: NSRect
+        switch edge {
+        case .bottom: rect = NSRect(x: full.midX - length / 2, y: full.minY, width: length, height: depth)
+        case .top: rect = NSRect(x: full.midX - length / 2, y: full.maxY - depth, width: length, height: depth)
+        case .leading: rect = NSRect(x: full.minX, y: full.midY - length / 2, width: depth, height: length)
+        case .trailing: rect = NSRect(x: full.maxX - depth, y: full.midY - length / 2, width: depth, height: length)
+        }
+        if alongX { rect.origin.x += frame.jitter } else { rect.origin.y += frame.jitter }
+
+        var outline = style ?? fallbackStyle
+        if frame.closing {
+            // A CRT switching off: squashed toward the middle line, then the
+            // line pinched toward a dot. It has let go of the frame by now.
+            let height = max(2, rect.height * (1 - frame.collapse))
+            rect = NSRect(x: rect.minX, y: rect.midY - height / 2, width: rect.width, height: height)
+            let width = max(3, rect.width * (1 - frame.shrink))
+            rect = NSRect(x: rect.midX - width / 2, y: rect.minY, width: width, height: rect.height)
+            outline = PanelStyle(radius: outline.radius, filletRadius: 0, attachment: .none, cut: outline.cut)
+        }
+
+        let lit = Motion.ramp(frame.depth, from: 0.12, to: 0.7)
+        place(
+            rect,
+            style: outline,
+            squash: frame.closing,
+            drift: 0,
+            hostAlpha: frame.closing ? 1 - frame.shrink : lit,
+            glassFade: frame.closing ? 1 - frame.shrink : 1,
+            chromeAlpha: frame.closing ? 1 - frame.shrink : Motion.ramp(frame.depth, from: 0.05, to: 0.5)
+        )
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        bloom.frame = container.bounds
+        bloom.opacity = Float(frame.bloom * 0.55)
+        CATransaction.commit()
+        let local = rect.offsetBy(dx: -windowOrigin.x, dy: -windowOrigin.y)
+        neonLights?.place(frame, rect: local, edge: edge)
+    }
+
+    /// Put the panel's outline, content, chrome and glass at `rect`.
+    ///
+    /// Everything is set to its model value each tick rather than animated: the
+    /// window server renders an effect view's blur from the layer's model
+    /// geometry, so an animated frame or mask would leave the glass behind.
+    private func place(
+        _ rect: NSRect,
+        style: PanelStyle,
+        squash: Bool,
+        drift: CGFloat,
+        hostAlpha: CGFloat,
+        glassFade: CGFloat,
+        chromeAlpha: CGFloat
+    ) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
@@ -457,20 +572,21 @@ public final class OverlayPanel: NSPanel {
         if let chrome {
             chrome.frame = NSRect(origin: .zero, size: local.size)
             chrome.fit(size: local.size, style: style)
-            chrome.alphaValue = Motion.ramp(pose.reach, from: 0.2, to: 0.7)
+            chrome.alphaValue = chromeAlpha
         }
 
         guard let host else {
             glass?.setResting(rect, style: style)
-            glass?.setFade(Motion.ramp(pose.reach, from: 0, to: 0.3))
+            glass?.setFade(glassFade)
             return
         }
-        if pose.wobble != 0 {
-            // Wobbling: the content is squished with the jelly — laid out at
-            // its own size and drawn into the deformed rectangle.
+        if squash {
+            // Wobbling (or a CRT collapsing): the content is squished with the
+            // outline — laid out at its own size and drawn into the deformed
+            // rectangle.
             host.frame = NSRect(origin: .zero, size: local.size)
             host.bounds = NSRect(origin: .zero, size: size)
-            host.alphaValue = 1
+            host.alphaValue = hostAlpha
         } else {
             // Growing: the content keeps its final size and stays pinned to the
             // anchored edge, so the growing outline reveals it. It is centred
@@ -478,7 +594,6 @@ public final class OverlayPanel: NSPanel {
             // trails the outline a little — drifting in from the edge and
             // fading up — so it reads as carried out by the panel rather than
             // uncovered by it.
-            let drift = (1 - pose.reach) * Self.contentDrift
             var origin = CGPoint.zero
             switch edge {
             case .bottom: origin = CGPoint(x: (local.width - size.width) / 2, y: -drift)
@@ -488,10 +603,10 @@ public final class OverlayPanel: NSPanel {
             }
             host.frame = NSRect(origin: origin, size: size)
             host.bounds = NSRect(origin: .zero, size: size)
-            host.alphaValue = Motion.ramp(min(pose.reach, pose.along + 0.2), from: 0.1, to: 0.65)
+            host.alphaValue = hostAlpha
         }
 
         glass?.setResting(rect, style: style)
-        glass?.setFade(Motion.ramp(pose.reach, from: 0, to: 0.3))
+        glass?.setFade(glassFade)
     }
 }
