@@ -134,7 +134,16 @@ struct KitFooter<Leading: View>: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
-        .background(Color.black.opacity(0.12))
+        // A hairline above rather than a tinted strip: the foot of a menu is
+        // usually the edge that meets the frame, and anything painted there
+        // stops at the panel's side while the frame's fillets carry on in the
+        // plain glass — a visible seam at the curves.
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(palette.foreground.opacity(0.08))
+                .frame(height: 1)
+                .padding(.horizontal, 12)
+        }
     }
 }
 

@@ -368,13 +368,19 @@ struct AmbientArt: View {
                         .id(path)
                         .transition(.opacity)
                 }
-                // Fade the glow out toward the bottom, where the small print is.
-                LinearGradient(
-                    colors: [.clear, .black.opacity(0.18), .black.opacity(0.34)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
             }
+            // Fade the glow out before the bottom edge: that edge meets the
+            // frame, whose fillets are plain glass, so anything still painted
+            // there shows as a seam at the curves.
+            .mask(LinearGradient(
+                stops: [
+                    .init(color: .black, location: 0),
+                    .init(color: .black, location: 0.45),
+                    .init(color: .clear, location: 0.92),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            ))
         }
         .animation(.easeInOut(duration: 0.8), value: path)
     }
