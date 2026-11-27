@@ -8,6 +8,8 @@ final class ClockRuntime: WidgetRuntime {
     init(spec: WidgetSpec, theme: Theme) {
         model = WidgetFactory.baseModel(spec, theme: theme, icon: spec.string("icon"))
         model.labelColor = spec.color("label_color") ?? spec.color("color") ?? theme.highlight
+        // Clicking the clock opens the calendar, unless an action is configured.
+        if model.action == nil { model.action = { EventBus.post("calendar_toggle") } }
     }
 
     func start() {

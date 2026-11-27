@@ -66,6 +66,8 @@ final class NeonChromeView: NSView, ThemeChrome {
     private let scanline = CALayer()
     private let tracking = CAGradientLayer()
     private var slices: [CALayer] = []
+    /// The bright line a CRT collapses to as it switches off.
+    private let collapse = CAGradientLayer()
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -99,6 +101,20 @@ final class NeonChromeView: NSView, ThemeChrome {
             tube.shadowOffset = .zero
             layer?.addSublayer(tube)
         }
+
+        collapse.colors = [
+            Neon.cyan.withAlphaComponent(0).cgColor,
+            NSColor.white.cgColor,
+            Neon.magenta.withAlphaComponent(0).cgColor,
+        ]
+        collapse.startPoint = CGPoint(x: 0.5, y: 0)
+        collapse.endPoint = CGPoint(x: 0.5, y: 1)
+        collapse.opacity = 0
+        collapse.shadowColor = Neon.cyan.cgColor
+        collapse.shadowRadius = 8
+        collapse.shadowOpacity = 1
+        collapse.shadowOffset = .zero
+        layer?.addSublayer(collapse)
 
         for index in 0..<7 {
             let slice = CALayer()
@@ -136,6 +152,9 @@ final class NeonChromeView: NSView, ThemeChrome {
             let x = CGFloat((index * 29) % 50) / 100 * (size.width - width)
             slice.frame = CGRect(x: x, y: y, width: width, height: CGFloat(2 + index % 3 * 3))
         }
+        collapse.bounds = CGRect(x: 0, y: 0, width: size.width, height: 6)
+        collapse.position = CGPoint(x: size.width / 2, y: size.height / 2)
+        collapse.shadowPath = CGPath(rect: collapse.bounds.insetBy(dx: 0, dy: 2), transform: nil)
         CATransaction.commit()
     }
 
@@ -170,6 +189,56 @@ final class NeonChromeView: NSView, ThemeChrome {
         group.beginTime = CACurrentMediaTime() + 1.2
         group.repeatCount = .infinity
         tracking.add(group, forKey: "roll")
+
+        // While it's open, a bad patch of tape now and then: two slices tear
+        // across for a moment. Small layers, so it costs only their strips.
+        for (index, slice) in slices.enumerated() where index == 2 || index == 5 {
+            let tear = CAKeyframeAnimation(keyPath: "opacity")
+            tear.values = [0, 0, 0.9, 0, 0.7, 0, 0]
+            tear.keyTimes = [0, 0.9, 0.905, 0.915, 0.92, 0.93, 1]
+            tear.duration = index == 2 ? 7.3 : 9.1
+            tear.beginTime = CACurrentMediaTime() + 0.5
+            tear.repeatCount = .infinity
+            slice.add(tear, forKey: "tear")
+        }
+    }
+
+    /// Switching off like an old CRT: the tubes stutter out, the tape tears,
+    /// and the picture collapses into a bright line across the middle that
+    /// shrinks to nothing — over the panel's own close, not instead of it.
+    func powerOff() {
+        let now = CACurrentMediaTime()
+        for (index, tube) in [tubeA, tubeB].enumerated() {
+            let out = CAKeyframeAnimation(keyPath: "opacity")
+            out.values = [1, 0.2, 1, 0.1, 0.6, 0]
+            out.keyTimes = [0, 0.15, 0.3, 0.5, 0.65, 1]
+            out.duration = 0.28
+            out.beginTime = now + Double(index) * 0.03
+            out.fillMode = .forwards
+            out.isRemovedOnCompletion = false
+            tube.add(out, forKey: "strike")
+        }
+        for (index, slice) in slices.enumerated() {
+            slice.removeAnimation(forKey: "tear")
+            let flash = CAKeyframeAnimation(keyPath: "opacity")
+            flash.values = [0, 1, 0, 0.8, 0]
+            flash.keyTimes = [0, 0.25, 0.5, 0.7, 1]
+            flash.duration = 0.2
+            flash.beginTime = now + Double(index % 4) * 0.025
+            slice.add(flash, forKey: "flash")
+        }
+        let line = CAAnimationGroup()
+        let fade = CAKeyframeAnimation(keyPath: "opacity")
+        fade.values = [0, 1, 1, 0]
+        fade.keyTimes = [0, 0.15, 0.7, 1]
+        let squeeze = CAKeyframeAnimation(keyPath: "transform.scale.x")
+        squeeze.values = [1, 1, 0.02]
+        squeeze.keyTimes = [0, 0.35, 1]
+        squeeze.timingFunctions = [CAMediaTimingFunction(name: .linear), CAMediaTimingFunction(name: .easeIn)]
+        line.animations = [fade, squeeze]
+        line.duration = 0.3
+        line.beginTime = now + 0.04
+        collapse.add(line, forKey: "collapse")
     }
 }
 
@@ -245,6 +314,224 @@ final class NeonFramePanel: FrameOverlayPanel {
             flicker.duration = 5 + Double(index) * 1.3
             flicker.repeatCount = .infinity
             tube.add(flicker, forKey: "flicker")
+        }
+
+        addSigns(in: opening, scale: screen.backingScaleFactor)
+    }
+
+    /// Street signs on the desktop, behind the windows: a vertical katakana
+    /// sign down the right side — ネオン街, "neon town" — in a cyan tube box,
+    /// one character of it buzzing now and then like a failing tube; and a
+    /// little "Open 24H" in script low on the left. Each is a small baked
+    /// layer, so only its own few hundred points ever flicker.
+    private func addSigns(in opening: CGRect, scale: CGFloat) {
+        guard opening.height > 420, opening.width > 600 else { return }
+        let root = backdrop.root.layer
+
+        // the vertical sign
+        let glyphs = ["ネ", "オ", "ン", "街"]
+        let font = NSFont(name: "HiraginoSans-W6", size: 30) ?? .boldSystemFont(ofSize: 30)
+        let cell: CGFloat = 40
+        let box = CGRect(x: opening.maxX - 78, y: opening.midY - cell * CGFloat(glyphs.count) / 2 - 14,
+                         width: 50, height: cell * CGFloat(glyphs.count) + 28)
+        let frame = CAShapeLayer()
+        frame.frame = box.insetBy(dx: -12, dy: -12)
+        let outline = CGPath(roundedRect: CGRect(x: 12, y: 12, width: box.width, height: box.height),
+                             cornerWidth: 7, cornerHeight: 7, transform: nil)
+        frame.path = outline
+        frame.fillColor = NSColor.black.withAlphaComponent(0.35).cgColor
+        frame.strokeColor = Neon.cyan.withAlphaComponent(0.9).cgColor
+        frame.lineWidth = 1.6
+        frame.shadowColor = Neon.cyan.cgColor
+        frame.shadowRadius = 7
+        frame.shadowOpacity = 1
+        frame.shadowOffset = .zero
+        frame.bakeGlow(shape: outline, width: 1.6)
+        root?.addSublayer(frame)
+
+        for (index, glyph) in glyphs.enumerated() {
+            let text = Self.glowText(glyph, font: font, core: NSColor(red: 1, green: 0.82, blue: 0.93, alpha: 1),
+                                     glow: Neon.magenta, scale: scale)
+            text.position = CGPoint(x: box.midX, y: box.maxY - 14 - cell * (CGFloat(index) + 0.5))
+            root?.addSublayer(text)
+            // the old tube: buzzing out and back now and then
+            if index == 3 {
+                let buzz = CAKeyframeAnimation(keyPath: "opacity")
+                buzz.values = [1, 1, 0.15, 0.9, 0.1, 0.6, 0.2, 1, 1]
+                buzz.keyTimes = [0, 0.78, 0.785, 0.8, 0.81, 0.83, 0.845, 0.86, 1]
+                buzz.duration = 6.7
+                buzz.repeatCount = .infinity
+                text.add(buzz, forKey: "buzz")
+            }
+        }
+
+        // "Open 24H"
+        let script = NSFont(name: "SnellRoundhand-Black", size: 34) ?? .boldSystemFont(ofSize: 28)
+        let open = Self.glowText("Open", font: script, core: NSColor(red: 1, green: 0.8, blue: 0.92, alpha: 1),
+                                 glow: Neon.magenta, scale: scale)
+        open.position = CGPoint(x: opening.minX + 120, y: opening.minY + 52)
+        root?.addSublayer(open)
+        let hours = Self.glowText("24H", font: .monospacedSystemFont(ofSize: 13, weight: .heavy),
+                                  core: NSColor(red: 1, green: 0.95, blue: 0.75, alpha: 1), glow: Neon.yellow, scale: scale)
+        hours.position = CGPoint(x: open.frame.maxX + hours.bounds.width / 2 + 4, y: open.position.y - 6)
+        root?.addSublayer(hours)
+        let blink = CAKeyframeAnimation(keyPath: "opacity")
+        blink.values = [1, 1, 0.1, 1, 0.1, 1, 1]
+        blink.keyTimes = [0, 0.9, 0.91, 0.93, 0.94, 0.96, 1]
+        blink.duration = 9.3
+        blink.repeatCount = .infinity
+        hours.add(blink, forKey: "blink")
+    }
+
+    /// Lettering like a lit tube: a pale core with the tube's colour glowing
+    /// round it, baked.
+    private static func glowText(_ string: String, font: NSFont, core: NSColor, glow: NSColor, scale: CGFloat) -> CATextLayer {
+        let layer = CATextLayer()
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: core]
+        layer.string = NSAttributedString(string: string, attributes: attributes)
+        let size = (string as NSString).size(withAttributes: attributes)
+        layer.bounds = CGRect(x: 0, y: 0, width: ceil(size.width) + 6, height: ceil(size.height) + 4)
+        layer.alignmentMode = .center
+        layer.contentsScale = scale
+        layer.shadowColor = glow.cgColor
+        layer.shadowRadius = 6
+        layer.shadowOpacity = 1
+        layer.shadowOffset = .zero
+        layer.shouldRasterize = true
+        layer.rasterizationScale = scale
+        return layer
+    }
+}
+
+// MARK: - the pointer
+
+/// A streak of light after the pointer when it moves quickly — magenta, with a
+/// cyan copy a hair off it — gone within a fraction of a second. Slow, careful
+/// pointing leaves nothing. Like Arcane's sparks, the windows only exist while
+/// there is something to draw: a screen-sized window costs a composite every
+/// frame anything beneath it moves.
+final class NeonCursorTrail: CursorTrail {
+    private struct Screen {
+        let panel: NSPanel
+        let magenta: CAShapeLayer
+        let cyan: CAShapeLayer
+    }
+
+    private var screens: [Screen] = []
+    private var timer: DispatchSourceTimer?
+    private var points: [(point: CGPoint, time: CFTimeInterval)] = []
+    private var last = NSPoint(x: -1, y: -1)
+    private var shown = false
+    private var hiddenScreens: [NSRect] = []
+    /// How long a point of the streak lasts.
+    private let life: CFTimeInterval = 0.16
+    /// Pointer speed (points a frame) below which nothing is drawn.
+    private let threshold: CGFloat = 7
+
+    init() {
+        screens = NSScreen.screens.map { screen in
+            let panel = NSPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel],
+                                backing: .buffered, defer: false)
+            panel.level = WindowLevel.overlay
+            panel.isOpaque = false
+            panel.backgroundColor = .clear
+            panel.hasShadow = false
+            panel.ignoresMouseEvents = true
+            panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+            let root = NSView(frame: NSRect(origin: .zero, size: screen.frame.size))
+            root.wantsLayer = true
+            panel.contentView = root
+            func streak(_ colour: NSColor, width: CGFloat) -> CAShapeLayer {
+                let layer = CAShapeLayer()
+                layer.frame = root.bounds
+                layer.fillColor = nil
+                layer.strokeColor = colour.cgColor
+                layer.lineWidth = width
+                layer.lineCap = .round
+                layer.lineJoin = .round
+                layer.shadowColor = colour.cgColor
+                layer.shadowRadius = 5
+                layer.shadowOpacity = 0.9
+                layer.shadowOffset = .zero
+                root.layer?.addSublayer(layer)
+                return layer
+            }
+            let cyan = streak(Neon.cyan.withAlphaComponent(0.7), width: 1.6)
+            cyan.setAffineTransform(CGAffineTransform(translationX: 2, y: -1.5))
+            let magenta = streak(Neon.magenta.withAlphaComponent(0.9), width: 2.4)
+            return Screen(panel: panel, magenta: magenta, cyan: cyan)
+        }
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now(), repeating: 1.0 / 60)
+        timer.setEventHandler { [weak self] in self?.follow() }
+        timer.resume()
+        self.timer = timer
+    }
+
+    private func follow() {
+        let now = CACurrentMediaTime()
+        let mouse = NSEvent.mouseLocation
+        let moved = hypot(mouse.x - last.x, mouse.y - last.y)
+        last = mouse
+        if moved >= threshold {
+            points.append((mouse, now))
+        } else if !points.isEmpty, moved > 0.5 {
+            // slowing down: the streak still follows the tip as it fades
+            points.append((mouse, now))
+        }
+        points.removeAll { now - $0.time > life }
+        guard points.count >= 2 else {
+            if shown { hide() }
+            return
+        }
+        if !shown {
+            shown = true
+            for screen in screens where !hiddenScreens.contains(screen.panel.frame) {
+                screen.panel.orderFrontRegardless()
+            }
+        }
+        for screen in screens {
+            let frame = screen.panel.frame
+            let path = CGMutablePath()
+            let local = points.filter { frame.contains($0.point) }
+                .map { CGPoint(x: $0.point.x - frame.minX, y: $0.point.y - frame.minY) }
+            if local.count >= 2 { path.addLines(between: local) }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            for layer in [screen.magenta, screen.cyan] {
+                layer.path = path
+                layer.shadowPath = local.count >= 2
+                    ? path.copy(strokingWithWidth: 3, lineCap: .round, lineJoin: .round, miterLimit: 4) : nil
+            }
+            // the streak dims as its newest point ages
+            let age = now - (points.last?.time ?? now)
+            screen.magenta.opacity = Float(max(0, 1 - age / life))
+            screen.cyan.opacity = screen.magenta.opacity * 0.8
+            CATransaction.commit()
+        }
+    }
+
+    private func hide() {
+        shown = false
+        for screen in screens {
+            screen.magenta.path = nil
+            screen.cyan.path = nil
+            screen.panel.orderOut(nil)
+        }
+    }
+
+    func stop() {
+        timer?.cancel()
+        timer = nil
+        for screen in screens { screen.panel.orderOut(nil) }
+        screens.removeAll()
+    }
+
+    func setHidden(_ hidden: Bool, on screen: NSScreen) {
+        hiddenScreens.removeAll { $0 == screen.frame }
+        if hidden { hiddenScreens.append(screen.frame) }
+        for entry in screens where entry.panel.frame == screen.frame && hidden {
+            entry.panel.orderOut(nil)
         }
     }
 }

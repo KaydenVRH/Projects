@@ -10,13 +10,17 @@ struct LauncherItem: Identifiable {
     /// Resolved on demand — see `AppIconCache`.
     let iconPath: String?
     let symbol: String?
+    /// What the search matches, when it's more than the name (a clipboard
+    /// entry is found by its whole text).
+    let search: String?
 
-    init(id: String, name: String, detail: String? = nil, iconPath: String? = nil, symbol: String? = nil) {
+    init(id: String, name: String, detail: String? = nil, iconPath: String? = nil, symbol: String? = nil, search: String? = nil) {
         self.id = id
         self.name = name
         self.detail = detail
         self.iconPath = iconPath
         self.symbol = symbol
+        self.search = search
     }
 }
 
@@ -71,7 +75,7 @@ struct LauncherView: View {
     private var foreground: Color { theme.foreground?.color ?? .white }
 
     private var results: [LauncherItem] {
-        query.isEmpty ? items : items.filter { $0.name.localizedCaseInsensitiveContains(query) }
+        query.isEmpty ? items : items.filter { ($0.search ?? $0.name).localizedCaseInsensitiveContains(query) }
     }
 
     private var palette: KitPalette { KitPalette(theme: theme, bar: bar) }

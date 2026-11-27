@@ -261,28 +261,19 @@ struct NotificationCentreView: View {
 
     private func row(_ item: KShellNotification, index: Int, selected: Bool) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(tint(item).opacity(0.16))
-                icon(for: item)
-                    .frame(width: 24, height: 24)
-            }
-            .frame(width: 36, height: 36)
+            NotificationIconTile(tint: tint(item), size: 36, neon: neon) { icon(for: item) }
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
-                    Text(item.app)
-                        .font(.custom(bar.fontFamily, size: 10.5))
-                        .foregroundColor(dim)
+                    NotificationAppLabel(app: item.app, tint: tint(item), dim: dim, font: bar.fontFamily, neon: neon)
                     Spacer(minLength: 6)
                     Text(NotificationTime.clock(item.date))
                         .font(.custom(bar.fontFamily, size: 10.5))
                         .foregroundColor(dim.opacity(0.75))
                 }
 
-                Text(item.headline)
-                    .font(.custom(bar.fontFamily, size: 13))
-                    .foregroundColor(foreground)
+                NotificationHeadline(text: item.headline, size: 13, foreground: foreground,
+                                     font: bar.fontFamily, neon: neon)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -313,12 +304,9 @@ struct NotificationCentreView: View {
         .padding(.vertical, 10)
         .overlay(alignment: .leading) {
             // The card's tone, as a lit edge.
-            Capsule()
-                .fill(tint(item))
-                .frame(width: 3)
+            NotificationToneEdge(tint: tint(item), neon: neon)
                 .padding(.vertical, 10)
                 .padding(.leading, 5)
-                .shadow(color: tint(item).opacity(0.6), radius: 4)
                 .opacity(item.source == .kshell ? 1 : 0.35)
         }
         .kitCard(selected: selected, hovered: hovering == item.id, palette: palette, highlight: highlight)
@@ -348,13 +336,10 @@ struct NotificationCentreView: View {
         }
     }
 
+    private var neon: Bool { Neon.isNeon(theme) }
+
     private func tint(_ item: KShellNotification) -> Color {
-        switch item.tone {
-        case .info: return accent
-        case .success: return .green
-        case .warning: return .orange
-        case .error: return .red
-        }
+        NotificationLook.tint(item.tone, accent: accent, neon: neon)
     }
 
     // MARK: - grouping

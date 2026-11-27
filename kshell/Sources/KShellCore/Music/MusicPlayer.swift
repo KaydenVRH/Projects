@@ -337,7 +337,7 @@ public final class MusicPlayer: NSObject, ObservableObject {
         queue.append(track)
         // A late arrival goes after everything already lined up, in either order.
         order.append(queue.count - 1)
-        if current == nil { beginPlayback(track) }
+        if current == nil { beginPlayback(track) } else { saveSession() }
     }
 
     private func beginPlayback(_ track: MusicTrack) {
@@ -352,7 +352,7 @@ public final class MusicPlayer: NSObject, ObservableObject {
             self.file = file
             node.volume = Float(min(max(volume, 0), 1))
             schedule(from: 0)
-            node.play()
+            if !loadPaused { node.play() }
             let rate = file.processingFormat.sampleRate
             duration = rate > 0 && file.length > 0 ? Double(file.length) / rate : track.duration
         } catch {
@@ -376,12 +376,21 @@ public final class MusicPlayer: NSObject, ObservableObject {
         consecutiveFailures = 0
         if let previous = current, previous != track { history.append(previous) }
         current = track
-        isPlaying = true
         position = 0
-        spectrum.isEnabled = wantsSpectrum
-        startTicker()
+        if loadPaused {
+            // Restored from the last run, paused: cued up, silent.
+            isPlaying = false
+        } else {
+            isPlaying = true
+            spectrum.isEnabled = wantsSpectrum
+            startTicker()
+        }
         writeSidecar()
+        saveSession()
     }
+
+    /// Set while restoring a paused session: load the track without playing it.
+    private var loadPaused = false
 
     enum PlayerError: Error {
         /// The engine refused to start (usually a device that has gone away).
@@ -517,6 +526,7 @@ public final class MusicPlayer: NSObject, ObservableObject {
         duration = 0
         spectrum.isEnabled = false
         writeSidecar()
+        saveSession()
     }
 
     /// Step through the queue.
@@ -571,6 +581,59 @@ public final class MusicPlayer: NSObject, ObservableObject {
         }
         let frame = min(seekFrame + playerTime.sampleTime, file.length)
         return Double(frame) / rate
+    }
+
+    // MARK: - surviving a restart
+
+    /// The queue and where in it, rewritten when the track changes. Position
+    /// and play state come from the sidecar, which is already rewritten twice
+    /// a second while playing.
+    private struct Session: Codable {
+        var queue: [MusicTrack]
+        var index: Int
+        var current: String
+    }
+
+    private var sessionURL: URL {
+        KShellPaths.cacheDirectory.appendingPathComponent("music-session.json")
+    }
+
+    private func saveSession() {
+        guard let current else {
+            try? FileManager.default.removeItem(at: sessionURL)
+            return
+        }
+        let session = Session(queue: queue, index: index, current: current.path)
+        guard let data = try? JSONEncoder().encode(session) else { return }
+        try? FileManager.default.createDirectory(at: KShellPaths.cacheDirectory, withIntermediateDirectories: true)
+        try? data.write(to: sessionURL, options: .atomic)
+    }
+
+    /// Pick up where the last run left off. Restarting the shell (an update, a
+    /// crash, `launchctl kickstart`) used to cut the music dead and lose the
+    /// place; now music that was playing in the last `playingFor` carries on
+    /// from the same moment, and anything else from the last `keepFor` comes
+    /// back cued up and paused, so play continues it. Stopped stays stopped.
+    public func restoreSession(playingFor: TimeInterval = 15 * 60, keepFor: TimeInterval = 12 * 3600) {
+        guard current == nil,
+              let data = try? Data(contentsOf: sessionURL),
+              let session = try? JSONDecoder().decode(Session.self, from: data),
+              !session.queue.isEmpty else { return }
+        let sidecarURL = KShellPaths.cacheDirectory.appendingPathComponent("now-playing.json")
+        guard let sidecar = try? Data(contentsOf: sidecarURL),
+              let state = try? JSONSerialization.jsonObject(with: sidecar) as? [String: Any],
+              let was = state["state"] as? String, was != "stopped",
+              let modified = (try? FileManager.default.attributesOfItem(atPath: sidecarURL.path))?[.modificationDate] as? Date else { return }
+        let age = Date().timeIntervalSince(modified)
+        guard age < keepFor else { return }
+        let start = session.queue.firstIndex { $0.path == session.current } ?? session.index
+        guard session.queue.indices.contains(start),
+              FileManager.default.fileExists(atPath: session.queue[start].path) else { return }
+        let position = state["position"] as? Double ?? 0
+        loadPaused = !(was == "playing" && age < playingFor)
+        play(session.queue, startAt: start)
+        loadPaused = false
+        if position > 1, current?.path == session.current { seek(toSeconds: position) }
     }
 
     // MARK: - sidecar

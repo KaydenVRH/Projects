@@ -166,6 +166,12 @@ func breathing(from low: Float, period: CFTimeInterval) -> CABasicAnimation {
 protocol ThemeChrome: NSView {
     func fit(size: NSSize, style: PanelStyle?)
     func powerOn()
+    /// The panel has started closing. Only Neon does anything with it.
+    func powerOff()
+}
+
+extension ThemeChrome {
+    func powerOff() {}
 }
 
 extension HudChromeView: ThemeChrome {}
@@ -343,7 +349,13 @@ final class ArcaneFramePanel: FrameOverlayPanel {
 /// Sparks that trail the pointer as it moves, and stop when it rests. One
 /// click-through window per display; the pointer is sampled at the display's
 /// rate (no input monitoring, so no permissions).
-final class ArcaneCursorTrail {
+/// Something drawn after the pointer, one per theme that has one.
+protocol CursorTrail: AnyObject {
+    func stop()
+    func setHidden(_ hidden: Bool, on screen: NSScreen)
+}
+
+final class ArcaneCursorTrail: CursorTrail {
     private var panels: [(NSPanel, CAEmitterLayer)] = []
     private var timer: DispatchSourceTimer?
     private var last = NSPoint(x: -1, y: -1)

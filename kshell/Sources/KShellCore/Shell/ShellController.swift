@@ -9,6 +9,9 @@ public final class ShellController {
     private let ipc = IPCServer()
     private var appLauncher: AppLauncher?
     private var scriptLauncher: ScriptLauncher?
+    private var clipboardLauncher: ClipboardLauncher?
+    private var powerMenu: PowerMenu?
+    private var calendarPanel: CalendarPanel?
     private var wallpaperLauncher: WallpaperLauncher?
     private var themeLauncher: ThemeLauncher?
     private var mediaCenter: MediaIsland?
@@ -28,7 +31,7 @@ public final class ShellController {
     private var hudFrames: [HudFramePanel] = []
     /// The Arcane theme's glowing frame and the sparks trailing the pointer.
     private var arcaneFrames: [ArcaneFramePanel] = []
-    private var cursorTrail: ArcaneCursorTrail?
+    private var cursorTrail: CursorTrail?
     /// The Neon theme's tubes over the frame.
     private var neonFrames: [NeonFramePanel] = []
     private var visualisers: [VisualiserPanel] = []
@@ -64,9 +67,12 @@ public final class ShellController {
         makeMusicLauncher()
         makeNotifications()
         makeBluetoothMenu()
+        ClipboardHistory.shared.start()
         subscribeToEvents()
         rebuildBars()
         fullscreen.start()
+        // Music that was playing when the shell last went down carries on.
+        MusicPlayer.shared.restoreSession()
 
         // The bars follow the player: up while something plays, away when it
         // stops. The levels themselves arrive from the engine's tap.
@@ -101,6 +107,8 @@ public final class ShellController {
         fullscreen.stop()
         appLauncher?.hide()
         scriptLauncher?.hide()
+        clipboardLauncher?.hide()
+        ClipboardHistory.shared.stop()
         wallpaperLauncher?.hide()
         themeLauncher?.hide(animated: false)
         mediaCenter?.hide(animated: false)
@@ -151,6 +159,17 @@ public final class ShellController {
         eventTokens.append(bus.observe("script_launcher_toggle") { [weak self] _ in self?.scriptLauncher?.toggle() })
         eventTokens.append(bus.observe("script_launcher_open") { [weak self] _ in self?.scriptLauncher?.show() })
         eventTokens.append(bus.observe("script_launcher_close") { [weak self] _ in self?.scriptLauncher?.hide() })
+        eventTokens.append(bus.observe("clipboard_toggle") { [weak self] _ in self?.clipboardLauncher?.toggle() })
+        eventTokens.append(bus.observe("clipboard_open") { [weak self] _ in self?.clipboardLauncher?.show() })
+        eventTokens.append(bus.observe("clipboard_close") { [weak self] _ in self?.clipboardLauncher?.hide() })
+        eventTokens.append(bus.observe("clipboard_clear") { _ in ClipboardHistory.shared.clear() })
+        eventTokens.append(bus.observe("keep_awake_toggle") { _ in KeepAwake.shared.toggle() })
+        eventTokens.append(bus.observe("power_menu_toggle") { [weak self] _ in self?.powerMenu?.toggle() })
+        eventTokens.append(bus.observe("power_menu_open") { [weak self] _ in self?.powerMenu?.show() })
+        eventTokens.append(bus.observe("power_menu_close") { [weak self] _ in self?.powerMenu?.hide() })
+        eventTokens.append(bus.observe("calendar_toggle") { [weak self] _ in self?.calendarPanel?.toggle() })
+        eventTokens.append(bus.observe("calendar_open") { [weak self] _ in self?.calendarPanel?.show() })
+        eventTokens.append(bus.observe("calendar_close") { [weak self] _ in self?.calendarPanel?.hide() })
         eventTokens.append(bus.observe("wallpaper_launcher_toggle") { [weak self] _ in self?.wallpaperLauncher?.toggle() })
         eventTokens.append(bus.observe("wallpaper_launcher_open") { [weak self] _ in self?.wallpaperLauncher?.show() })
         eventTokens.append(bus.observe("wallpaper_launcher_close") { [weak self] _ in self?.wallpaperLauncher?.hide() })
@@ -480,6 +499,9 @@ public final class ShellController {
         if !fullscreenDisplays.isEmpty {
             appLauncher?.hide()
             scriptLauncher?.hide()
+            clipboardLauncher?.hide()
+            powerMenu?.hide()
+            calendarPanel?.hide()
             wallpaperLauncher?.hide()
             themeLauncher?.hide(animated: false)
             mediaCenter?.hide(animated: false)
@@ -490,6 +512,13 @@ public final class ShellController {
     private func makeScriptLauncher() {
         let directory = KShellPaths.resolve(loader.config.scriptDirectory)
         scriptLauncher = ScriptLauncher(viewModel: viewModel, directory: directory, margin: panelMargin)
+        // Built alongside: it follows the same frame margin.
+        clipboardLauncher?.hide()
+        clipboardLauncher = ClipboardLauncher(viewModel: viewModel, margin: panelMargin)
+        powerMenu?.hide()
+        powerMenu = PowerMenu(viewModel: viewModel, margin: panelMargin)
+        calendarPanel?.hide()
+        calendarPanel = CalendarPanel(viewModel: viewModel, margin: panelMargin)
     }
 
     private func makeWallpaperLauncher() {
@@ -689,14 +718,18 @@ public final class ShellController {
             }
             cursorTrail = ArcaneCursorTrail()
         }
-        // Neon: double tubes round the frame, flickering corner signs.
-        if usesSurface, Neon.active {
-            let inset = CGFloat(borderConfig.inset + borderConfig.thickness)
-            neonFrames = screens.map { screen in
-                let frame = NeonFramePanel(screen: screen, inset: inset, radius: CGFloat(borderConfig.radius))
-                frame.orderFrontRegardless()
-                return frame
+        // Neon: double tubes round the frame, flickering corner signs, and a
+        // light streak after a quick pointer.
+        if Neon.active {
+            if usesSurface {
+                let inset = CGFloat(borderConfig.inset + borderConfig.thickness)
+                neonFrames = screens.map { screen in
+                    let frame = NeonFramePanel(screen: screen, inset: inset, radius: CGFloat(borderConfig.radius))
+                    frame.orderFrontRegardless()
+                    return frame
+                }
             }
+            cursorTrail = NeonCursorTrail()
         }
 
         if manualHidden {

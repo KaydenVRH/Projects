@@ -269,6 +269,8 @@ public final class MediaIslandPanel: NSPanel {
         }
         setSlack(true)
         motion.animate(open: false)
+        chrome?.powerOff()
+        if Neon.active { Neon.jolt(host.layer) }
         // The spring hides it when it settles; this covers a display that
         // stopped ticking half-way.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in

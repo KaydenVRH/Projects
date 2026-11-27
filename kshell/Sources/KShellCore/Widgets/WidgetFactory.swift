@@ -17,6 +17,7 @@ enum WidgetFactory {
         case "wifi":       return [WifiRuntime(spec: spec, theme: theme)]
         case "volume":     return [VolumeRuntime(spec: spec, theme: theme)]
         case "bluetooth":  return [BluetoothRuntime(spec: spec, theme: theme)]
+        case "caffeine", "keep_awake": return [CaffeineRuntime(spec: spec, theme: theme)]
         case "workspaces": return WorkspacesWidget.make(spec: spec, theme: theme)
         case "js":
             if let runtime = JSWidgetRuntime(spec: spec, theme: theme) { return [runtime] }

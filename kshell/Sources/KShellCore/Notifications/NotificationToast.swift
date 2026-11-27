@@ -150,33 +150,26 @@ struct NotificationToastView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(tint.opacity(0.18))
-                icon
-                    .frame(width: 26, height: 26)
-            }
-            .frame(width: 38, height: 38)
+            NotificationIconTile(tint: tint, size: 38, neon: neon) { icon }
             .scaleEffect(arrived ? 1 : 0.4)
             .rotationEffect(.degrees(arrived ? 0 : -25))
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Circle()
-                        .fill(tint)
-                        .frame(width: 6, height: 6)
-                    Text(item.app)
-                        .font(.custom(bar.fontFamily, size: 10.5))
-                        .foregroundColor(dim)
+                    if !neon {
+                        Circle()
+                            .fill(tint)
+                            .frame(width: 6, height: 6)
+                    }
+                    NotificationAppLabel(app: item.app, tint: tint, dim: dim, font: bar.fontFamily, neon: neon)
                     Text(NotificationTime.compact(item.date))
                         .font(.custom(bar.fontFamily, size: 10.5))
                         .foregroundColor(dim.opacity(0.75))
                     Spacer(minLength: 4)
                 }
 
-                Text(item.headline)
-                    .font(.custom(bar.fontFamily, size: 13.5))
-                    .foregroundColor(foreground)
+                NotificationHeadline(text: item.headline, size: 13.5, foreground: foreground,
+                                     font: bar.fontFamily, neon: neon)
                     .lineLimit(2)
 
                 if item.hasBody {
@@ -204,12 +197,9 @@ struct NotificationToastView: View {
         .padding(.vertical, 12)
         .overlay(alignment: .leading) {
             // The tone as a lit edge, the same as in the centre.
-            Capsule()
-                .fill(tint)
-                .frame(width: 3)
+            NotificationToneEdge(tint: tint, neon: neon)
                 .padding(.vertical, 14)
                 .padding(.leading, 7)
-                .shadow(color: tint.opacity(0.7), radius: 5)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .modifier(PanelSurface(
@@ -242,12 +232,7 @@ struct NotificationToastView: View {
         }
     }
 
-    private var tint: Color {
-        switch item.tone {
-        case .info: return accent
-        case .success: return .green
-        case .warning: return .orange
-        case .error: return .red
-        }
-    }
+    private var neon: Bool { Neon.isNeon(theme) }
+
+    private var tint: Color { NotificationLook.tint(item.tone, accent: accent, neon: neon) }
 }

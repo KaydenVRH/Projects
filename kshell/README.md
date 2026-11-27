@@ -85,12 +85,13 @@ switcher does.
 | `spacer` | — | flexible gap |
 | `text` | `icon`, `text`, colors | static |
 | `front_app` | — | frontmost app name |
-| `clock` | `format`, `interval` | DateFormatter pattern |
+| `clock` | `format`, `interval` | DateFormatter pattern; click opens the calendar (unless `action` is set) |
 | `cpu` / `ram` | `interval` | percent |
 | `battery` | `interval` | percent + charge icon |
 | `wifi` | `interval` | power-state icon (+ SSID if permitted) |
 | `volume` | `interval`, `action` | percent + mute, via CoreAudio |
 | `bluetooth` | `interval` | controller power state |
+| `caffeine` | `icon_color`, `on_color` | keep-awake: click to keep the Mac and display from sleeping; the cup lights up (`on_color`) and reads "awake" while on |
 | `js` | `file`/`source`, `interval`, `events` | user JavaScript widget (see below) |
 | `script` | `command`, `interval`, `icon`, `separator`, `action` | runs a shell command; stdout becomes the label (or `icon<sep>label`) |
 
@@ -101,7 +102,9 @@ Built-in events: `app_launcher_{toggle,open,close}`,
 `script_launcher_{toggle,open,close}`, `wallpaper_launcher_{toggle,open,close}`,
 `bluetooth_menu_{toggle,open,close}`, `bluetooth_toggle <name>`, `bluetooth_power on|off`,
 `theme_launcher_{toggle,open,close}`, `media_center_{toggle,open,close}`,
-`media_{play_pause,next,previous}`, `bar_{hide,show,toggle}`, `config_reload`.
+`media_{play_pause,next,previous}`, `bar_{hide,show,toggle}`, `config_reload`,
+`clipboard_{toggle,open,close,clear}`, `power_menu_{toggle,open,close}`,
+`calendar_{toggle,open,close}`, `keep_awake_toggle`.
 
 ## Events (IPC)
 
@@ -272,9 +275,23 @@ especially). `Surfaces/Motion.swift` is the one place they are tuned:
       blinking cursor;
     - the selection is a slanted magenta cell with a cyan echo and a ▶;
     - key hints are slanted tags.
+  - **Closing a menu** switches it off like an old CRT: the tubes stutter out,
+    the tape tears, and a bright line collapses across the middle — over the
+    panel's own close. While a menu is open, a bad patch of tape tears across
+    it now and then.
   - **The frame** is two neon tubes, with flickering signs in its corners.
+  - **The desktop** has street signs behind the windows: ネオン街 ("neon town")
+    down the right in a cyan box, one character buzzing now and then like a
+    failing tube, and "Open 24H" in script low on the left.
+  - **The pointer** leaves a short magenta streak with a cyan echo when it moves
+    quickly; careful pointing leaves nothing.
   - **The bar** has a magenta-to-cyan tube along its foot with a glint running
-    it, and the focused workspace sits in a slanted tag.
+    it, and the focused workspace sits in a slanted tag that strikes up with a
+    stutter wherever it lands. Hovering a widget splits its label into colour
+    fringes and jolts it.
+  - **Notifications** take the tubes' colours (success cyan, warning yellow,
+    error red, info magenta), with the app as a slanted tag, the title in
+    colour fringes and the tone as slanted dashes down the edge.
   - **The music card's** cover stands in front of a synthwave sun and splits
     into cyan and magenta copies on the bass. The play button is a slanted
     block.
@@ -318,6 +335,30 @@ glass lag the content and snap into place at the end of the animation. Five pane
   (rotated at 2 MB). Running it as a plain child is what used to kill scripts the
   moment the overlay closed: the `Process` went away, taking the pipes nobody had
   read with it, and the script's next write took it down.
+
+**Clipboard history** — what you've copied lately, newest first.
+- Open with `kshell trigger clipboard_toggle` (alt-v in the dotfiles).
+- The search matches each entry's whole text; rows show the first line, the
+  app it came from, its size and its age, with an icon for links, paths and
+  numbers.
+- `⏎` copies the entry again and, if kshell has Accessibility access, pastes it
+  into the app you were in (⌘V once that app has the front back).
+- The last 80 text copies, **in memory only**: copied secrets never reach a
+  file, so the history starts empty with the shell. Anything a password manager
+  marks as concealed or transient (the nspasteboard.org types) is never
+  recorded. `clipboard_clear` empties it.
+
+**Power menu** — lock, sleep, display off, restart, shut down, log out.
+- Open with `kshell trigger power_menu_toggle` (alt-x in the dotfiles).
+- Lock is immediate (what the Apple menu's Lock Screen does). Restart, shut
+  down and log out go through loginwindow, so macOS asks "Are you sure…?" with
+  its usual countdown: a stray Enter can't take the machine down.
+
+**Calendar** — the month, with today lit, and a big clock.
+- Open by clicking the clock, or `kshell trigger calendar_toggle`.
+- `←`/`→` or `h`/`l` step through months, `t` comes back to today. Weeks start
+  on the system's first weekday; the header has the week and day of the year,
+  and a line under the clock fills as the day goes.
 
 **Bluetooth menu** — paired devices, connect/disconnect, radio power.
 - Open with `kshell trigger bluetooth_menu_toggle`.
@@ -717,6 +758,17 @@ Debug helpers: `kshell --render <file.png> [height]` renders the bar offscreen
 (handy for checking layout without eyeballing the screen), `kshell --glyphs`
 checks each icon codepoint exists in the font, and `kshell --icons` renders the
 icon set large.
+
+## Restarting
+
+`scripts/restart.sh` restarts the launch agent after a rebuild. It unloads and
+reloads it rather than `launchctl kickstart -k`, which can leave kshell dead
+after the binary changes (launchd keeps the old binary's code requirement and
+the spawn fails with `OS_REASON_CODESIGNING`).
+
+Music survives a restart: the queue is saved when the track changes, and on
+launch music that was playing in the last 15 minutes carries on from the same
+moment. Anything else from the last 12 hours comes back cued and paused.
 
 ## Auto-hide & displays
 

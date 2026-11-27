@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 /// A flexible gap that pushes its siblings apart.
@@ -51,4 +52,32 @@ final class AppleRuntime: StaticWidgetRuntime {
         }
         super.init(model: model)
     }
+}
+
+/// Keep-awake: a coffee cup that keeps the Mac and display from sleeping while
+/// it's lit. Click to toggle (or `kshell trigger keep_awake_toggle`).
+final class CaffeineRuntime: WidgetRuntime {
+    let model: WidgetModel
+    private let onColour: RGBA?
+    private let offColour: RGBA?
+    private var watch: AnyCancellable?
+
+    init(spec: WidgetSpec, theme: Theme) {
+        model = WidgetFactory.baseModel(spec, theme: theme, icon: WidgetFactory.resolvedIcon(spec) ?? "\u{f0f4}", label: "")
+        onColour = spec.color("on_color") ?? theme.mid ?? theme.accent
+        offColour = spec.color("icon_color") ?? theme.dim
+        model.action = { KeepAwake.shared.toggle() }
+    }
+
+    func start() {
+        watch = KeepAwake.shared.$isOn
+            .receive(on: RunLoop.main)
+            .sink { [weak self] on in
+                guard let self else { return }
+                self.model.iconColor = on ? self.onColour : self.offColour
+                self.model.label = on ? "awake" : ""
+            }
+    }
+
+    func stop() { watch = nil }
 }

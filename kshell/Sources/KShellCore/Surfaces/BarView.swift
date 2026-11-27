@@ -128,6 +128,16 @@ private struct WidgetItemView: View {
                             .lineLimit(1)
                             .truncationMode(.tail)
                             .minimumScaleFactor(0.9)
+                            .background {
+                                // Neon: hovered, the label splits into its
+                                // colour fringes, like a mistracked tape.
+                                if neonHover {
+                                    ZStack {
+                                        label.foregroundColor(Color(nsColor: Neon.cyan).opacity(0.8)).offset(x: -1.6)
+                                        label.foregroundColor(Color(nsColor: Neon.magenta).opacity(0.8)).offset(x: 1.6)
+                                    }
+                                }
+                            }
                     }
                 }
                 .padding(.horizontal, model.paddingX)
@@ -141,6 +151,7 @@ private struct WidgetItemView: View {
                                 .overlay(SlantShape(slant: 5).stroke(labelColor, lineWidth: 1.2).offset(x: 1, y: -0.5))
                                 .shadow(color: labelColor.opacity(0.8), radius: 4)
                                 .padding(.vertical, 5)
+                                .modifier(NeonStrikeUp())
                                 .matchedGeometryEffect(id: "active", in: pill)
                         } else if Hud.isHud(theme) {
                             // Stark: a targeting bracket instead of a pill.
@@ -163,11 +174,31 @@ private struct WidgetItemView: View {
                 }
                 .contentShape(Rectangle())
                 .scaleEffect(hovered && model.action != nil ? 1.08 : 1)
-                .onHover { hovered = $0 }
+                .offset(x: jolt)
+                .onHover { inside in
+                    hovered = inside
+                    if inside && Neon.isNeon(theme) { glitch() }
+                }
                 .animation(.kHover, value: hovered)
                 .onTapGesture { model.action?() }
                 .transition(.scale(scale: 0.4).combined(with: .opacity))
             }
+        }
+    }
+
+    private var neonHover: Bool { hovered && Neon.isNeon(theme) }
+
+    private var label: Text {
+        Text(model.label).font(.custom(appearance.fontFamily, size: appearance.fontSize))
+    }
+
+    @State private var jolt: CGFloat = 0
+
+    /// A quick sideways jolt, the way a glitching picture jumps.
+    private func glitch() {
+        let steps: [(Double, CGFloat)] = [(0, -2.5), (0.05, 2), (0.1, -1), (0.15, 0)]
+        for (delay, x) in steps {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { jolt = x }
         }
     }
 
@@ -181,5 +212,22 @@ private struct WidgetItemView: View {
 
     private var labelColor: Color {
         model.labelColor?.color ?? theme.highlight?.color ?? .white
+    }
+}
+
+/// A neon tube striking up: on appearing, a stutter of dark and light before
+/// it holds steady. The bar's active pill does this as it lands somewhere new.
+private struct NeonStrikeUp: ViewModifier {
+    @State private var level: Double = 0
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(level)
+            .onAppear {
+                let steps: [(Double, Double)] = [(0, 1), (0.05, 0.25), (0.1, 0.9), (0.16, 0.4), (0.22, 1)]
+                for (delay, value) in steps {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { level = value }
+                }
+            }
     }
 }
