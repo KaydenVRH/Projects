@@ -5,7 +5,7 @@ mod audio;
 mod config;
 mod gfx;
 mod log;
-mod neon;
+mod theme;
 mod player;
 mod thumbs;
 mod ui;
@@ -37,11 +37,13 @@ options:
   --max-width W    widest frame to decode before kitty scales it (default 1920)
   --results N      search results to fetch (default 30)
   --volume N       starting volume, 0-100 (default 80)
+  --theme NAME     neon, stark or arcane; auto (the default) follows kshell
   -h, --help       show this
 
 config file: ~/.config/yt-tui/config, e.g.
   cookies_from_browser = firefox    your login: Home, Subscriptions, …
   fps = 30 / quality = 1080 / max_width = 1920 / results = 30 / volume = 80
+  theme = auto                      or neon / stark / arcane
 
 environment:
   YT_TUI_GRAPHICS=on|off      force kitty graphics on or off
@@ -154,6 +156,7 @@ fn parse_args() -> Result<(Settings, Option<String>)> {
         },
         results: file.results.unwrap_or(30) as usize,
         volume: file.volume.unwrap_or(80.0).clamp(0.0, 100.0),
+        theme: file.theme.as_deref().and_then(theme::Theme::parse),
     };
     let mut words = Vec::new();
     let mut args = std::env::args().skip(1);
@@ -176,6 +179,14 @@ fn parse_args() -> Result<(Settings, Option<String>)> {
             "--volume" => match args.next().as_deref().map(str::parse::<f64>) {
                 Some(Ok(v)) if (0.0..=100.0).contains(&v) => settings.volume = v,
                 _ => bail!("--volume needs a number from 0 to 100"),
+            },
+            "--theme" => match args.next() {
+                Some(name) if name == "auto" => settings.theme = None,
+                Some(name) => match theme::Theme::parse(&name) {
+                    Some(theme) => settings.theme = Some(theme),
+                    None => bail!("--theme is neon, stark, arcane or auto"),
+                },
+                None => bail!("--theme is neon, stark, arcane or auto"),
             },
             s if s.starts_with("--") => bail!("unknown option {s} (see --help)"),
             _ => words.push(arg),

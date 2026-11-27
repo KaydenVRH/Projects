@@ -5,6 +5,7 @@
 
 use crate::gfx::{Graphics, THUMB_ID, VIDEO_ID};
 use crate::player::{fit, Limits, Player};
+use crate::theme::{self, Theme};
 use crate::thumbs::{self, Thumbs};
 use crate::youtube::{self, Stream, Video};
 use anyhow::Result;
@@ -62,6 +63,8 @@ pub struct Settings {
     pub limits: Limits,
     pub results: usize,
     pub volume: f64,
+    /// A look to keep; `None` follows kshell's theme.
+    pub theme: Option<Theme>,
 }
 
 pub struct Loading {
@@ -119,12 +122,19 @@ pub struct App {
     pub layout: Layout,
     thumb_shown: Option<(String, Rect)>,
     pub start: Instant,
+    /// Keeps the look in step with kshell while on `auto`.
+    look: theme::Follower,
+    look_checked: Instant,
 }
 
 impl App {
     pub fn new(gfx: Option<Graphics>, settings: Settings) -> App {
         let missing = ["yt-dlp", "ffmpeg", "mpv"].into_iter().filter(|t| !on_path(t)).collect();
         let volume = settings.volume;
+        if let Some(theme) = settings.theme {
+            theme::set(theme);
+        }
+        let look = theme::Follower::new(settings.theme.is_none());
         App {
             query: String::new(),
             focus: Focus::Search,
@@ -152,6 +162,8 @@ impl App {
             layout: Layout::default(),
             thumb_shown: None,
             start: Instant::now(),
+            look,
+            look_checked: Instant::now(),
         }
     }
 
@@ -262,6 +274,12 @@ impl App {
     /// anything visible changed.
     pub fn update(&mut self, out: &mut impl Write) -> io::Result<bool> {
         let mut changed = false;
+
+        // kshell switched theme: follow it (a stat a second).
+        if self.look_checked.elapsed() >= Duration::from_secs(1) {
+            self.look_checked = Instant::now();
+            changed |= self.look.poll();
+        }
 
         if let Some((source, _, rx)) = &self.fetching {
             if let Ok(result) = rx.try_recv() {
@@ -509,6 +527,13 @@ impl App {
                 self.say(format!("Autoplay {state}"), false);
             }
             KeyCode::Char('?') => self.help = true,
+            KeyCode::Char('t') => {
+                // Picking one stops following kshell until the next start.
+                let next = theme::current().next();
+                theme::set(next);
+                self.look.auto = false;
+                self.say(format!("Theme: {} (theme = {} in the config keeps it)", next.name(), next.name().to_lowercase()), false);
+            }
             KeyCode::Char('r') => self.refresh(),
             KeyCode::Char(c @ '1'..='5') => {
                 if let Some(tab) = self.tabs().get((c as u8 - b'1') as usize) {
@@ -619,7 +644,7 @@ mod tests {
     }
 
     fn app() -> App {
-        let settings = Settings { max_height: 1080, limits: Limits { max_width: 1920, max_fps: 30 }, results: 30, volume: 0.0 };
+        let settings = Settings { max_height: 1080, limits: Limits { max_width: 1920, max_fps: 30 }, results: 30, volume: 0.0, theme: Some(crate::theme::Theme::Neon) };
         let mut app = App::new(None, settings);
         app.logged_in = false; // no yt-dlp calls in tests
         app

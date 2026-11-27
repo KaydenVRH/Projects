@@ -31,16 +31,25 @@ it, search still works.
 
 ## Look
 
-yt-tui wears the **Neon** style, the same cyberpunk look as kshell and
-FlickLock, in true colour (`src/neon.rs`):
-- **Colours:** hot magenta and electric cyan with sunset yellow.
-- **Panels:** cut-corner borders, with `▸▸ READOUT` titles.
-- **Tags:** they lean forward (`◢ … ◤`). The logo, the tab you're on, LIVE and
-  the key hints are all tags.
-- **Highlights:** the selected video's title, the playing title and the
-  progress bar run magenta→cyan; the progress bar ends in a yellow `◆`.
-- **Empty and loading screens:** a small synthwave sun going down behind a
-  grid floor.
+yt-tui wears the three trademark looks shared with kshell, in true colour
+(`src/theme.rs`):
+
+| | Neon | Stark | Arcane |
+|---|---|---|---|
+| **Feel** | a cyberpunk city on tape | Tony Stark's HUD | magic |
+| **Colours** | magenta, cyan, sunset yellow | ice blue, white light, Iron Man gold | violet, rose, a spectral spark |
+| **Panels** | cut corners, `▸▸ READOUT` titles | heavy corner brackets, `[ READOUT ]` titles | rounded, `✦ Title ✦` |
+| **Tags** | lean forward (`◢ … ◤`) | `[KEY]` readouts | glowing runestones |
+| **Empty screens** | a synthwave sun over a grid floor | an arc reactor | a magic circle of runes |
+
+The logo, the tab you're on, LIVE and the key hints are all tags; the selected
+and playing titles and the progress bar run in the theme's gradient.
+
+**Which one:** by default (`theme = auto`) yt-tui follows whichever of the
+three kshell is wearing, live: switch kshell's theme and yt-tui changes with
+it within a second. Any other kshell theme keeps the last one. `theme = neon`
+(or `stark`, `arcane`) in the config, or `--theme`, keeps one; `t` cycles them
+for the session.
 
 The terminal's own background is left alone.
 
@@ -57,6 +66,7 @@ The terminal's own background is left alone.
 | `A` | autoplay the next result | `f` | fullscreen |
 | `1`–`5` / `[` `]` | Home, Subscriptions, Watch later, History, search | | |
 | `r` | reload the tab | | |
+| `t` | next theme: Neon, Stark, Arcane | | |
 | `?` | help | `n` `p` | next / previous result |
 | `q` | quit | `q` / `esc` | back to results |
 
@@ -130,7 +140,7 @@ src/
   main.rs     terminal setup, options, the event loop
   app.rs      state, background jobs, key and mouse handling
   ui.rs       drawing: search, results, preview, player, help
-  neon.rs     the look: palette, gradients, slanted tags, cut-corner panels
+  theme.rs    the looks: Neon, Stark, Arcane — palettes, panels, tags, scenes
   youtube.rs  yt-dlp: search, link lookup, stream selection
   player.rs   playback: clock, frame pacing, seeking, picture fitting
   video.rs    ffmpeg decoder thread with recycled frame buffers
