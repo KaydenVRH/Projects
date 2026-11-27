@@ -5,6 +5,7 @@ mod audio;
 mod config;
 mod gfx;
 mod log;
+mod neon;
 mod player;
 mod thumbs;
 mod ui;

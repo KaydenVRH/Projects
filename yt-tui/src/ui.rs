@@ -2,6 +2,7 @@
 //! that input and graphics need are recorded in `app.layout`.
 
 use crate::app::{App, Focus, Source};
+use crate::neon::{self, CYAN, DIM, FAINT, MAGENTA, SELECTED_BG, TEXT, YELLOW};
 use crate::gfx::{Placeholder, THUMB_ID, VIDEO_ID};
 use crate::player::Player;
 use crate::youtube::{format_duration, format_views, Video};
@@ -9,15 +10,13 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Margin, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Clear, List, ListItem, Paragraph, Wrap},
     Frame,
 };
 use std::time::Instant;
 
-const ACCENT: Color = Color::Rgb(255, 72, 72);
-const DIM: Color = Color::Rgb(128, 128, 140);
-const FAINT: Color = Color::Rgb(70, 70, 82);
-const SELECTED_BG: Color = Color::Rgb(40, 40, 50);
+/// The look is the Neon style (see `neon.rs`); magenta is the accent.
+const ACCENT: Color = MAGENTA;
 
 pub fn render(f: &mut Frame, app: &mut App) {
     app.layout = Default::default();
@@ -62,7 +61,7 @@ fn render_browse(f: &mut Frame, app: &mut App) {
 }
 
 fn render_header(f: &mut Frame, app: &App, area: Rect) {
-    let mut left = vec![Span::styled(" ▶ ", Style::new().fg(Color::White).bg(ACCENT).bold()), " yt-tui".bold()];
+    let mut left = neon::logo();
     if let Some((source, since, _)) = &app.fetching {
         let what = match source {
             Source::Search(q) => format!("searching “{q}”"),
@@ -79,30 +78,27 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
         right.push(Span::styled("audio only — terminal has no kitty graphics", Style::new().fg(DIM)));
     }
     if app.autoplay {
-        right.push(Span::styled("  autoplay", Style::new().fg(ACCENT)));
+        right.push(Span::raw("  "));
+        right.extend(neon::tag(" AUTOPLAY ", CYAN));
     }
     f.render_widget(Line::from(right).alignment(Alignment::Right), area);
 }
 
 fn render_search(f: &mut Frame, app: &App, area: Rect) {
     let focused = app.focus == Focus::Search;
-    let block = Block::new()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(if focused { ACCENT } else { FAINT }))
-        .title(Span::styled(" Search ", Style::new().fg(if focused { Color::White } else { DIM })));
+    let block = neon::panel("Search", focused);
     let line = if app.query.is_empty() && !focused {
         Line::from(Span::styled("  press / to search", Style::new().fg(DIM)))
     } else if app.query.is_empty() {
         Line::from(vec![
             Span::raw("  "),
-            Span::styled("▏", Style::new().fg(ACCENT)),
+            Span::styled("▏", Style::new().fg(CYAN)),
             Span::styled("Search YouTube, or paste a link", Style::new().fg(DIM)),
         ])
     } else {
-        let mut spans = vec![Span::raw("  "), Span::styled(app.query.as_str(), Style::new().bold())];
+        let mut spans = vec![Span::raw("  "), Span::styled(app.query.as_str(), Style::new().fg(TEXT).bold())];
         if focused {
-            spans.push(Span::styled("▏", Style::new().fg(ACCENT)));
+            spans.push(Span::styled("▏", Style::new().fg(CYAN)));
         }
         Line::from(spans)
     };
@@ -123,22 +119,21 @@ fn render_tabs(f: &mut Frame, app: &mut App, area: Rect) {
             title = format!("{}…", title.chars().take(23).collect::<String>());
         }
         let mark = if loading { app.spinner().to_string() } else { (i + 1).to_string() };
-        let label = format!(" {mark} {title} ");
-        let width = (label.chars().count() as u16).min(area.right().saturating_sub(x));
+        // The tab you're on is a slanted magenta tag; the others are its number
+        // in cyan and the name, quiet.
+        let line = if on {
+            Line::from(neon::tag(format!(" {mark} {} ", title.to_uppercase()), ACCENT))
+        } else {
+            Line::from(vec![
+                Span::styled(format!(" {mark} "), Style::new().fg(CYAN)),
+                Span::styled(format!("{title} "), Style::new().fg(DIM)),
+            ])
+        };
+        let width = (line.width() as u16).min(area.right().saturating_sub(x));
         if width == 0 {
             break;
         }
         let r = Rect { x, y: area.y, width, height: 1 };
-        let style = if on {
-            Style::new().fg(Color::White).bg(SELECTED_BG).bold()
-        } else {
-            Style::new().fg(DIM)
-        };
-        let number = if on { Style::new().fg(ACCENT).bg(SELECTED_BG).bold() } else { Style::new().fg(FAINT) };
-        let line = Line::from(vec![
-            Span::styled(format!(" {mark} "), number),
-            Span::styled(format!("{title} "), style),
-        ]);
         f.render_widget(line, r);
         app.layout.tabs.push((r, tab));
         x += width + 1;
@@ -154,11 +149,7 @@ fn render_results(f: &mut Frame, app: &mut App, area: Rect) {
         (n, Some(i)) => format!(" {name} {}/{} ", i + 1, n),
         (n, None) => format!(" {name} {n} "),
     };
-    let block = Block::new()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(if focused { ACCENT } else { FAINT }))
-        .title(Span::styled(title, Style::new().fg(if focused { Color::White } else { DIM })));
+    let block = neon::panel(title, focused);
 
     if app.results.is_empty() {
         let dim = Style::new().fg(DIM);
@@ -167,16 +158,16 @@ fn render_results(f: &mut Frame, app: &mut App, area: Rect) {
             vec![Line::styled(format!("{} loading {}…", app.spinner(), name), dim)]
         } else if !matches!(app.source, Source::Search(_)) && !app.logged_in {
             vec![
-                Line::styled("Your feeds need your YouTube login.", Style::new().bold()),
+                Line::styled("Your feeds need your YouTube login.", Style::new().fg(TEXT).bold()),
                 Line::raw(""),
                 Line::from(vec![
                     Span::styled("Add ", dim),
-                    Span::styled("cookies_from_browser = firefox", Style::new().fg(Color::White)),
+                    Span::styled("cookies_from_browser = firefox", Style::new().fg(CYAN)),
                     Span::styled(" (or chrome, safari…)", dim),
                 ]),
                 Line::from(vec![
                     Span::styled("to ", dim),
-                    Span::styled("~/.config/yt-tui/config", Style::new().fg(Color::White)),
+                    Span::styled("~/.config/yt-tui/config", Style::new().fg(CYAN)),
                     Span::styled(" and restart. Search works without it.", dim),
                 ]),
             ]
@@ -185,7 +176,12 @@ fn render_results(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             vec![Line::styled("Nothing here — press r to reload.", dim)]
         };
+        // A synthwave sun over the message, when there's room for it.
         let mut text = vec![Line::raw("")];
+        if area.height >= 16 && !fetching {
+            text.extend(neon::synthwave(area.width.saturating_sub(4)));
+            text.push(Line::raw(""));
+        }
         text.extend(lines);
         f.render_widget(Paragraph::new(Text::from(text).centered()).wrap(Wrap { trim: true }).block(block), area);
         return;
@@ -199,14 +195,22 @@ fn render_results(f: &mut Frame, app: &mut App, area: Rect) {
         .enumerate()
         .map(|(i, v)| {
             let on = Some(i) == selected;
-            let bar = Span::styled(if on { "▌ " } else { "  " }, Style::new().fg(ACCENT));
-            let title = Span::styled(
-                truncate(&v.title, width),
-                if on { Style::new().bold().fg(Color::White) } else { Style::new() },
-            );
-            let mut meta = vec![bar.clone()];
+            // The armed row: a magenta edge with a cyan pointer, its title in
+            // the magenta→cyan gradient.
+            let bar = if on {
+                vec![Span::styled("▌", Style::new().fg(ACCENT)), Span::styled("▸", Style::new().fg(CYAN))]
+            } else {
+                vec![Span::raw("  ")]
+            };
+            let mut first = bar.clone();
+            if on {
+                first.extend(neon::gradient(&truncate(&v.title, width), ACCENT, CYAN, Style::new().bold()));
+            } else {
+                first.push(Span::styled(truncate(&v.title, width), Style::new().fg(TEXT)));
+            }
+            let mut meta = if on { vec![Span::styled("▌ ", Style::new().fg(ACCENT))] } else { vec![Span::raw("  ")] };
             meta.extend(meta_spans(v));
-            ListItem::new(vec![Line::from(vec![bar, title]), Line::from(meta), Line::raw("")])
+            ListItem::new(vec![Line::from(first), Line::from(meta), Line::raw("")])
         })
         .collect();
     let list = List::new(items).block(block).highlight_style(Style::new().bg(SELECTED_BG));
@@ -217,9 +221,10 @@ fn meta_spans(v: &Video) -> Vec<Span<'static>> {
     let dim = Style::new().fg(DIM);
     let mut spans = Vec::new();
     if v.is_live() {
-        spans.push(Span::styled("● LIVE  ", Style::new().fg(ACCENT).bold()));
+        spans.extend(neon::tag(" LIVE ", ACCENT));
+        spans.push(Span::raw("  "));
     } else if let Some(d) = v.duration {
-        spans.push(Span::styled(format!("{}  ", format_duration(d)), Style::new().fg(Color::White)));
+        spans.push(Span::styled(format!("{}  ", format_duration(d)), Style::new().fg(YELLOW)));
     }
     spans.push(Span::styled(v.channel().to_string(), dim));
     if let Some(views) = v.view_count {
@@ -229,10 +234,7 @@ fn meta_spans(v: &Video) -> Vec<Span<'static>> {
 }
 
 fn render_preview(f: &mut Frame, app: &mut App, area: Rect) {
-    let block = Block::new()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(FAINT));
+    let block = neon::panel("Preview", false);
     let inner = block.inner(area).inner(Margin::new(1, 0));
     f.render_widget(block, area);
     let Some(video) = app.selected().cloned() else { return };
@@ -242,7 +244,7 @@ fn render_preview(f: &mut Frame, app: &mut App, area: Rect) {
         Layout::vertical([Constraint::Length(art_height), Constraint::Length(1), Constraint::Min(1)]).areas(inner);
     render_art(f, app, &video, art);
 
-    let mut lines = vec![Line::styled(video.title.clone(), Style::new().bold()), Line::raw("")];
+    let mut lines = vec![Line::from(neon::gradient(&video.title, ACCENT, CYAN, Style::new().bold())), Line::raw("")];
     lines.push(Line::from(meta_spans(&video)));
     if let Some(desc) = video.description.as_deref().filter(|d| !d.trim().is_empty()) {
         lines.push(Line::raw(""));
@@ -262,7 +264,7 @@ fn render_art(f: &mut Frame, app: &mut App, video: &Video, area: Rect) {
         f.render_widget(Placeholder { id: THUMB_ID }, boxed);
     } else {
         let label = if app.thumbs.loading(&video.id) { app.spinner() } else { "" };
-        let frame = Block::new().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::new().fg(FAINT));
+        let frame = neon::panel("", false);
         let inner = frame.inner(boxed);
         f.render_widget(frame, boxed);
         f.render_widget(
@@ -301,8 +303,7 @@ fn render_footer(f: &mut Frame, app: &App, area: Rect) {
 fn hints(keys: &[(&str, &str)]) -> Line<'static> {
     let mut spans = vec![Span::raw(" ")];
     for (k, what) in keys {
-        spans.push(Span::styled(k.to_string(), Style::new().fg(Color::White).bold()));
-        spans.push(Span::styled(format!(" {what}   "), Style::new().fg(DIM)));
+        spans.extend(neon::hint(k, what));
     }
     Line::from(spans)
 }
@@ -337,11 +338,11 @@ fn render_player(f: &mut Frame, app: &mut App) {
     };
 
     if let Some(t) = title_area {
-        let line = Line::from(vec![
-            Span::styled(" ▶ ", Style::new().fg(Color::White).bg(ACCENT).bold()),
-            Span::styled(format!(" {}", player.stream.title), Style::new().bold()),
-            Span::styled(format!("  {}", player.video.channel()), Style::new().fg(DIM)),
-        ]);
+        let mut spans = neon::tag(" ▶ ", ACCENT);
+        spans.push(Span::raw(" "));
+        spans.extend(neon::gradient(&player.stream.title, ACCENT, CYAN, Style::new().bold()));
+        spans.push(Span::styled(format!("  ▸▸ {}", player.video.channel().to_uppercase()), Style::new().fg(DIM)));
+        let line = Line::from(spans);
         f.render_widget(line, t);
     }
 
@@ -360,7 +361,7 @@ fn render_player(f: &mut Frame, app: &mut App) {
         let w = label.chars().count() as u16;
         let r = Rect { x: stage.x + stage.width.saturating_sub(w) / 2, y: stage.y + stage.height / 2, width: w.min(stage.width), height: 1 };
         f.render_widget(Clear, r);
-        f.render_widget(Line::styled(label, Style::new().fg(Color::White).bg(SELECTED_BG)), r);
+        f.render_widget(Line::styled(label, Style::new().fg(CYAN).bg(SELECTED_BG).bold()), r);
     }
     if let Some(b) = bar_area {
         app.layout.progress = Some(Rect { x: b.x + 1, width: b.width.saturating_sub(2), ..b });
@@ -374,23 +375,27 @@ fn render_player(f: &mut Frame, app: &mut App) {
 fn render_loading(f: &mut Frame, app: &mut App, stage: Rect, title: Option<Rect>) {
     let Some(loading) = &app.loading else { return };
     if let Some(t) = title {
-        f.render_widget(
-            Line::from(vec![
-                Span::styled(" ▶ ", Style::new().fg(Color::White).bg(ACCENT).bold()),
-                Span::styled(format!(" {}", loading.video.title), Style::new().bold()),
-            ]),
-            t,
-        );
+        let mut spans = neon::tag(" ▶ ", ACCENT);
+        spans.push(Span::raw(" "));
+        spans.extend(neon::gradient(&loading.video.title, ACCENT, CYAN, Style::new().bold()));
+        f.render_widget(Line::from(spans), t);
     }
     let what = if loading.audio_only { "audio" } else { "video" };
-    let text = Text::from(vec![
-        Line::styled(format!("{} finding the {what} stream…", app.spinner()), Style::new().fg(Color::White)),
-        Line::styled(format!("{:.1}s", loading.since.elapsed().as_secs_f32()), Style::new().fg(DIM)),
+    // The synthwave sun while it loads, when there's room.
+    let mut lines = Vec::new();
+    if stage.height >= 16 {
+        lines.extend(neon::synthwave(stage.width));
+        lines.push(Line::raw(""));
+    }
+    lines.extend([
+        Line::styled(format!("{} FINDING THE {} STREAM…", app.spinner(), what.to_uppercase()), Style::new().fg(CYAN).bold()),
+        Line::styled(format!("{:.1}s", loading.since.elapsed().as_secs_f32()), Style::new().fg(YELLOW)),
         Line::raw(""),
         Line::styled("esc to cancel", Style::new().fg(DIM)),
-    ])
-    .centered();
-    let r = Rect { y: stage.y + stage.height.saturating_sub(4) / 2, height: 4.min(stage.height), ..stage };
+    ]);
+    let height = (lines.len() as u16).min(stage.height);
+    let text = Text::from(lines).centered();
+    let r = Rect { y: stage.y + stage.height.saturating_sub(height) / 2, height, ..stage };
     f.render_widget(Paragraph::new(text), r);
 }
 
@@ -402,8 +407,8 @@ fn render_audio_stage(f: &mut Frame, app: &mut App, stage: Rect) {
         Layout::vertical([Constraint::Percentage(70), Constraint::Length(1), Constraint::Min(2)]).areas(stage.inner(Margin::new(2, 1)));
     render_art(f, app, &video, art);
     let lines = vec![
-        Line::styled(video.title.clone(), Style::new().bold()),
-        Line::styled(video.channel().to_string(), Style::new().fg(DIM)),
+        Line::from(neon::gradient(&video.title, ACCENT, CYAN, Style::new().bold())),
+        Line::styled(format!("▸▸ {}", video.channel().to_uppercase()), Style::new().fg(DIM)),
     ];
     f.render_widget(Paragraph::new(lines).alignment(Alignment::Center).wrap(Wrap { trim: true }), text);
 }
@@ -411,10 +416,10 @@ fn render_audio_stage(f: &mut Frame, app: &mut App, stage: Rect) {
 fn render_progress(f: &mut Frame, player: &Player, area: Rect) {
     let area = Rect { x: area.x + 1, width: area.width.saturating_sub(2), ..area };
     if player.stream.live {
-        let line = Line::from(vec![
-            Span::styled("● LIVE ", Style::new().fg(ACCENT).bold()),
-            Span::styled("━".repeat(area.width.saturating_sub(7) as usize), Style::new().fg(ACCENT)),
-        ]);
+        let mut spans = neon::tag(" LIVE ", ACCENT);
+        spans.push(Span::raw(" "));
+        spans.extend(neon::gradient(&"━".repeat(area.width.saturating_sub(9) as usize), ACCENT, CYAN, Style::new()));
+        let line = Line::from(spans);
         f.render_widget(line, area);
         return;
     }
@@ -422,25 +427,25 @@ fn render_progress(f: &mut Frame, player: &Player, area: Rect) {
     let w = area.width as usize;
     let frac = (player.position() / duration).clamp(0.0, 1.0);
     let filled = ((w.saturating_sub(1)) as f64 * frac).round() as usize;
-    let line = Line::from(vec![
-        Span::styled("━".repeat(filled), Style::new().fg(ACCENT)),
-        Span::styled("●", Style::new().fg(Color::White)),
-        Span::styled("─".repeat(w.saturating_sub(filled + 1)), Style::new().fg(FAINT)),
-    ]);
+    // Played: a magenta→cyan gradient; the head a yellow diamond; the rest faint.
+    let end = neon::mix(ACCENT, CYAN, frac);
+    let mut spans = neon::gradient(&"━".repeat(filled), ACCENT, end, Style::new());
+    spans.push(Span::styled("◆", Style::new().fg(YELLOW).bold()));
+    spans.push(Span::styled("─".repeat(w.saturating_sub(filled + 1)), Style::new().fg(FAINT)));
+    let line = Line::from(spans);
     f.render_widget(line, area);
 }
 
 fn render_controls(f: &mut Frame, app: &App, area: Rect) {
     let Some(player) = &app.player else { return };
-    let state = if player.paused() { "❚❚" } else { "▶" };
+    let state = if player.paused() { " ❚❚ " } else { " ▶ " };
     let time = match player.duration() {
         Some(d) if !player.stream.live => format!("{} / {}", format_duration(player.position()), format_duration(d)),
         _ => format_duration(player.position()),
     };
-    let mut left = vec![
-        Span::styled(format!(" {state} "), Style::new().fg(ACCENT).bold()),
-        Span::styled(time, Style::new().fg(Color::White)),
-    ];
+    let mut left = vec![Span::raw(" ")];
+    left.extend(neon::tag(state, if player.paused() { YELLOW } else { ACCENT }));
+    left.push(Span::styled(format!(" {time}"), Style::new().fg(CYAN).bold()));
     if let Some((vol, muted)) = player.volume() {
         let v = if muted { "muted".to_string() } else { format!("vol {:.0}%", vol) };
         left.push(Span::styled(format!("   {v}"), Style::new().fg(DIM)));
@@ -498,8 +503,8 @@ fn render_help(f: &mut Frame, in_player: bool) {
         .iter()
         .map(|(k, what)| {
             Line::from(vec![
-                Span::styled(format!("{k:>16}  "), Style::new().fg(Color::White).bold()),
-                Span::styled(what.to_string(), Style::new().fg(DIM)),
+                Span::styled(format!("{k:>16}  "), Style::new().fg(CYAN).bold()),
+                Span::styled(what.to_string(), Style::new().fg(TEXT)),
             ])
         })
         .collect();
@@ -508,11 +513,7 @@ fn render_help(f: &mut Frame, in_player: bool) {
     let area = f.area();
     let r = Rect { x: area.x + (area.width - w) / 2, y: area.y + area.height.saturating_sub(h) / 2, width: w, height: h.min(area.height) };
     f.render_widget(Clear, r);
-    let block = Block::new()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(ACCENT))
-        .title(" keys ")
+    let block = neon::panel("Keys", true)
         .title_bottom(Line::styled(" any key to close ", Style::new().fg(DIM)).right_aligned());
     f.render_widget(Paragraph::new(lines).block(block).style(Style::new().add_modifier(Modifier::empty())), r);
 }

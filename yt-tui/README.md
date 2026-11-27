@@ -29,6 +29,21 @@ cookies_from_browser = firefox   # or chrome, safari, brave…
 That also gets past YouTube's "confirm you're not a bot" checks. Without
 it, search still works.
 
+## Look
+
+yt-tui wears the **Neon** style, the same cyberpunk look as kshell and
+FlickLock, in true colour (`src/neon.rs`):
+- **Colours:** hot magenta and electric cyan with sunset yellow.
+- **Panels:** cut-corner borders, with `▸▸ READOUT` titles.
+- **Tags:** they lean forward (`◢ … ◤`). The logo, the tab you're on, LIVE and
+  the key hints are all tags.
+- **Highlights:** the selected video's title, the playing title and the
+  progress bar run magenta→cyan; the progress bar ends in a yellow `◆`.
+- **Empty and loading screens:** a small synthwave sun going down behind a
+  grid floor.
+
+The terminal's own background is left alone.
+
 ## Keys
 
 | Results | | Player | |
@@ -115,6 +130,7 @@ src/
   main.rs     terminal setup, options, the event loop
   app.rs      state, background jobs, key and mouse handling
   ui.rs       drawing: search, results, preview, player, help
+  neon.rs     the look: palette, gradients, slanted tags, cut-corner panels
   youtube.rs  yt-dlp: search, link lookup, stream selection
   player.rs   playback: clock, frame pacing, seeking, picture fitting
   video.rs    ffmpeg decoder thread with recycled frame buffers
