@@ -23,6 +23,9 @@ public enum Hud {
     static var ice: NSColor = NSColor(red: 0.9, green: 0.97, blue: 1, alpha: 1)
     static var alert: NSColor = NSColor(red: 1, green: 0.3, blue: 0.24, alpha: 1)
 
+    /// How much a panel's free corners are chamfered (see `PanelStyle.hud`).
+    static let panelChamfer: CGFloat = 12
+
     public static func isHud(_ theme: Theme) -> Bool {
         theme.effects == "hud" || theme.name?.lowercased() == "stark"
     }
@@ -606,6 +609,58 @@ private struct HudBootView: View {
                 withAnimation(.easeInOut(duration: 0.7)) { scan = 1 }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) { phase = 3 }
+        }
+    }
+}
+
+// MARK: - typing
+
+/// Text that types itself out behind a block cursor, the way a readout comes
+/// up on a terminal — once the panel it's in has resolved. The cursor blinks
+/// twice after the last character and goes. Space for the whole text is kept
+/// from the start, so nothing beside it shifts as it types.
+struct TypedText: View {
+    let text: String
+    let cursor: Color
+    var delay: Double = 0.3
+    var perCharacter: Double = 0.028
+
+    @State private var typed = Int.max
+    @State private var cursorOn = false
+
+    var body: some View {
+        let count = min(typed, text.count)
+        Text(text)
+            .opacity(0)
+            .overlay(alignment: .leading) {
+                HStack(spacing: 0) {
+                    Text(String(text.prefix(count)))
+                    Text("▌")
+                        .foregroundColor(cursor)
+                        .opacity(cursorOn ? 1 : 0)
+                }
+                .fixedSize()
+            }
+            .onAppear(perform: type)
+            .onChange(of: text) { _, _ in type() }
+    }
+
+    private func type() {
+        guard !Motion.reduced else {
+            typed = Int.max
+            return
+        }
+        typed = 0
+        cursorOn = true
+        for index in 0...text.count {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay + perCharacter * Double(index)) {
+                typed = index
+            }
+        }
+        // two blinks once it's all there, then the cursor goes
+        let end = delay + perCharacter * Double(text.count)
+        for (offset, on) in [(0.12, false), (0.24, true), (0.36, false), (0.48, true), (0.6, false)] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + end + offset) { cursorOn = on }
         }
     }
 }

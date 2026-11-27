@@ -155,7 +155,8 @@ public final class OverlayPanel: NSPanel {
         self.fallbackStyle = style
             ?? PanelStyle(radius: SheetShape.defaultRadius, filletRadius: 0, attachment: .none,
                           cut: Neon.active ? Neon.panelCut : 0,
-                          notch: Arcane.active ? Arcane.panelNotch : 0)
+                          notch: Arcane.active ? Arcane.panelNotch : 0,
+                          hud: Hud.active ? Hud.panelChamfer : 0)
 
         // A popup that doesn't take the keyboard must not activate the app when
         // clicked, or a stray notification would steal the front from a terminal.

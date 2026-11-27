@@ -58,4 +58,36 @@ final class PanelGeometryTests: XCTestCase {
         XCTAssertTrue(path.contains(CGPoint(x: 200, y: 299)))
         XCTAssertTrue(path.contains(CGPoint(x: 1, y: 1)), "attached corners stay square")
     }
+
+    /// Stark's readout: even chamfers on the free corners and a raised tab in
+    /// the middle of the far edge — the rest of that edge sits a little lower.
+    func testHudOutline() {
+        let rect = CGRect(x: 0, y: 0, width: 400, height: 300)
+        let style = PanelStyle(radius: 22, filletRadius: 0, attachment: .bottom, hud: 12)
+        let path = PanelGeometry.path(in: rect, style: style)
+        XCTAssertTrue(path.contains(CGPoint(x: 200, y: 299)), "the tab reaches the far edge")
+        XCTAssertFalse(path.contains(CGPoint(x: 60, y: 298)), "beside the tab the edge is lower")
+        XCTAssertFalse(path.contains(CGPoint(x: 2, y: 292)), "chamfered corner")
+        XCTAssertTrue(path.contains(CGPoint(x: 1, y: 1)), "attached corners stay square")
+
+        // turned for a panel on the right: the tab is on its left edge
+        let side = PanelStyle(radius: 22, filletRadius: 0, attachment: .trailing, hud: 12)
+        let turned = PanelGeometry.path(in: rect, style: side)
+        XCTAssertTrue(turned.contains(CGPoint(x: 1, y: 150)))
+        XCTAssertFalse(turned.contains(CGPoint(x: 1, y: 40)))
+    }
+
+    /// Interlaced, the outline is bands: solid at 1, gone at 0, striped between.
+    func testInterlace() {
+        let rect = CGRect(x: 0, y: 0, width: 200, height: 100)
+        var style = PanelStyle(radius: 0, filletRadius: 0, attachment: .none)
+        style.interlace = 0.4
+        let striped = PanelGeometry.path(in: rect, style: style)
+        XCTAssertTrue(striped.contains(CGPoint(x: 100, y: 0.5)), "a band")
+        XCTAssertFalse(striped.contains(CGPoint(x: 100, y: 3.5)), "a gap")
+        style.interlace = 0
+        XCTAssertTrue(PanelGeometry.path(in: rect, style: style).isEmpty)
+        style.interlace = 1
+        XCTAssertTrue(PanelGeometry.path(in: rect, style: style).contains(CGPoint(x: 100, y: 3.5)))
+    }
 }

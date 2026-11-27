@@ -346,7 +346,8 @@ public final class MediaIslandPanel: NSPanel {
     private var outline: PanelStyle {
         PanelStyle(radius: radius, filletRadius: 0, attachment: .none,
                    cut: Neon.active ? Neon.panelCut * 0.7 : 0,
-                   notch: Arcane.active ? Arcane.panelNotch * 0.8 : 0)
+                   notch: Arcane.active ? Arcane.panelNotch * 0.8 : 0,
+                   hud: Hud.active ? Hud.panelChamfer : 0)
     }
 
     /// Put the island where its theme's timeline has it. Revealed (not

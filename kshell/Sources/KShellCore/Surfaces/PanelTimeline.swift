@@ -51,6 +51,7 @@ enum PanelTimelines {
         guard !Motion.reduced else { return nil }
         if Neon.active { return NeonPanelMotion.slack }
         if Arcane.active { return ArcanePanelMotion.slack }
+        if Hud.active { return StarkPanelMotion.slack }
         return nil
     }
 
@@ -59,6 +60,7 @@ enum PanelTimelines {
         guard !Motion.reduced else { return nil }
         if Neon.active { return NeonPanelMotion(screen: screen) }
         if Arcane.active { return ArcanePanelMotion(screen: screen) }
+        if Hud.active { return StarkPanelMotion(screen: screen) }
         return nil
     }
 }

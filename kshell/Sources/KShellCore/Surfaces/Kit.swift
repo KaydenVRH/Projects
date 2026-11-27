@@ -172,7 +172,7 @@ struct KitHeader<Trailing: View>: View {
             .opacity(arrived ? 1 : 0)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(title.uppercased())
+                TypedText(text: title.uppercased(), cursor: palette.accent)
                     .font(.system(size: 15, weight: .semibold, design: .monospaced))
                     .tracking(2.5)
                     .foregroundColor(palette.foreground)

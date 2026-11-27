@@ -52,7 +52,8 @@ public final class BarViewModel: ObservableObject {
             filletRadius: panelSurface.filletRadius,
             attachment: edge.attachment,
             cut: Neon.isNeon(theme) ? Neon.panelCut : 0,
-            notch: Arcane.isArcane(theme) ? Arcane.panelNotch : 0
+            notch: Arcane.isArcane(theme) ? Arcane.panelNotch : 0,
+            hud: Hud.isHud(theme) ? Hud.panelChamfer : 0
         )
     }
 

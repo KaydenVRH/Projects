@@ -220,8 +220,24 @@ especially). `Surfaces/Motion.swift` is the one place they are tuned:
   - **Switching to it** plays a boot sequence across every display: the screen
     dims, rings blossom out of a hex core, a status log types itself out, and
     a scan line sweeps down. `kshell trigger hud_boot` replays it.
-  - **Menus** power on with a hologram flicker and draw their corner brackets
-    in. They carry scanlines, a slow falling scan band and a glowing outline.
+  - **Panels have their own shape and motion.** Each is a HUD readout: the
+    free corners chamfered evenly, a raised tab in the middle of the edge
+    furthest from the frame, straight flanges where it meets the frame
+    (`PanelStyle.hud`).
+  - **Opening is a projection** (`StarkPanelMotion`): four corner brackets
+    slam in from outside and lock onto where the panel will be, a wireframe of
+    its outline traces itself round, and the panel resolves inside it as a
+    hologram — interlaced scanlines thickening into a solid surface
+    (`PanelStyle.interlace`, which glass and content share) while a scan beam
+    sweeps it from the far edge and the content flickers on. "◢ LINK
+    ESTABLISHED" flashes beside it. The panel never moves or grows: a
+    projection appears where it's aimed. Header titles type themselves out
+    behind a block cursor.
+  - **Closing derezzes it:** the picture thins back into scanlines,
+    flickering, and is gone; the wireframe holds the shape a moment longer and
+    erases itself; the brackets let go.
+  - **Open menus** carry scanlines, a slow falling scan band and a glowing
+    outline.
   - **Inside menus**, rows are hard-edged cells with cut corners, and the
     selection is a targeting reticle that glides between them. Headers put
     their icon in a hexagon inside a turning ring, with titles in spaced
@@ -277,7 +293,7 @@ especially). `Surfaces/Motion.swift` is the one place they are tuned:
     a spectrum aura, and the play button is an orb of light.
   - **The wallpaper** is lwp's `arcane` shader: a summoning circle in
     perspective, a pillar of light, orbiting orbs and spiralling sparks.
-- Both Arcane's and Neon's motion are `PanelTimeline`s
+- Stark's, Arcane's and Neon's motion are all `PanelTimeline`s
   (`Surfaces/PanelTimeline.swift`): each frame the timeline says where the
   panel is, its outline and how its content is drawn, and places the light it
   throws; `OverlayPanel` and `MediaIsland` just apply that, glass included.

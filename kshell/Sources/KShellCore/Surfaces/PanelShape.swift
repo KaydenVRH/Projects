@@ -41,19 +41,31 @@ public struct PanelStyle: Equatable, Sendable {
     /// radius, like an ornate charm — instead of rounding them. The corners
     /// that meet the frame keep their curved fillets. 0 is the usual panel.
     public var notch: CGFloat
+    /// Stark: a HUD readout — the free corners chamfered by this much, evenly,
+    /// and a raised tab in the middle of the edge furthest from the frame;
+    /// straight flanges where it meets the frame. 0 is the usual panel.
+    public var hud: CGFloat
+    /// How much of the panel is there, 0…1, as interlaced scanlines: below 1
+    /// the outline is cut into horizontal bands that thin toward nothing — a
+    /// hologram resolving or derezzing. 1 is solid.
+    public var interlace: CGFloat
 
     public init(
         radius: CGFloat = SheetShape.defaultRadius,
         filletRadius: CGFloat = 22,
         attachment: PanelAttachment = .none,
         cut: CGFloat = 0,
-        notch: CGFloat = 0
+        notch: CGFloat = 0,
+        hud: CGFloat = 0,
+        interlace: CGFloat = 1
     ) {
         self.radius = radius
         self.filletRadius = filletRadius
         self.attachment = attachment
         self.cut = cut
         self.notch = notch
+        self.hud = hud
+        self.interlace = interlace
     }
 
     /// The big cut's corner: the one a reader's eye lands on first. The other
@@ -96,6 +108,26 @@ public struct PanelStyle: Equatable, Sendable {
 /// the panel's material flows into the frame instead of stopping at a corner.
 public enum PanelGeometry {
     public static func path(in rect: CGRect, style: PanelStyle) -> CGPath {
+        guard style.interlace < 1 else { return solidPath(in: rect, style: style) }
+        // A hologram resolving: the outline, kept only where the scanlines are.
+        guard style.interlace > 0.002, rect.width > 0, rect.height > 0 else { return CGMutablePath() }
+        var solid = style
+        solid.interlace = 1
+        let outline = solidPath(in: rect, style: solid)
+        let pitch: CGFloat = 5
+        let band = pitch * min(1, style.interlace)
+        let bands = CGMutablePath()
+        let bounds = outline.boundingBox
+        var y = bounds.minY
+        while y < bounds.maxY {
+            bands.addRect(CGRect(x: bounds.minX, y: y, width: bounds.width, height: band))
+            y += pitch
+        }
+        return outline.intersection(bands)
+    }
+
+    private static func solidPath(in rect: CGRect, style: PanelStyle) -> CGPath {
+        if style.hud > 0 { return hudPath(in: rect, style: style) }
         if style.cut > 0 { return cutPath(in: rect, style: style) }
         if style.notch > 0 { return notchPath(in: rect, style: style) }
         let radius = max(0, min(style.radius, min(rect.width, rect.height) / 2))
@@ -215,10 +247,65 @@ public enum PanelGeometry {
         path.addLine(to: CGPoint(x: rect.minX + bl, y: rect.minY))
         path.closeSubpath()
 
-        let flange = max(0, min(style.filletRadius, limit))
-        guard flange > 0 else { return path }
+        addFlanges(to: path, in: rect, style: style)
+        return path
+    }
+
+    /// The Stark outline, drawn as if the panel sat on the bottom edge — the
+    /// far edge on top, its middle third raised as a tab — then turned to the
+    /// side it really sits on.
+    private static func hudPath(in rect: CGRect, style: PanelStyle) -> CGPath {
+        let vertical = style.attachment == .leading || style.attachment == .trailing
+        let w = vertical ? rect.height : rect.width     // along the frame
+        let h = vertical ? rect.width : rect.height     // out from it
+        let c = max(0, min(style.hud, min(w, h) / 3))
+        // the tab stands this proud of the rest of the far edge
+        let rise = min(5, h / 6)
+        let tabL = w * 0.34, tabR = w * 0.66
+        let floating = style.attachment == .none
+        var points: [CGPoint] = []
+        if floating {
+            points += [CGPoint(x: c, y: 0), CGPoint(x: 0, y: c)]
+        } else {
+            points.append(CGPoint(x: 0, y: 0))
+        }
+        points += [
+            CGPoint(x: 0, y: h - rise - c),
+            CGPoint(x: c, y: h - rise),
+            CGPoint(x: tabL - rise, y: h - rise),
+            CGPoint(x: tabL, y: h),
+            CGPoint(x: tabR, y: h),
+            CGPoint(x: tabR + rise, y: h - rise),
+            CGPoint(x: w - c, y: h - rise),
+            CGPoint(x: w, y: h - rise - c),
+        ]
+        if floating {
+            points += [CGPoint(x: w, y: c), CGPoint(x: w - c, y: 0)]
+        } else {
+            points.append(CGPoint(x: w, y: 0))
+        }
+        // (x along the frame, y away from it) → the real rectangle
+        func place(_ p: CGPoint) -> CGPoint {
+            switch style.attachment {
+            case .none, .bottom: return CGPoint(x: rect.minX + p.x, y: rect.minY + p.y)
+            case .top: return CGPoint(x: rect.minX + p.x, y: rect.maxY - p.y)
+            case .leading: return CGPoint(x: rect.minX + p.y, y: rect.minY + p.x)
+            case .trailing: return CGPoint(x: rect.maxX - p.y, y: rect.minY + p.x)
+            }
+        }
+        let path = CGMutablePath()
+        path.addLines(between: points.map(place))
+        path.closeSubpath()
+        addFlanges(to: path, in: rect, style: style)
+        return path
+    }
+
+    /// Straight 45° flanges where the panel meets the frame: the fillets'
+    /// wedges with their arcs pulled straight.
+    private static func addFlanges(to path: CGMutablePath, in rect: CGRect, style: PanelStyle) {
+        let flange = max(0, min(style.filletRadius, min(rect.width, rect.height) / 2))
+        guard flange > 0 else { return }
         for corner in corners(of: style.filletCorners) {
-            // the fillet's wedge with its arc pulled straight
             let wedge = filletPath(corner, in: rect, radius: flange, attachment: style.attachment)
             var points: [CGPoint] = []
             wedge.applyWithBlock { element in
@@ -237,7 +324,6 @@ public enum PanelGeometry {
             path.addLine(to: along)
             path.closeSubpath()
         }
-        return path
     }
 
     private static func corners(of set: SheetShape.Corners) -> [Corner] {
