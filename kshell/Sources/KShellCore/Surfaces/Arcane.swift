@@ -191,8 +191,9 @@ final class ArcaneChromeView: NSView, ThemeChrome {
             Arcane.rose.withAlphaComponent(0.07).cgColor,
             NSColor.white.withAlphaComponent(0).cgColor,
         ]
-        shimmer.startPoint = CGPoint(x: 0, y: 0)
-        shimmer.endPoint = CGPoint(x: 1, y: 1)
+        shimmer.startPoint = CGPoint(x: 0, y: 0.3)
+        shimmer.endPoint = CGPoint(x: 1, y: 0.7)
+        shimmer.locations = [-0.4, -0.2, 0.0]
         layer?.addSublayer(shimmer)
 
         motes.emitterShape = .line
@@ -237,7 +238,7 @@ final class ArcaneChromeView: NSView, ThemeChrome {
         burst.frame = bounds
         burst.emitterPosition = CGPoint(x: size.width / 2, y: size.height / 2)
         burst.emitterSize = size
-        shimmer.frame = CGRect(x: 0, y: 0, width: size.width * 0.6, height: size.height)
+        shimmer.frame = bounds
         CATransaction.commit()
     }
 
@@ -246,9 +247,13 @@ final class ArcaneChromeView: NSView, ThemeChrome {
 
         outline.add(breathing(from: 0.45, period: 2.2), forKey: "breathe")
 
-        let glide = CABasicAnimation(keyPath: "position.x")
-        glide.fromValue = -bounds.width * 0.3
-        glide.toValue = bounds.width * 1.3
+        // The band travels in the gradient's own 0…1 space, so it crosses the
+        // whole menu whatever size the menu is — measuring it in points here
+        // took the size of the pill the menu opens from, and the band stopped
+        // part-way across and snapped back.
+        let glide = CABasicAnimation(keyPath: "locations")
+        glide.fromValue = [-0.4, -0.2, 0.0]
+        glide.toValue = [1.0, 1.2, 1.4]
         glide.duration = 3.2
         glide.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         let group = CAAnimationGroup()
