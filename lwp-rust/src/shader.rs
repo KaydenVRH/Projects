@@ -162,108 +162,278 @@ fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]])
     (
         "stark",
         r#"
-// Stark — a hologram, not a machine. Thin glowing wireframe rings with a
-// chromatic edge, a tick ring, a radar sweep, crosshairs, corner brackets and
-// data bars, all projected on a dim grid and washed with scanlines.
+// Stark — a workshop hologram. A projected light-grid floor runs to a glowing
+// horizon; above it a gyroscope of tilted rings turns around segmented,
+// counter-rotating bands and a hexagonal core, with satellites riding the
+// rings. Two data panels hang either side (bar columns, scrolling readouts, a
+// live waveform, a gauge), motes of light drift up through the projection, and
+// every so often the signal tears and fringes like a real projector would.
 static float hash21(float2 p) {
-    return fract(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
+    p = fract(p * float2(234.34, 435.345));
+    p += dot(p, p + 34.23);
+    return fract(p.x * p.y);
+}
+static float vnoise(float2 p) {
+    float2 i = floor(p);
+    float2 f = fract(p);
+    float2 w = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash21(i), hash21(i + float2(1, 0)), w.x),
+               mix(hash21(i + float2(0, 1)), hash21(i + float2(1, 1)), w.x), w.y);
+}
+static float2 rot(float2 p, float a) {
+    float c = cos(a), s = sin(a);
+    return float2(c * p.x - s * p.y, s * p.x + c * p.y);
+}
+static float hair(float d, float w) { return 1.0 - smoothstep(0.0, w, d); }
+static float sdBox(float2 p, float2 b) {
+    float2 d = abs(p) - b;
+    return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
+}
+static float sdChamfer(float2 p, float2 b, float c) {
+    return max(sdBox(p, b), (abs(p.x) + abs(p.y) - (b.x + b.y - c)) * 0.7071);
+}
+static float sdHex(float2 p, float r) {
+    const float3 k = float3(-0.866025404, 0.5, 0.577350269);
+    p = abs(p);
+    p -= 2.0 * min(dot(k.xy, p), 0.0) * k.xy;
+    p -= float2(clamp(p.x, -k.z * r, k.z * r), r);
+    return length(p) * sign(p.y);
+}
+
+// A panel frame: chamfered outline, a header rule, and brackets on two corners.
+static float panelFrame(float2 q, float2 b, float px) {
+    float f = hair(abs(sdChamfer(q, b, 0.05)), px * 1.4) * 0.55;
+    f += hair(abs(q.y - (b.y - 0.07)), px) * step(abs(q.x), b.x - 0.03) * 0.35;
+    float2 cq = abs(q) - b - 0.025;
+    float br = hair(abs(cq.y), px * 1.6) * step(abs(cq.x + 0.04), 0.04)
+             + hair(abs(cq.x), px * 1.6) * step(abs(cq.y + 0.04), 0.04);
+    return f + br * 0.9;
 }
 
 fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]]) {
     float2 res = u.resolution;
-    float2 uv  = in.uv;
-    float2 p   = (uv - 0.5) * float2(res.x / max(res.y, 1.0), 1.0) * 2.0;
-    float t    = u.time;
+    float aspect = res.x / max(res.y, 1.0);
+    float t = u.time;
+    float2 uv = in.uv;
+    float px = 2.0 / max(res.y, 1.0);
 
-    float r = length(p);
-    float a = atan2(p.y, p.x);
+    // ---- signal tears: a few rows slip sideways for a moment, every ~10 s
+    float slot = floor(t * 1.4);
+    float tearing = step(0.94, hash21(float2(slot, 7.1)));
+    float bandY = hash21(float2(slot, 3.3));
+    float inBand = step(abs(uv.y - bandY), 0.03 + 0.05 * hash21(float2(slot, 9.2)));
+    float tear = tearing * inBand;
+    uv.x += tear * (hash21(float2(slot, floor(uv.y * 60.0))) - 0.5) * 0.06;
 
-    float3 cyan = float3(0.22, 0.82, 1.00);
-    float3 ice  = float3(0.88, 0.97, 1.00);
+    float2 p = (uv - 0.5) * float2(aspect, 1.0) * 2.0;
 
-    float3 col = float3(0.004, 0.009, 0.015);
+    float3 cyan  = float3(0.24, 0.84, 1.00);
+    float3 ice   = float3(0.86, 0.97, 1.00);
+    float3 amber = float3(1.00, 0.34, 0.22);
 
-    // projection flicker: two detuned sines, so it never repeats visibly
-    float flick = 0.93 + 0.07 * sin(t * 6.7) * sin(t * 2.3);
+    // ---- the room: deep blue-black, a slow haze lit by the projection
+    float3 col = mix(float3(0.004, 0.008, 0.016), float3(0.010, 0.026, 0.046), smoothstep(-1.0, 0.8, p.y));
+    float haze = vnoise(p * 1.3 + float2(t * 0.025, t * 0.01)) * 0.6 + vnoise(p * 3.1 - t * 0.04) * 0.4;
+    col += cyan * 0.030 * haze * exp(-length(p - float2(0.0, 0.1)) * 0.9);
 
-    // ---- projection grid
-    float2 gf = abs(fract(p * 4.0) - 0.5);
-    float grid = smoothstep(0.480, 0.500, max(gf.x, gf.y));
-    col += float3(0.030, 0.100, 0.140) * grid * (1.0 - smoothstep(0.2, 1.9, r)) * 1.25;
-
-    // ---- wireframe rings; each channel samples a slightly different radius,
-    // which is what gives a projector its colour fringe
-    for (int i = 0; i < 4; i++) {
-        float fi = float(i);
-        float R  = 0.20 + fi * 0.135;
-        float w  = 0.0034 + fi * 0.0010;
-        float lr = 1.0 - smoothstep(0.0, w, abs(r * 1.0025 - R));
-        float lg = 1.0 - smoothstep(0.0, w, abs(r         - R));
-        float lb = 1.0 - smoothstep(0.0, w, abs(r * 0.9975 - R));
-        col += float3(lr, lg, lb) * cyan * 0.95;
-        col += cyan * exp(-abs(r - R) * 34.0) * 0.55;
+    // ---- the light-grid floor, rolling toward you
+    float horizon = -0.30;
+    float below = horizon - p.y;
+    if (below > 0.0) {
+        float z = 0.32 / below;
+        float2 g = float2(p.x * z * 1.2, z + t * 0.45);
+        float2 fw = fwidth(g) * 1.4;
+        float2 f = abs(fract(g) - 0.5);
+        float lines = max(hair(0.5 - f.x, fw.x), hair(0.5 - f.y, fw.y));
+        float fade = exp(-z * 0.22) * smoothstep(0.0, 0.04, below);
+        col += cyan * lines * fade * 0.42;
+        // the projection's footprint on the floor
+        col += cyan * 0.06 * exp(-length(float2(p.x * 0.8, (p.y - horizon) * 3.0)) * 2.0);
     }
+    col += cyan * exp(-abs(p.y - horizon) * 70.0) * 0.22 * exp(-abs(p.x) * 0.6);
 
-    // ambient bloom: the projection lights the air around itself
-    col += cyan * exp(-r * 2.2) * 0.055;
+    // ---- the projection
+    float sc = 0.80;
+    float2 c = float2(0.0, 0.14);
+    float2 q = p - c;
+    float r = length(q);
+    float a = atan2(q.y, q.x);
+    float boot = smoothstep(0.0, 2.5, t);   // rings draw in when it starts
 
-    // ---- tick ring
-    float segA = 6.2831853 / 64.0;
-    float ta   = floor(a / segA + 0.5) * segA;
-    float arc  = abs(a - ta) * max(r, 1e-4);
-    float tick = 1.0 - smoothstep(0.0, 0.0085, arc);
-    float band = smoothstep(0.470, 0.490, r) * (1.0 - smoothstep(0.520, 0.540, r));
-    col += cyan * tick * band * 0.55;
-
-    float segB = 6.2831853 / 12.0;
-    float tb   = floor(a / segB + 0.5) * segB;
-    float arcB = abs(a - tb) * max(r, 1e-4);
-    float tickB = 1.0 - smoothstep(0.0, 0.011, arcB);
-    float bandB = smoothstep(0.600, 0.620, r) * (1.0 - smoothstep(0.660, 0.680, r));
-    col += cyan * tickB * bandB * 0.40;
-
-    // ---- radar sweep
-    float sw = fract(t * 0.09) * 6.2831853 - 3.14159;
-    float da = abs(atan2(sin(a - sw), cos(a - sw)));
-    col += cyan * exp(-da * 5.0) * smoothstep(0.62, 0.10, r) * 0.16;
-
-    // ---- crosshair
-    col += cyan * exp(-abs(p.y) * 240.0) * smoothstep(0.95, 0.25, r) * 0.40;
-    col += cyan * exp(-abs(p.x) * 240.0) * smoothstep(0.95, 0.25, r) * 0.40;
-
-    // ---- core
-    col += ice  * exp(-r * 26.0) * 1.15;
-    col += cyan * exp(-r * 6.0)  * 0.22;
-
-    // ---- data bars, right side
+    // segmented bands, alternating direction
     for (int i = 0; i < 5; i++) {
         float fi = float(i);
-        float y  = -0.50 + fi * 0.075;
-        float x1 = 0.60 + 0.22 * (0.35 + 0.65 * hash21(float2(fi, floor(t * 0.4))));
-        float bar = smoothstep(0.600, 0.605, p.x) * (1.0 - smoothstep(x1, x1 + 0.005, p.x))
-                  * smoothstep(y, y + 0.006, p.y) * (1.0 - smoothstep(y + 0.018, y + 0.024, p.y));
-        col += cyan * bar * 0.30;
+        float R = sc * (0.20 + fi * 0.085);
+        float N = (i % 2 == 0) ? (36.0 + fi * 12.0) : (6.0 + fi * 3.0);
+        float speed = ((i % 2 == 0) ? 1.0 : -1.0) * (0.04 + 0.02 * fi);
+        float duty = (i % 2 == 0) ? 0.55 : 0.72;
+        float seg = step(fract(a / 6.2831853 * N + t * speed), duty);
+        seg *= step(fract(a / 6.2831853 + 0.5), boot);
+        float d = abs(r - R);
+        col += cyan * seg * (hair(d, px * (1.4 + fi * 0.25)) * 0.85 + exp(-d * 70.0) * 0.20);
+        // the gaps keep a faint trace of the band, so they read as dashes on a
+        // track rather than holes
+        col += cyan * (hair(d, px * 1.2) * 0.10 + exp(-d * 70.0) * 0.06);
     }
 
-    // ---- corner brackets
-    float2 cq  = abs(p) - float2(1.05, 0.72);
-    float  adx = abs(cq.x);
-    float  ady = abs(cq.y);
-    float  armH = (1.0 - smoothstep(0.0, 0.006, ady)) * (1.0 - smoothstep(0.18, 0.19, adx));
-    float  armV = (1.0 - smoothstep(0.0, 0.006, adx)) * (1.0 - smoothstep(0.10, 0.11, ady));
-    col += cyan * (armH + armV) * 0.45;
+    // the main ring, with a projector's colour fringe
+    {
+        float R = sc * 0.66;
+        float w = px * 2.2;
+        float3 ring = float3(hair(abs(r * 1.004 - R), w), hair(abs(r - R), w), hair(abs(r * 0.996 - R), w));
+        col += ring * cyan * 1.1 + cyan * exp(-abs(r - R) * 28.0) * 0.30;
+        // an amber arc that blinks, like something needs attention
+        float sweep = fract(t * 0.03);
+        float da = abs(fract(a / 6.2831853 - sweep + 0.5) - 0.5);
+        float blink = 0.55 + 0.45 * step(0.5, fract(t * 1.6));
+        col += amber * hair(abs(r - R * 1.035), px * 2.5) * step(da, 0.035) * blink;
+    }
 
-    // ---- a scan band travelling down the projection
-    float scan = exp(-pow((uv.y - fract(t * 0.05)) * 26.0, 2.0));
-    col += cyan * scan * 0.05 * (1.0 - smoothstep(0.9, 1.6, r));
+    // tick ring: fine ticks, every sixth one longer
+    {
+        float N = 120.0;
+        float ta = fract(a / 6.2831853 * N - t * 0.01);
+        float arc = abs(ta - 0.5) / N * 6.2831853 * r;
+        float major = step(fract((floor(a / 6.2831853 * N - t * 0.01)) / 6.0), 0.01);
+        float R0 = sc * 0.74;
+        float len = major > 0.5 ? 0.045 : 0.022;
+        float inRing = step(R0, r) * step(r, R0 + len * sc);
+        col += cyan * hair(abs(arc - 0.5 / N * 6.2831853 * r), px * 1.2) * inRing * (major > 0.5 ? 0.8 : 0.45);
+    }
 
-    // ---- scanlines, grain, vignette
-    col *= 0.90 + 0.10 * sin(uv.y * res.y * 1.2);
-    col += (hash21(uv * res + t) - 0.5) * 0.010;
-    col *= 1.0 - smoothstep(0.85, 1.90, r);
-    col *= flick;
+    // the gyroscope: tilted rings turning about the core, satellites riding them
+    for (int k = 0; k < 3; k++) {
+        float fk = float(k);
+        float phi = t * (0.07 + 0.03 * fk) * ((k == 1) ? -1.0 : 1.0) + fk * 2.1;
+        float R = sc * (0.90 + 0.07 * fk);
+        float B = R * (0.22 + 0.16 * fk + 0.06 * sin(t * 0.2 + fk));
+        float2 e = rot(q, -phi);
+        float d = abs((length(e / float2(R, B)) - 1.0) * min(R, B));
+        float front = 0.45 + 0.55 * smoothstep(B * 0.3, -B * 0.3, e.y);
+        col += cyan * front * (hair(d, px * 1.5) * 0.75 + exp(-d * 90.0) * 0.20);
+        float sa = t * (0.45 + 0.15 * fk) + fk * 1.7;
+        float2 sp = rot(float2(R * cos(sa), B * sin(sa)), phi);
+        float sd = length(q - sp);
+        col += ice * exp(-sd * 140.0) * 1.3 + cyan * exp(-sd * 22.0) * 0.25;
+    }
 
-    return float4(col, 1.0);
+    // radar sweep inside the bands
+    {
+        float sw = t * 0.5;
+        float da = fract((a - sw) / 6.2831853);
+        col += cyan * pow(1.0 - da, 6.0) * smoothstep(sc * 0.62, sc * 0.16, r) * 0.12;
+    }
+
+    // the core: two hexagons turning against each other, and a heart that breathes
+    {
+        float h1 = sdHex(rot(q, t * 0.15), sc * 0.12);
+        float h2 = sdHex(rot(q, -t * 0.32 + 0.52), sc * 0.072);
+        col += cyan * (hair(abs(h1), px * 1.8) * 0.95 + exp(-abs(h1) * 45.0) * 0.3);
+        col += cyan * hair(abs(h2), px * 1.4) * 0.7;
+        float pulse = 0.78 + 0.22 * sin(t * 2.1);
+        col += ice * exp(-r * 30.0 / sc) * 1.25 * pulse;
+        col += cyan * exp(-r * 6.5 / sc) * 0.28 * pulse;
+    }
+
+    // crosshair through the projection
+    float cross = exp(-abs(q.y) * 260.0) + exp(-abs(q.x) * 260.0);
+    col += cyan * cross * smoothstep(sc * 1.05, sc * 0.30, r) * smoothstep(sc * 0.13, sc * 0.2, r) * 0.30;
+
+    // ---- the left panel: bar columns and a scrolling readout
+    {
+        float2 L = float2(-aspect + 0.58, 0.16);
+        float2 b = float2(0.36, 0.46);
+        float2 lq = p - L;
+        if (sdBox(lq, b + 0.06) < 0.0) {
+            col += cyan * panelFrame(lq, b, px);
+            col += cyan * 0.025 * step(sdChamfer(lq, b, 0.05), 0.0);
+            // columns
+            float cols = 14.0;
+            float x = (lq.x + b.x - 0.04) / (2.0 * b.x - 0.08) * cols;
+            float ci = floor(x);
+            if (ci >= 0.0 && ci < cols && fract(x) < 0.62) {
+                float hgt = 0.35 + 0.65 * (0.5 + 0.5 * sin(t * (0.6 + hash21(float2(ci, 1.0))) + ci * 1.3));
+                float top = -b.y + 0.05 + hgt * 0.38;
+                float on = step(-b.y + 0.05, lq.y) * step(lq.y, top);
+                col += cyan * on * mix(0.18, 0.55, smoothstep(-b.y, top, lq.y));
+                col += ice * hair(abs(lq.y - top), px * 1.2) * step(-b.y + 0.05, lq.y) * 0.5;
+            }
+            // readout rows: dashes standing in for text, scrolling up
+            float rowH = 0.034;
+            float y = (lq.y - 0.02) / rowH + t * 0.6;
+            float ri = floor(y);
+            if (lq.y > 0.0 && lq.y < b.y - 0.1 && fract(y) > 0.3 && fract(y) < 0.7) {
+                float words = lq.x + b.x - 0.04;
+                float wi = floor(words / 0.07);
+                float lenR = hash21(float2(ri, 5.0)) * 0.6 + 0.3;
+                float on = step(fract(words / 0.07), 0.8) * step(words, lenR * (2.0 * b.x - 0.08)) * step(0.0, words);
+                float hot = step(0.86, hash21(float2(ri, wi)));
+                col += mix(cyan, amber, hot) * on * 0.38;
+            }
+        }
+    }
+
+    // ---- the right panel: a live waveform and a gauge
+    {
+        float2 Rc = float2(aspect - 0.58, 0.16);
+        float2 b = float2(0.36, 0.46);
+        float2 rq = p - Rc;
+        if (sdBox(rq, b + 0.06) < 0.0) {
+            col += cyan * panelFrame(rq, b, px);
+            col += cyan * 0.025 * step(sdChamfer(rq, b, 0.05), 0.0);
+            // waveform in the top half, over a fine grid
+            float2 wq = rq - float2(0.0, 0.17);
+            if (abs(wq.x) < b.x - 0.04 && abs(wq.y) < 0.14) {
+                float2 gq = abs(fract(wq * 20.0) - 0.5);
+                col += cyan * 0.07 * max(hair(0.5 - gq.x, 0.04), hair(0.5 - gq.y, 0.04));
+                float x = wq.x;
+                float f = 0.07 * sin(x * 14.0 + t * 2.4) * sin(x * 3.3 - t * 0.7)
+                        + 0.025 * sin(x * 41.0 - t * 5.0);
+                float d = abs(wq.y - f);
+                col += cyan * (hair(d, px * 1.8) * 0.9 + exp(-d * 60.0) * 0.25);
+            }
+            // gauge in the bottom half
+            float2 gq = rq - float2(0.0, -0.20);
+            float gr = length(gq);
+            float ga = atan2(gq.y, gq.x);
+            float fill = 0.55 + 0.35 * sin(t * 0.35);
+            float span = fract((ga + 3.14159 * 1.25) / 6.2831853);
+            float inArc = step(span, 0.75);
+            col += cyan * hair(abs(gr - 0.17), px * 1.2) * inArc * 0.4;
+            col += mix(cyan, amber, smoothstep(0.82, 0.9, fill))
+                 * hair(abs(gr - 0.17), px * 5.0) * step(span, 0.75 * fill) * 0.9;
+            col += ice * exp(-gr * 40.0) * 0.4;
+        }
+    }
+
+    // ---- motes of light drifting up through the projection
+    {
+        float2 mp = p * 6.0 + float2(0.0, -t * 0.35);
+        float2 id = floor(mp);
+        float2 fq = fract(mp) - 0.5;
+        float h = hash21(id);
+        if (h > 0.78) {
+            float2 off = float2(hash21(id + 3.1), hash21(id + 7.7)) - 0.5;
+            float d = length(fq - off * 0.7);
+            float tw = 0.5 + 0.5 * sin(t * (1.0 + h * 3.0) + h * 40.0);
+            col += cyan * exp(-d * 30.0) * 0.35 * tw * exp(-length(p - c) * 0.7);
+        }
+    }
+
+    // ---- the projector: a scan band, scanlines, flicker, fringe on tears
+    float scan = exp(-pow((uv.y - fract(-t * 0.06)) * 22.0, 2.0));
+    col += cyan * scan * 0.045;
+    col *= 0.90 + 0.10 * sin(uv.y * res.y * 1.4);
+    col *= 0.95 + 0.05 * sin(t * 7.3) * sin(t * 2.9);
+    if (tear > 0.5) {
+        col = float3(col.r * 1.6 + 0.02, col.g * 0.85, col.b * 1.25);
+        col += cyan * 0.06;
+    }
+    col += (hash21(uv * res + fract(t)) - 0.5) * 0.012;
+    float2 vq = (in.uv - 0.5) * 2.0;
+    col *= 1.0 - 0.45 * dot(vq, vq) * 0.5;
+
+    return float4(max(col, 0.0), 1.0);
 }
 "#,
     ),
@@ -359,7 +529,7 @@ unsafe fn encode_frame(
 /// Render exactly one frame offscreen and report what came back, so a shader
 /// can be verified without looking at the screen.
 pub fn check(source: &str, width: u32, height: u32) -> Result<String, String> {
-    let (msg, _buf) = check_with_pixels(source, width, height)?;
+    let (msg, _buf) = check_with_pixels(source, width, height, 1.0)?;
     Ok(msg)
 }
 
@@ -368,6 +538,7 @@ pub fn check_with_pixels(
     source: &str,
     width: u32,
     height: u32,
+    time: f32,
 ) -> Result<(String, Vec<u8>), String> {
     let gpu = build_gpu(source)?;
     unsafe {
@@ -386,7 +557,7 @@ pub fn check_with_pixels(
 
         let uniforms = Uniforms {
             resolution: [width as f32, height as f32],
-            time: 1.0,
+            time,
             frame: 1.0,
             mouse: [0.0, 0.0],
         };
@@ -627,4 +798,30 @@ extern "C" fn sigterm_handler(_: i32) {
 fn _assert_send_sync() {
     fn assert_send<T: Send>() {}
     assert_send::<Gpu>();
+}
+
+/// Write BGRA pixels (top row first) as a 32-bit BMP — enough for `sips` to turn
+/// into a PNG, with no image crate.
+pub fn write_bmp(path: &std::path::Path, pixels: &[u8], width: u32, height: u32) -> std::io::Result<()> {
+    let row = width as usize * 4;
+    let size = 54 + row * height as usize;
+    let mut out = Vec::with_capacity(size);
+    out.extend_from_slice(b"BM");
+    out.extend_from_slice(&(size as u32).to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&54u32.to_le_bytes());
+    out.extend_from_slice(&40u32.to_le_bytes());
+    out.extend_from_slice(&(width as i32).to_le_bytes());
+    // negative height: rows are stored top-down
+    out.extend_from_slice(&(-(height as i32)).to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&32u16.to_le_bytes());
+    out.extend_from_slice(&[0u8; 24]);
+    for y in 0..height as usize {
+        let src = &pixels[y * row..(y + 1) * row];
+        for px in src.chunks_exact(4) {
+            out.extend_from_slice(&[px[0], px[1], px[2], 255]);
+        }
+    }
+    std::fs::write(path, out)
 }

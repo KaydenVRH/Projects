@@ -23,7 +23,8 @@ items so the loop has no seam. Hardware decode, ~3% CPU.
 `CAMetalLayer` and renders a fragment shader every frame at the display's native
 resolution. Nothing is stored: the picture is computed.
 
-Built-ins: `plasma`, `aurora`, `rings`, `stark` (an arc reactor).
+Built-ins: `plasma`, `aurora`, `rings`, `stark` (a workshop hologram: a light-grid
+floor, a gyroscope of rings around a hex core, data panels and signal tears).
 
 A shader file only has to define the fragment stage — lwp supplies the vertex
 shader, the `VOut` struct and the uniforms:
@@ -53,6 +54,7 @@ file cannot leave you with a black desktop.
 ```sh
 lwp shader-check --builtin stark
 lwp shader-check ~/wall.metal --size 240x240 --ascii
+lwp shader-check --builtin stark --size 2940x1912 --time 22 --out still.bmp  # save a frame
 ```
 
 `shader-check` renders one frame offscreen, reads the pixels back and reports
