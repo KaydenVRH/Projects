@@ -2,6 +2,31 @@ import XCTest
 @testable import KShellCore
 
 final class ThemeTests: XCTestCase {
+    /// The applier runs the dotfiles' tmux writer, which rewrites the real
+    /// theme and reloads the running server. Point it at a scratch file and an
+    /// empty socket directory instead, so a test run never recolours tmux.
+    private var savedEnvironment: [String: String?] = [:]
+
+    override func setUp() {
+        super.setUp()
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("kshell-tmux-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        for key in ["TMUX_THEME_CONF", "TMUX_TMPDIR", "TMUX"] {
+            savedEnvironment[key] = ProcessInfo.processInfo.environment[key]
+        }
+        setenv("TMUX_THEME_CONF", scratch.appendingPathComponent("theme.conf").path, 1)
+        setenv("TMUX_TMPDIR", scratch.path, 1)
+        unsetenv("TMUX")
+    }
+
+    override func tearDown() {
+        for (key, value) in savedEnvironment {
+            if let value { setenv(key, value, 1) } else { unsetenv(key) }
+        }
+        savedEnvironment.removeAll()
+        super.tearDown()
+    }
+
     private let toml = """
     [theme]
     name       = "Test"
@@ -115,6 +140,8 @@ final class ThemeTests: XCTestCase {
         config.kittyConfig = dir.appendingPathComponent("kitty.conf").path
         config.nvimInit = dir.appendingPathComponent("init.lua").path
         config.shellConfig = dir.appendingPathComponent("config.toml").path
+        // Never the real one: the applier rewrites it when it exists.
+        config.bordersConfig = dir.appendingPathComponent("bordersrc").path
         return (dir, config)
     }
 
@@ -184,6 +211,28 @@ final class ThemeTests: XCTestCase {
         XCTAssertTrue(again.contains("background_opacity 0.7"))
         XCTAssertTrue(again.contains("background_blur 40"))
         XCTAssertFalse(again.contains("0.45"), "glass is replaced, not duplicated")
+    }
+
+    func testBordersFollowTheTheme() throws {
+        let (dir, config) = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try """
+        #!/bin/bash
+        options=(
+        \tstyle=round
+        \tactive_color=0xffebbcba
+        \tinactive_color=0x4426233a
+        )
+        borders "${options[@]}"
+        """.write(to: config.bordersConfig.url, atomically: true, encoding: .utf8)
+
+        let theme = ThemeDefinition(name: "Neon", accent: "#FF2E97", highlight: "#00F0FF", dim: "#7A5C99")
+        let result = ThemeApplier.apply(theme, config: config)
+        XCTAssertTrue(result.changed.contains("borders"))
+        let rc = try String(contentsOf: config.bordersConfig.url, encoding: .utf8)
+        XCTAssertTrue(rc.contains("\tactive_color=\"gradient(top_left=0xffff2e97,bottom_right=0xff00f0ff)\""))
+        XCTAssertTrue(rc.contains("\tinactive_color=0x447a5c99"))
+        XCTAssertTrue(rc.contains("\tstyle=round"), "other lines untouched")
     }
 }
 

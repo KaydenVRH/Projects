@@ -44,6 +44,8 @@ public enum ThemeApplier {
             result.failed.append("kshell")
         }
 
+        if applyBorders(theme, path: KShellPaths.resolve(config.bordersConfig)) { result.changed.append("borders") }
+
         if let wallpaper = theme.wallpaper, !wallpaper.isEmpty {
             let url = KShellPaths.resolve(wallpaper)
             var isDirectory: ObjCBool = false
@@ -68,6 +70,46 @@ public enum ThemeApplier {
         }
 
         return result
+    }
+
+    // MARK: - window borders
+
+    /// JankyBorders, when it's set up: the focused window's outline runs from
+    /// the theme's accent to its highlight, the others take its dim colour.
+    /// The running instance is updated in place (`borders` with arguments
+    /// talks to it), and `bordersrc` is rewritten so the next start matches.
+    /// Nothing happens without a `bordersrc`.
+    private static func applyBorders(_ theme: ThemeDefinition, path rc: URL) -> Bool {
+        guard var text = try? String(contentsOf: rc, encoding: .utf8),
+              let accent = argb(theme.accent, alpha: 0xff) else { return false }
+        let highlight = argb(theme.highlight, alpha: 0xff) ?? accent
+        let active = accent == highlight ? accent : "gradient(top_left=\(accent),bottom_right=\(highlight))"
+        let inactive = argb(theme.dim, alpha: 0x44) ?? "0x44494949"
+
+        // bordersrc is a bash array of key=value words.
+        for (key, value) in [("active_color", "\"\(active)\""), ("inactive_color", inactive)] {
+            let lines = text.components(separatedBy: "\n").map { line -> String in
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard trimmed.hasPrefix(key + "=") else { return line }
+                let indent = line.prefix { $0 == " " || $0 == "\t" }
+                return indent + key + "=" + value
+            }
+            text = lines.joined(separator: "\n")
+        }
+        try? text.write(to: rc, atomically: true, encoding: .utf8)
+
+        if !Shell.capture("pgrep -x borders", timeout: 2).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Shell.run("borders active_color=\(Shell.quote(active)) inactive_color=\(inactive)")
+        }
+        return true
+    }
+
+    /// `#RRGGBB` (or `#RRGGBBAA`) as JankyBorders' `0xAARRGGBB`.
+    private static func argb(_ hex: String?, alpha: UInt8) -> String? {
+        guard var digits = hex?.trimmingCharacters(in: .whitespaces) else { return nil }
+        if digits.hasPrefix("#") { digits.removeFirst() }
+        guard digits.count >= 6, UInt32(digits.prefix(6), radix: 16) != nil else { return nil }
+        return String(format: "0x%02x", alpha) + digits.prefix(6).lowercased()
     }
 
     // MARK: - tmux

@@ -319,6 +319,10 @@ glass lag the content and snap into place at the end of the animation. Five pane
 **App launcher** — search + grid of applications (bottom sheet).
 - Open with the Apple logo, or `kshell trigger app_launcher_toggle`.
 - `Enter` launches the first match, click to launch, `Esc` closes.
+- It's a calculator too: `=12*7.5`, or just `12*7.5`, puts the answer first
+  (`+ - * / % ^`, brackets, `sqrt`, `pi`, `e`); `Enter` copies it. The parser
+  is kshell's own, so half-typed sums show nothing rather than crashing.
+- No app by that name: the row offers to search the web for it.
 
 **Script launcher** — search + grid of `.sh` files (bottom sheet).
 - Open with `kshell trigger script_launcher_toggle`.
@@ -765,6 +769,12 @@ icon set large.
 reloads it rather than `launchctl kickstart -k`, which can leave kshell dead
 after the binary changes (launchd keeps the old binary's code requirement and
 the spawn fails with `OS_REASON_CODESIGNING`).
+
+**Window borders** follow the theme too, when JankyBorders is set up: applying
+a theme rewrites `active_color` (the accent running into the highlight) and
+`inactive_color` (the dim colour) in `~/.config/borders/bordersrc`
+(`[theme_launcher] borders_config` to move it) and recolours a running
+`borders` in place.
 
 Music survives a restart: the queue is saved when the track changes, and on
 launch music that was playing in the last 15 minutes carries on from the same

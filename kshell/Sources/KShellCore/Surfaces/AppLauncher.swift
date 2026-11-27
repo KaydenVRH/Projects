@@ -97,14 +97,28 @@ public final class AppLauncher {
                     style: .list,
                     items: items,
                     onSelect: { item in
-                        // The app being launched takes the front by itself; the
-                        // shell should not pull it back to whatever was active
-                        // before the launcher opened.
+                        if item.id.hasPrefix(AppLauncher.calcPrefix) {
+                            // The answer: onto the clipboard.
+                            let board = NSPasteboard.general
+                            board.clearContents()
+                            board.setString(String(item.id.dropFirst(AppLauncher.calcPrefix.count)), forType: .string)
+                            onClose()
+                            return
+                        }
+                        // The app being launched (or the browser) takes the
+                        // front by itself; the shell should not pull it back to
+                        // whatever was active before the launcher opened.
                         Frontmost.forget()
-                        NSWorkspace.shared.open(URL(fileURLWithPath: item.id))
+                        if item.id.hasPrefix(AppLauncher.webPrefix), let url = URL(string: String(item.id.dropFirst(AppLauncher.webPrefix.count))) {
+                            NSWorkspace.shared.open(url)
+                        } else {
+                            NSWorkspace.shared.open(URL(fileURLWithPath: item.id))
+                        }
                         onClose()
                     },
-                    onClose: onClose
+                    onClose: onClose,
+                    leading: AppLauncher.calculation,
+                    fallback: AppLauncher.webSearch
                 ))
             }
         )
@@ -113,4 +127,27 @@ public final class AppLauncher {
     public func toggle() { overlay.toggle() }
     public func show() { overlay.show() }
     public func hide() { overlay.hide() }
+
+    static let calcPrefix = "calc:"
+    static let webPrefix = "web:"
+
+    /// `=12*7.5` or `12*7.5`: the answer, first. ⏎ copies it.
+    static func calculation(_ query: String) -> [LauncherItem] {
+        guard Calculator.looksLikeMath(query) else { return [] }
+        let sum = query.trimmingCharacters(in: .whitespaces).drop { $0 == "=" }
+        guard let value = Calculator.evaluate(String(sum)) else { return [] }
+        let answer = Calculator.format(value)
+        return [LauncherItem(id: calcPrefix + answer, name: "= \(answer)",
+                             detail: "\(sum) · ⏎ copies the answer", symbol: "equal.square.fill")]
+    }
+
+    /// No app by that name: look it up on the web instead.
+    static func webSearch(_ query: String) -> [LauncherItem] {
+        let text = query.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty, !Calculator.looksLikeMath(text),
+              let encoded = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return [] }
+        return [LauncherItem(id: webPrefix + "https://www.google.com/search?q=" + encoded,
+                             name: "Search the web for “\(text)”", detail: "opens in your browser",
+                             symbol: "magnifyingglass")]
+    }
 }

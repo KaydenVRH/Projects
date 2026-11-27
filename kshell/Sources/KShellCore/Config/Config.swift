@@ -128,6 +128,8 @@ public struct ThemeDefinition {
 public struct ThemeLauncherConfig {    public var kittyConfig: String = "~/dotfiles/kitty/.config/kitty/kitty.conf"
     public var nvimInit: String = "~/dotfiles/nvim/.config/nvim/init.lua"
     public var shellConfig: String = "~/.config/kshell/config.toml"
+    /// JankyBorders' rc file; the theme recolours it when it exists.
+    public var bordersConfig: String = "~/.config/borders/bordersrc"
     /// Kitty `background_opacity` used by themes that don't set their own.
     public var opacity: Double?
     /// Kitty `background_blur` used by themes that don't set their own.
@@ -393,6 +395,7 @@ public struct ShellConfig {
             if let v = launcher.string("kitty_config") { themeLauncher.kittyConfig = v }
             if let v = launcher.string("nvim_init") { themeLauncher.nvimInit = v }
             if let v = launcher.string("shell_config") { themeLauncher.shellConfig = v }
+            if let v = launcher.string("borders_config") { themeLauncher.bordersConfig = v }
             if let v = launcher.number("opacity") { themeLauncher.opacity = v }
             if let v = launcher.number("blur") { themeLauncher.blur = v }
             if let array = launcher.array("themes") {

@@ -61,6 +61,10 @@ struct LauncherView: View {
     let items: [LauncherItem]
     let onSelect: (LauncherItem) -> Void
     let onClose: () -> Void
+    /// Rows made from the query, above the matches (a calculation's answer).
+    var leading: ((String) -> [LauncherItem])? = nil
+    /// Rows offered when nothing matches (search the web for it).
+    var fallback: ((String) -> [LauncherItem])? = nil
 
     @State private var query = ""
     /// The armed row, moved with the arrow keys like the other pickers.
@@ -75,7 +79,10 @@ struct LauncherView: View {
     private var foreground: Color { theme.foreground?.color ?? .white }
 
     private var results: [LauncherItem] {
-        query.isEmpty ? items : items.filter { ($0.search ?? $0.name).localizedCaseInsensitiveContains(query) }
+        let found = query.isEmpty ? items : items.filter { ($0.search ?? $0.name).localizedCaseInsensitiveContains(query) }
+        guard !query.isEmpty else { return found }
+        let extra = leading?(query) ?? []
+        return extra + (found.isEmpty ? (fallback?(query) ?? []) : found)
     }
 
     private var palette: KitPalette { KitPalette(theme: theme, bar: bar) }
