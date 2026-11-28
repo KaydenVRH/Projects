@@ -3,12 +3,11 @@ import QuartzCore
 
 /// How an Eclipse panel comes and goes: it waxes, and it wanes.
 ///
-/// Opening: the panel is there from the start but hidden behind the moon,
-/// only a corona of light showing round where it will be. A diamond-ring flash
-/// breaks out on the far side, and the moon slides off toward the bitten
-/// corner, the panel waxing in behind a gold edge of sunlight — the moon's
-/// limb — as the corona fades into the day. Closing: the moon slides back
-/// across it; at totality the corona flares and the panel bursts into stars.
+/// Opening: the panel is there from the start but hidden behind the moon. A
+/// diamond-ring flash breaks out on the far side, and the moon slides off
+/// toward the bitten corner, the panel waxing in behind a gold edge of
+/// sunlight — the moon's limb. Closing: the moon slides back across it, and at
+/// totality the panel bursts into stars.
 ///
 /// The moon is `PanelStyle.shade`: the outline itself has the disc taken out
 /// of it, so the glass, the content and the chrome all wax and wane together.
@@ -18,10 +17,9 @@ final class EclipsePanelMotion: PanelTimeline {
         var shade: CGFloat = 1
         /// The panel's size, about its centre.
         var size: CGFloat = 0.94
-        /// The corona round the hidden panel, 0…1, and its ring's radius as a
-        /// fraction of the panel's half-side.
-        var corona: CGFloat = 0
-        var coronaScale: CGFloat = 0.5
+        /// Where the light sits round the panel — the diamond's ring, the
+        /// stars' burst — as a fraction of the panel's half-side.
+        var ring: CGFloat = 0.5
         /// The diamond ring's flash, 0…1.
         var flash: CGFloat = 0
         /// The moon's lit edge, 0…1.
@@ -91,9 +89,7 @@ final class EclipsePanelMotion: PanelTimeline {
         var done = false
         if opening {
             f.closing = false
-            // the corona round the hidden panel, then fading into the day
-            f.corona = CGFloat(Self.clamp(t / 0.12) * (1 - Self.smooth((t - 0.22) / 0.4)))
-            f.coronaScale = CGFloat(0.55 + 0.55 * Self.easeOut(t / 0.65))
+            f.ring = CGFloat(0.55 + 0.55 * Self.easeOut(t / 0.65))
             // the diamond ring, just before the moon moves
             f.flash = CGFloat(Self.bell((t - 0.08) / 0.24))
             // the moon slides off, the panel waxing in behind it
@@ -119,10 +115,9 @@ final class EclipsePanelMotion: PanelTimeline {
             f.shade = CGFloat(max(Double(closeFrom.shade), cover))
             f.limb = CGFloat(Self.bell(cover))
             f.size = closeFrom.size * CGFloat(1 - 0.05 * cover)
-            // totality: the corona flares, and the stars burst
+            // totality: the stars burst
             let flare = Self.clamp((t - 0.3) / 0.5)
-            f.corona = CGFloat(Self.bell(flare))
-            f.coronaScale = CGFloat(0.6 + 0.75 * Self.easeOut(flare))
+            f.ring = CGFloat(0.6 + 0.75 * Self.easeOut(flare))
             f.bloom = CGFloat(Self.bell(t / 0.36) * 0.35)
             f.bursts = closeFrom.bursts + (t >= 0.33 ? 1 : 0)
             done = t >= Self.closeDuration
@@ -165,14 +160,12 @@ final class EclipsePanelMotion: PanelTimeline {
     }
 }
 
-/// The light of an Eclipse panel's coming and going: the corona round it, the
-/// diamond ring, the gold limb of the moon crossing it, and the stars it
-/// bursts into.
+/// The light of an Eclipse panel's coming and going: the diamond ring, the
+/// gold limb of the moon crossing it, and the stars it bursts into.
 ///
 /// The limb stays inside the panel, so it rides in the panel's window. The
-/// corona, the diamond and the stars reach far past the panel — the closing
-/// flare is twice its size — and its window only has a little slack round it,
-/// which cut them off square. They're drawn in a click-through window over
+/// diamond and the stars reach far past the panel, and its window only has a
+/// little slack round it, which cut them off square. They're drawn in a click-through window over
 /// the whole screen instead, ordered in only while there is light in it.
 final class EclipsePanelLights {
     let layer = CALayer()
@@ -182,7 +175,6 @@ final class EclipsePanelLights {
     /// earlier one knows to stand down.
     private var skyStamp = 0
     private var puttingAway = false
-    private let corona = CALayer()
     private let diamond = CALayer()
     /// The limb, kept to the panel's own outline.
     private let limbBox = CALayer()
@@ -192,15 +184,9 @@ final class EclipsePanelLights {
     private let burst = CAEmitterLayer()
     private var lastBursts = 0
     private var moonRadius: CGFloat = 0
-    /// The size the corona layer is drawn at; it is scaled from this.
-    private static let unit: CGFloat = 400
 
     init() {
         layer.masksToBounds = false
-        corona.contents = Eclipse.coronaImage
-        corona.bounds = CGRect(x: 0, y: 0, width: Self.unit, height: Self.unit)
-        corona.opacity = 0
-        skyLayer.addSublayer(corona)
 
         limbMask.fillColor = NSColor.black.cgColor
         limbBox.mask = limbMask
@@ -293,13 +279,9 @@ final class EclipsePanelLights {
                                     dy: window.frame.minY - screen.frame.minY)
         }
         let centre = CGPoint(x: skyRect.midX, y: skyRect.midY)
-        let ring = max(1, side / 2 * frame.coronaScale)
-        corona.position = centre
-        corona.opacity = Float(frame.corona)
-        let scale = ring / Eclipse.coronaRing / Self.unit
-        corona.transform = CATransform3DMakeScale(scale, scale, 1)
+        let ring = max(1, side / 2 * frame.ring)
 
-        // the diamond: on the corona's ring, on the side the panel waxes from
+        // the diamond: out on the side the panel waxes from
         let out = PanelGeometry.diagonal(of: style.bigCut, in: skyRect)
         diamond.position = CGPoint(x: centre.x - out.x * ring, y: centre.y - out.y * ring)
         diamond.opacity = Float(frame.flash)
@@ -343,13 +325,12 @@ final class EclipsePanelLights {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [burst] in burst.birthRate = 0 }
         }
         lastBursts = frame.bursts
-        setSkyLit(flinging || frame.corona > 0.002 || frame.flash > 0.002)
+        setSkyLit(flinging || frame.flash > 0.002)
     }
 
     func clear() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        corona.opacity = 0
         diamond.opacity = 0
         limbBox.opacity = 0
         burst.birthRate = 0
