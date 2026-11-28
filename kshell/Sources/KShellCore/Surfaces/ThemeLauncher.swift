@@ -487,14 +487,24 @@ struct ThemeLauncherView: View {
 
     private func row(_ item: ThemeDefinition, selected: Bool, active: Bool) -> some View {
         let open = selected || hovered == item.name
+        let flagship = Flagship(item)
+        // a flagship is dressed in its own colours, not the picker's
+        let ownAccent = item.accent.flatMap { RGBA(hex: $0) }?.color ?? accent
+        let ownHighlight = item.highlight.flatMap { RGBA(hex: $0) }?.color ?? accent
         return HStack(spacing: 14) {
             orbs(item, fanned: open)
                 .frame(width: 100, height: 40, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 5) {
-                Text(item.name)
-                    .font(.custom(bar.fontFamily, size: 14.5))
-                    .foregroundColor(selected ? foreground : foreground.opacity(0.78))
+                if let flagship {
+                    FlagshipName(flagship: flagship, name: item.name, family: bar.fontFamily,
+                                 accent: ownAccent, highlight: ownHighlight,
+                                 foreground: selected ? foreground : foreground.opacity(0.85), open: open)
+                } else {
+                    Text(item.name)
+                        .font(.custom(bar.fontFamily, size: 14.5))
+                        .foregroundColor(selected ? foreground : foreground.opacity(0.78))
+                }
                 HStack(spacing: 4) {
                     ForEach(targets(item), id: \.self) { target in
                         Text(target)
@@ -514,6 +524,7 @@ struct ThemeLauncherView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+        .flagshipFlair(flagship, accent: ownAccent, highlight: ownHighlight, open: open)
         .kitCard(selected: selected, hovered: hovered == item.name, palette: palette, highlight: highlight)
         .contentShape(Rectangle())
         .onHover { inside in hovered = inside ? item.name : (hovered == item.name ? nil : hovered) }
