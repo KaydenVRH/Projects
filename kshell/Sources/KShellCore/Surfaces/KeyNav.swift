@@ -28,13 +28,35 @@ struct VimListKeys: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .onKeyPress("j", phases: .down) { _ in fieldFocused ? .ignored : move(1) }
-            .onKeyPress("k", phases: .down) { _ in fieldFocused ? .ignored : move(-1) }
-            .onKeyPress("g", phases: .down) { _ in fieldFocused ? .ignored : jump(.first) }
-            .onKeyPress("G", phases: .down) { _ in fieldFocused ? .ignored : jump(.last) }
-            .onKeyPress("/", phases: .down) { _ in
-                guard !fieldFocused else { return .ignored }
-                return search?() ?? .ignored
-            }
+            .onKeyPress("j", phases: .held) { _ in fieldFocused ? .ignored : move(1) }
+            .onKeyPress("k", phases: .held) { _ in fieldFocused ? .ignored : move(-1) }
+            .onKeyPressOnce("g", passThrough: fieldFocused) { jump(.first) }
+            .onKeyPressOnce("G", passThrough: fieldFocused) { jump(.last) }
+            .onKeyPressOnce("/", passThrough: fieldFocused) { search?() ?? .ignored }
+    }
+}
+
+extension KeyPress.Phases {
+    /// The first press and the repeats that follow while the key is held, for
+    /// keys that walk something and should keep walking.
+    static let held: KeyPress.Phases = [.down, .repeat]
+}
+
+extension View {
+    /// A key that acts once per press, for keys that do something rather than
+    /// walk somewhere.
+    ///
+    /// Holding a key down sends repeats, and a repeat nobody claims makes macOS
+    /// beep — so the repeats are claimed here and dropped, and so is a press
+    /// with nothing to act on (return on an empty list): a key the panel binds
+    /// is never an error. While `passThrough` holds (a text field has the
+    /// keyboard) every phase is left for the field.
+    func onKeyPressOnce(_ key: KeyEquivalent, passThrough: Bool = false,
+                        action: @escaping () -> KeyPress.Result) -> some View {
+        onKeyPress(key, phases: .held) { press in
+            if passThrough { return .ignored }
+            if press.phase == .down { _ = action() }
+            return .handled
+        }
     }
 }

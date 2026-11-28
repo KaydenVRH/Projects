@@ -244,14 +244,14 @@ struct LauncherView: View {
 
     /// `g`/`G` — the ends of the list.
     private func jump(_ edge: VimEdge) -> KeyPress.Result {
-        guard !results.isEmpty else { return .ignored }
+        guard !results.isEmpty else { return .handled }
         withAnimation(.kSelect) { selected = edge == .first ? 0 : results.count - 1 }
         return .handled
     }
 
     /// Move the armed row, clamped to the results.
     private func step(_ delta: Int) -> KeyPress.Result {
-        guard !results.isEmpty else { return .ignored }
+        guard !results.isEmpty else { return .handled }
         let next = min(max(selected + delta, 0), results.count - 1)
         guard next != selected else { return .handled }
         withAnimation(.kSelect) { selected = next }

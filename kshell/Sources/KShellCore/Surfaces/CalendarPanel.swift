@@ -74,9 +74,9 @@ struct CalendarView: View {
         .focused($focused)
         .onKeyPress(.leftArrow) { step(-1) }
         .onKeyPress(.rightArrow) { step(1) }
-        .onKeyPress("h", phases: .down) { _ in step(-1) }
-        .onKeyPress("l", phases: .down) { _ in step(1) }
-        .onKeyPress("t", phases: .down) { _ in
+        .onKeyPress("h", phases: .held) { _ in step(-1) }
+        .onKeyPress("l", phases: .held) { _ in step(1) }
+        .onKeyPressOnce("t") {
             direction = offset > 0 ? .leading : .trailing
             withAnimation(.kLayout) { offset = 0 }
             return .handled

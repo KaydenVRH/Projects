@@ -102,10 +102,10 @@ struct BluetoothMenuView: View {
         .modifier(VimListKeys(move: vimMove, jump: jump))
         .onKeyPress(.upArrow) { vimMove(-1) }
         .onKeyPress(.downArrow) { vimMove(1) }
-        .onKeyPress(.return) { toggleSelection(); return .handled }
-        .onKeyPress("p", phases: .down) { _ in controller.togglePower(); return .handled }
-        .onKeyPress("r", phases: .down) { _ in controller.refresh(); return .handled }
-        .onKeyPress("d", phases: .down) { _ in toggleSelection(); return .handled }
+        .onKeyPressOnce(.return) { toggleSelection(); return .handled }
+        .onKeyPressOnce("p") { controller.togglePower(); return .handled }
+        .onKeyPressOnce("r") { controller.refresh(); return .handled }
+        .onKeyPressOnce("d") { toggleSelection(); return .handled }
         .onKeyPress(.escape) { onClose(); return .handled }
         .onExitCommand { onClose() }
         .onAppear {
@@ -258,13 +258,13 @@ struct BluetoothMenuView: View {
     // MARK: - keys
 
     private func vimMove(_ delta: Int) -> KeyPress.Result {
-        guard !devices.isEmpty else { return .ignored }
+        guard !devices.isEmpty else { return .handled }
         withAnimation(.kSelect) { selected = max(0, min(devices.count - 1, selected + delta)) }
         return .handled
     }
 
     private func jump(_ edge: VimEdge) -> KeyPress.Result {
-        guard !devices.isEmpty else { return .ignored }
+        guard !devices.isEmpty else { return .handled }
         withAnimation(.kSelect) { selected = edge == .first ? 0 : devices.count - 1 }
         return .handled
     }

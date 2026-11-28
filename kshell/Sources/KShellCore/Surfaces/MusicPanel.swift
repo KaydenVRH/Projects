@@ -123,6 +123,7 @@ struct MusicPanelView: View {
         .onExitCommand { onClose() }
         .modifier(MusicKeys(
             move: move,
+            shiftTab: shiftTab,
             activate: activate,
             togglePlay: { player.toggle() },
             seek: { delta in player.seek(toSeconds: player.position + delta) },
@@ -144,7 +145,6 @@ struct MusicPanelView: View {
             moveInQueue: shiftArmedInQueue,
             fieldFocused: typing
         ))
-        .onExitCommand { onClose() }
         .onAppear {
             library.refresh()
             // Arm the playing track, like the theme picker arming the active theme.
@@ -263,14 +263,14 @@ struct MusicPanelView: View {
     /// `g`/`G`: the ends of whichever list is armed.
     private func jump(_ edge: VimEdge) -> KeyPress.Result {
         let count = selectionCount
-        guard count > 0 else { return .ignored }
+        guard count > 0 else { return .handled }
         setSelection(edge == .first ? 0 : count - 1)
         return .handled
     }
 
     private func move(_ delta: Int) -> KeyPress.Result {
         let count = selectionCount
-        guard count > 0 else { return .ignored }
+        guard count > 0 else { return .handled }
         let next = min(max(0, selection + delta), count - 1)
         guard next != selection else { return .handled }
         withAnimation(.kSelect) { setSelection(next) }
@@ -1393,11 +1393,13 @@ struct Equaliser: View {
 /// The panel's keyboard, kept out of the panel's body so the type checker has an
 /// easier time of it.
 ///
-/// Arrow keys walk the armed row, return acts on it (play, or download), and
+/// Up and down walk the armed row (and keep walking while held), left and right
+/// change tabs like `h`/`l`, return acts on the row (play, or download), and
 /// holding command turns the arrows into transport — volume on up/down, seek on
 /// left/right. Space plays or pauses unless the search field has the keyboard.
 private struct MusicKeys: ViewModifier {
     let move: (Int) -> KeyPress.Result
+    let shiftTab: (Int) -> KeyPress.Result
     let activate: () -> KeyPress.Result
     let togglePlay: () -> Void
     let seek: (Double) -> Void
@@ -1406,36 +1408,22 @@ private struct MusicKeys: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .onKeyPress(.upArrow, phases: .down) { press in
-                if press.modifiers.contains(.command) {
-                    volume(0.05)
-                    return .handled
-                }
-                return typed { move(-1) }
+            .onKeyPress(.upArrow, phases: .held) { press in
+                typed { press.modifiers.contains(.command) ? nudge { volume(0.05) } : move(-1) }
             }
-            .onKeyPress(.downArrow, phases: .down) { press in
-                if press.modifiers.contains(.command) {
-                    volume(-0.05)
-                    return .handled
-                }
-                return typed { move(1) }
+            .onKeyPress(.downArrow, phases: .held) { press in
+                typed { press.modifiers.contains(.command) ? nudge { volume(-0.05) } : move(1) }
             }
-            .onKeyPress(.leftArrow, phases: .down) { press in
-                guard press.modifiers.contains(.command) else { return .ignored }
-                seek(-5)
+            .onKeyPress(.leftArrow, phases: .held) { press in
+                typed { arrow(press, seeking: -5, tab: -1) }
+            }
+            .onKeyPress(.rightArrow, phases: .held) { press in
+                typed { arrow(press, seeking: 5, tab: 1) }
+            }
+            .onKeyPressOnce(.return, passThrough: fieldFocused) { activate() }
+            .onKeyPressOnce(.space, passThrough: fieldFocused) {
+                togglePlay()
                 return .handled
-            }
-            .onKeyPress(.rightArrow, phases: .down) { press in
-                guard press.modifiers.contains(.command) else { return .ignored }
-                seek(5)
-                return .handled
-            }
-            .onKeyPress(.return, phases: .down) { _ in typed(activate) }
-            .onKeyPress(.space, phases: .down) { _ in
-                typed {
-                    togglePlay()
-                    return .handled
-                }
             }
     }
 
@@ -1444,6 +1432,18 @@ private struct MusicKeys: ViewModifier {
     /// transport must not act on them.
     private func typed(_ action: () -> KeyPress.Result) -> KeyPress.Result {
         fieldFocused ? .ignored : action()
+    }
+
+    private func nudge(_ action: () -> Void) -> KeyPress.Result {
+        action()
+        return .handled
+    }
+
+    /// Left/right: seek while command is held (and keeps seeking while the key
+    /// is), otherwise one tab per press.
+    private func arrow(_ press: KeyPress, seeking by: Double, tab: Int) -> KeyPress.Result {
+        if press.modifiers.contains(.command) { return nudge { seek(by) } }
+        return press.phase == .down ? shiftTab(tab) : .handled
     }
 }
 
@@ -1461,18 +1461,22 @@ private struct MusicLetterKeys: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .onKeyPress("h", phases: .down) { _ in typed { shiftTab(-1) } }
-            .onKeyPress("l", phases: .down) { _ in typed { shiftTab(1) } }
-            .onKeyPress("a", phases: .down) { _ in typed(addToQueue) }
-            .onKeyPress("x", phases: .down) { _ in typed(removeFromQueue) }
-            .onKeyPress("s", phases: .down) { _ in typed(savePlaylist) }
-            .onKeyPress("p", phases: .down) { _ in typed(playPlaylist) }
-            .onKeyPress("J", phases: .down) { _ in typed { moveInQueue(1) } }
-            .onKeyPress("K", phases: .down) { _ in typed { moveInQueue(-1) } }
+            .onKeyPressOnce("h", passThrough: fieldFocused) { shiftTab(-1) }
+            .onKeyPressOnce("l", passThrough: fieldFocused) { shiftTab(1) }
+            .onKeyPressOnce("a", passThrough: fieldFocused, action: addToQueue)
+            .onKeyPressOnce("x", passThrough: fieldFocused, action: removeFromQueue)
+            .onKeyPressOnce("s", passThrough: fieldFocused, action: savePlaylist)
+            .onKeyPressOnce("p", passThrough: fieldFocused, action: playPlaylist)
+            .onKeyPress("J", phases: .held) { _ in shove(1) }
+            .onKeyPress("K", phases: .held) { _ in shove(-1) }
     }
 
-    private func typed(_ action: () -> KeyPress.Result) -> KeyPress.Result {
-        fieldFocused ? .ignored : action()
+    /// `J`/`K` keep carrying the row while held; off the queue tab they are
+    /// quietly nothing.
+    private func shove(_ by: Int) -> KeyPress.Result {
+        guard !fieldFocused else { return .ignored }
+        _ = moveInQueue(by)
+        return .handled
     }
 }
 

@@ -134,10 +134,10 @@ struct NotificationCentreView: View {
         .modifier(VimListKeys(move: vimMove, jump: jump))
         .onKeyPress(.upArrow) { vimMove(-1) }
         .onKeyPress(.downArrow) { vimMove(1) }
-        .onKeyPress(.return) { openSelected(); return .handled }
-        .onKeyPress("x", phases: .down) { _ in dismissSelected(); return .handled }
-        .onKeyPress("d", phases: .down) { _ in dismissSelected(); return .handled }
-        .onKeyPress("C", phases: .down) { _ in
+        .onKeyPressOnce(.return) { openSelected(); return .handled }
+        .onKeyPressOnce("x") { dismissSelected(); return .handled }
+        .onKeyPressOnce("d") { dismissSelected(); return .handled }
+        .onKeyPressOnce("C") {
             store.clear()
             selected = 0
             return .handled
@@ -367,7 +367,7 @@ struct NotificationCentreView: View {
     }
 
     private func jump(_ edge: VimEdge) -> KeyPress.Result {
-        guard !items.isEmpty else { return .ignored }
+        guard !items.isEmpty else { return .handled }
         selected = edge == .first ? 0 : items.count - 1
         return .handled
     }

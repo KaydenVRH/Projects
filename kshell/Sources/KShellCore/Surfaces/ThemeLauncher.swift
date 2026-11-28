@@ -438,7 +438,7 @@ struct ThemeLauncherView: View {
         .modifier(VimListKeys(move: vimMove, jump: jump))
         .onKeyPress(.upArrow) { vimMove(-1) }
         .onKeyPress(.downArrow) { vimMove(1) }
-        .onKeyPress(.return) { applySelection(); return .handled }
+        .onKeyPressOnce(.return) { applySelection(); return .handled }
         .onKeyPress(.escape) { onClose(); return .handled }
         .onExitCommand { onClose() }
         .onAppear { refocus() }
@@ -582,7 +582,7 @@ struct ThemeLauncherView: View {
     }
 
     private func jump(_ edge: VimEdge) -> KeyPress.Result {
-        guard !themes.isEmpty else { return .ignored }
+        guard !themes.isEmpty else { return .handled }
         withAnimation(.kSelect) { selectedIndex = edge == .first ? 0 : themes.count - 1 }
         return .handled
     }

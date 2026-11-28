@@ -95,9 +95,9 @@ struct MediaCenterView: View {
         .focusable()
         .focusEffectDisabled()
         .focused($focused)
-        .onKeyPress(.space) { monitor.control(.playPause); return .handled }
-        .onKeyPress(.rightArrow) { monitor.control(.next); return .handled }
-        .onKeyPress(.leftArrow) { monitor.control(.previous); return .handled }
+        .onKeyPressOnce(.space) { monitor.control(.playPause); return .handled }
+        .onKeyPressOnce(.rightArrow) { monitor.control(.next); return .handled }
+        .onKeyPressOnce(.leftArrow) { monitor.control(.previous); return .handled }
         .onKeyPress(.escape) { onClose(); return .handled }
         .onExitCommand { onClose() }
         .onAppear {

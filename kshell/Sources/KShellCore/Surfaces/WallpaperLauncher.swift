@@ -182,7 +182,7 @@ struct WallpaperLauncherView: View {
         .onKeyPress(.downArrow) { vimMove(columns) }
         .onKeyPress(.leftArrow) { vimMove(-1) }
         .onKeyPress(.rightArrow) { vimMove(1) }
-        .onKeyPress(.return) { applySelected(); return .handled }
+        .onKeyPressOnce(.return) { applySelected(); return .handled }
         .onKeyPress(.escape) { onClose(); return .handled }
         .onExitCommand { onClose() }
         .onAppear { refocus() }
@@ -359,7 +359,7 @@ struct WallpaperLauncherView: View {
     }
 
     private func jump(_ edge: VimEdge) -> KeyPress.Result {
-        guard !items.isEmpty else { return .ignored }
+        guard !items.isEmpty else { return .handled }
         withAnimation(.kSelect) { selectedIndex = edge == .first ? 0 : items.count - 1 }
         return .handled
     }
