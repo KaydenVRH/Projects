@@ -46,6 +46,20 @@ struct PanelTimelineLayout {
 }
 
 enum PanelTimelines {
+    /// How far a floating panel rests off the frame's edge.
+    static let floatGap: CGFloat = 10
+
+    /// Whether panels float in this theme: the themes whose panels appear
+    /// where they'll be (Stark, Arcane, Eclipse, Abyss) rest a little off the
+    /// frame, free on every side. Panels that grow out of the edge — Neon's
+    /// and the jelly — stay fastened to it.
+    static func floats(_ theme: Theme) -> Bool {
+        Hud.isHud(theme) || Arcane.isArcane(theme) || Eclipse.isEclipse(theme) || Abyss.isAbyss(theme)
+    }
+
+    /// The same, for the theme that's on.
+    static var floating: Bool { Hud.active || Arcane.active || Eclipse.active || Abyss.active }
+
     /// The slack the current theme's timeline will need, before it is made.
     static var slack: (out: CGFloat, side: CGFloat)? {
         guard !Motion.reduced else { return nil }

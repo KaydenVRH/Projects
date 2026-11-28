@@ -168,8 +168,20 @@ final class EclipsePanelMotion: PanelTimeline {
 /// The light of an Eclipse panel's coming and going: the corona round it, the
 /// diamond ring, the gold limb of the moon crossing it, and the stars it
 /// bursts into.
+///
+/// The limb stays inside the panel, so it rides in the panel's window. The
+/// corona, the diamond and the stars reach far past the panel — the closing
+/// flare is twice its size — and its window only has a little slack round it,
+/// which cut them off square. They're drawn in a click-through window over
+/// the whole screen instead, ordered in only while there is light in it.
 final class EclipsePanelLights {
     let layer = CALayer()
+    private var sky: NSPanel?
+    private let skyLayer = CALayer()
+    /// Bumped whenever the sky is wanted again, so a pending put-away of an
+    /// earlier one knows to stand down.
+    private var skyStamp = 0
+    private var puttingAway = false
     private let corona = CALayer()
     private let diamond = CALayer()
     /// The limb, kept to the panel's own outline.
@@ -188,7 +200,7 @@ final class EclipsePanelLights {
         corona.contents = Eclipse.coronaImage
         corona.bounds = CGRect(x: 0, y: 0, width: Self.unit, height: Self.unit)
         corona.opacity = 0
-        layer.addSublayer(corona)
+        skyLayer.addSublayer(corona)
 
         limbMask.fillColor = NSColor.black.cgColor
         limbBox.mask = limbMask
@@ -204,7 +216,7 @@ final class EclipsePanelLights {
         diamond.contents = Arcane.twinkle
         diamond.bounds = CGRect(x: 0, y: 0, width: 90, height: 90)
         diamond.opacity = 0
-        layer.addSublayer(diamond)
+        skyLayer.addSublayer(diamond)
 
         burst.emitterShape = .circle
         burst.emitterMode = .outline
@@ -215,7 +227,57 @@ final class EclipsePanelLights {
             cell.velocityRange = 90
             return cell
         }
-        layer.addSublayer(burst)
+        skyLayer.addSublayer(burst)
+    }
+
+    /// The window the panel is in, to find where on screen the light goes.
+    private var panelWindow: NSWindow? {
+        (layer.superlayer?.delegate as? NSView)?.window
+    }
+
+    /// The full-screen window for the light, over the panel's screen.
+    private func skyPanel(over screen: NSScreen) -> NSPanel {
+        if let sky, sky.frame == screen.frame { return sky }
+        sky?.orderOut(nil)
+        let panel = NSPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel],
+                            backing: .buffered, defer: false)
+        // just above the panels, so the flare lies over the panel it leaves
+        panel.level = NSWindow.Level(rawValue: WindowLevel.overlay.rawValue + 1)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        let root = NSView(frame: NSRect(origin: .zero, size: screen.frame.size))
+        root.wantsLayer = true
+        skyLayer.removeFromSuperlayer()
+        skyLayer.frame = root.bounds
+        root.layer?.addSublayer(skyLayer)
+        panel.contentView = root
+        sky = panel
+        return panel
+    }
+
+    /// Show the sky while there's light, and put it away once the last star
+    /// has faded.
+    private func setSkyLit(_ lit: Bool) {
+        guard let sky else { return }
+        if lit {
+            skyStamp += 1
+            puttingAway = false
+            if !sky.isVisible { sky.orderFrontRegardless() }
+            return
+        }
+        guard sky.isVisible, !puttingAway else { return }
+        puttingAway = true
+        let stamp = skyStamp
+        // the stars outlive the frame that flung them; the closure keeps the
+        // window alive past this object, too
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self, sky] in
+            guard self == nil || self?.skyStamp == stamp else { return }
+            self?.puttingAway = false
+            sky.orderOut(nil)
+        }
     }
 
     func place(_ frame: EclipsePanelMotion.Frame, rect: CGRect, style: PanelStyle, side: CGFloat) {
@@ -223,7 +285,14 @@ final class EclipsePanelLights {
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
 
-        let centre = CGPoint(x: rect.midX, y: rect.midY)
+        // where the panel is on the screen, in the sky's coordinates
+        var skyRect = rect
+        if let window = panelWindow, let screen = window.screen ?? NSScreen.main {
+            _ = skyPanel(over: screen)
+            skyRect = rect.offsetBy(dx: window.frame.minX - screen.frame.minX,
+                                    dy: window.frame.minY - screen.frame.minY)
+        }
+        let centre = CGPoint(x: skyRect.midX, y: skyRect.midY)
         let ring = max(1, side / 2 * frame.coronaScale)
         corona.position = centre
         corona.opacity = Float(frame.corona)
@@ -231,7 +300,7 @@ final class EclipsePanelLights {
         corona.transform = CATransform3DMakeScale(scale, scale, 1)
 
         // the diamond: on the corona's ring, on the side the panel waxes from
-        let out = PanelGeometry.diagonal(of: style.bigCut, in: rect)
+        let out = PanelGeometry.diagonal(of: style.bigCut, in: skyRect)
         diamond.position = CGPoint(x: centre.x - out.x * ring, y: centre.y - out.y * ring)
         diamond.opacity = Float(frame.flash)
         let flare = 0.5 + 0.9 * frame.flash
@@ -268,11 +337,13 @@ final class EclipsePanelLights {
         burst.emitterPosition = centre
         burst.emitterSize = CGSize(width: ring * 1.6, height: ring * 1.6)
         // A burst is a moment of birth rate (see `ArcanePanelLights`).
-        if frame.bursts > lastBursts {
+        let flinging = frame.bursts > lastBursts
+        if flinging {
             burst.birthRate = 1
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [burst] in burst.birthRate = 0 }
         }
         lastBursts = frame.bursts
+        setSkyLit(flinging || frame.corona > 0.002 || frame.flash > 0.002)
     }
 
     func clear() {
@@ -284,5 +355,6 @@ final class EclipsePanelLights {
         burst.birthRate = 0
         CATransaction.commit()
         lastBursts = 0
+        setSkyLit(false)
     }
 }

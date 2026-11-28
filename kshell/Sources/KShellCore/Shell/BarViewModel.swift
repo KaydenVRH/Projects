@@ -54,7 +54,8 @@ public final class BarViewModel: ObservableObject {
         return PanelStyle(
             radius: panelSurface.radius,
             filletRadius: panelSurface.filletRadius,
-            attachment: edge.attachment,
+            // a floating panel isn't fastened to the frame
+            attachment: PanelTimelines.floats(theme) ? .none : edge.attachment,
             cut: Neon.isNeon(theme) ? Neon.panelCut : 0,
             notch: Arcane.isArcane(theme) ? Arcane.panelNotch : 0,
             hud: Hud.isHud(theme) ? Hud.panelChamfer : 0,

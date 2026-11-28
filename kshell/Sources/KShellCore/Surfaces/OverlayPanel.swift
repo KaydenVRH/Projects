@@ -143,8 +143,21 @@ public final class OverlayPanel: NSPanel {
             x = screenFrame.maxX - margin - size.width
             y = Self.verticalY(vertical, inset: verticalMargin ?? margin, size: size, screen: screenFrame)
         }
+        // A floating panel rests a little off the frame (and off the bar,
+        // when it hangs from the top of a side).
+        var gap = CGVector.zero
+        if PanelTimelines.floating {
+            let g = PanelTimelines.floatGap
+            switch edge {
+            case .bottom: gap.dy = g
+            case .top: gap.dy = -g
+            case .leading, .trailing:
+                gap.dx = edge == .leading ? g : -g
+                if vertical == .leading { gap.dy = -g } else if vertical == .trailing { gap.dy = g }
+            }
+        }
         // The window always sits at its final spot; only the content grows.
-        self.shownFrame = NSRect(x: x, y: y, width: size.width, height: size.height)
+        self.shownFrame = NSRect(x: x + gap.dx, y: y + gap.dy, width: size.width, height: size.height)
         self.windowOrigin = shownFrame.origin
         self.targetScreen = screen
         self.edge = edge
