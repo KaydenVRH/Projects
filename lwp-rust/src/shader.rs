@@ -877,6 +877,12 @@ static float fbm(float2 p) {
     for (int i = 0; i < 5; i++) { v += a * vnoise(p); p = p * 2.03 + 17.0; a *= 0.5; }
     return v;
 }
+// fewer octaves, for soft things where the fine ones cannot be seen
+static float fbm3(float2 p) {
+    float v = 0.0, a = 0.5;
+    for (int i = 0; i < 3; i++) { v += a * vnoise(p); p = p * 2.03 + 17.0; a *= 0.5; }
+    return v * 1.14;
+}
 static float sdSeg(float2 p, float2 a, float2 b) {
     float2 pa = p - a, ba = b - a;
     float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
@@ -921,11 +927,15 @@ fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]])
     // ---- the galaxy: a faint band running corner to corner
     {
         float2 g = float2(p.x * 0.8 + p.y * 0.6, -p.x * 0.6 + p.y * 0.8);
-        float band = exp(-pow((g.y + 0.15 + 0.12 * sin(g.x * 1.3)) / 0.32, 2.0));
-        float dust = fbm(g * 2.2 + float2(t * 0.004, 0.0));
-        float lanes = smoothstep(0.35, 0.75, fbm(g * 4.5 + 3.0));
-        col += mix(silver * 0.05, float3(0.10, 0.08, 0.14), dust) * band * (0.5 + 0.8 * dust) * (1.0 - 0.6 * lanes);
-        col += stars(p, 90.0, 0.80, t, silver) * band * 0.5;
+        float bw = (g.y + 0.15 + 0.12 * sin(g.x * 1.3)) / 0.32;
+        float band = exp(-bw * bw);
+        // off the band there is nothing to see, so skip its noise there
+        if (band > 0.004) {
+            float dust = fbm(g * 2.2 + float2(t * 0.004, 0.0));
+            float lanes = smoothstep(0.35, 0.75, fbm3(g * 4.5 + 3.0));
+            col += mix(silver * 0.05, float3(0.10, 0.08, 0.14), dust) * band * (0.5 + 0.8 * dust) * (1.0 - 0.6 * lanes);
+            col += stars(p, 90.0, 0.80, t, silver) * band * 0.5;
+        }
     }
     col += stars(p, 26.0, 0.955, t, silver) * 0.9;
     col += stars(p + 3.7, 48.0, 0.965, t, silver) * 0.55;
@@ -943,11 +953,18 @@ fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]])
     float2 dir = q / max(r, 1e-4);
     float2 turn = float2(cos(t * 0.006), sin(t * 0.006));
     float2 dr = float2(dir.x * turn.x - dir.y * turn.y, dir.x * turn.y + dir.y * turn.x);
-    float streak = fbm(dr * 2.2 + float2(outside * 3.0 - t * 0.03, 0.0));
-    float rays = pow(fbm(dr * 7.0 + 1.7), 2.0);
-    float corona = exp(-outside * 9.0) * 0.9 + exp(-outside * 3.2) * (0.25 + 0.9 * rays) * (0.6 + 0.6 * streak);
-    // long polar plumes, the way a real corona is stretched
-    corona += exp(-outside * 2.0) * pow(abs(cos(a - 0.35)), 18.0) * 0.35 * (0.6 + 0.6 * streak);
+    // far out the corona has faded to nothing, so its noise is only worked
+    // out near the sun, and eased away before the cut
+    float corona = 0.0;
+    if (outside < 1.6) {
+        float streak = fbm3(dr * 2.2 + float2(outside * 3.0 - t * 0.03, 0.0));
+        float rays = fbm3(dr * 7.0 + 1.7);
+        rays *= rays;
+        corona = exp(-outside * 9.0) * 0.9 + exp(-outside * 3.2) * (0.25 + 0.9 * rays) * (0.6 + 0.6 * streak);
+        // long polar plumes, the way a real corona is stretched
+        corona += exp(-outside * 2.0) * pow(abs(cos(a - 0.35)), 18.0) * 0.35 * (0.6 + 0.6 * streak);
+        corona *= smoothstep(1.6, 1.2, outside);
+    }
     float breathe = 0.92 + 0.08 * sin(t * 0.35);
     float3 cor = mix(white, gold, smoothstep(0.0, 0.08, outside));
     cor = mix(cor, ember, smoothstep(0.08, 0.5, outside));
@@ -1158,6 +1175,9 @@ fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]])
     for (int v = 0; v < 3; v++) {
         float fv = float(v);
         float vx = (hash21(float2(fv, 11.0)) - 0.5) * aspect * 1.7;
+        // a column's bubbles never stray more than a few hundredths from it,
+        // so everywhere else there is nothing to add
+        if (abs(p.x - vx) > 0.07 || p.y < floorY - 0.03) continue;
         for (int b = 0; b < 9; b++) {
             float fb = float(b);
             float h = hash21(float2(fv, fb + 20.0));
@@ -1184,6 +1204,14 @@ fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]])
         float2 c = float2((hash21(float2(fj, 3.0)) - 0.5) * aspect * 1.4 + 0.15 * sin(t * 0.07 + fj * 2.0),
                           -1.5 + rise * 3.0);
         float size = 0.07 + 0.05 * hash21(float2(fj, 4.0));
+        float vis = smoothstep(0.0, 0.08, rise) * smoothstep(1.0, 0.9, rise);
+        // outside the creature's box only its soft glow reaches, and that is
+        // cheap to add on its own
+        float2 box = (p - c) / size;
+        if (abs(box.x) > 2.4 || box.y > 2.0 || box.y < -5.0) {
+            col += (j == 1 ? jelly : teal) * exp(-length(box) * 0.8) * 0.08 * vis * 0.85;
+            continue;
+        }
         // the bell contracts and relaxes
         float beat = 0.5 + 0.5 * sin(t * 1.6 + fj * 2.1);
         float2 q = (p - c) / size;
@@ -1220,12 +1248,11 @@ fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]])
         light += tint * tent * 0.16;
         // a soft glow round the whole creature
         light += tint * exp(-length(q) * 0.8) * 0.08;
-        float vis = smoothstep(0.0, 0.08, rise) * smoothstep(1.0, 0.9, rise);
         col += light * vis;
     }
 
     // ---- particulate haze, grain, vignette
-    col += teal * 0.015 * fbm(p * 3.0 + float2(0.0, -t * 0.03));
+    col += teal * 0.015 * vnoise(p * 3.0 + float2(0.0, -t * 0.03)) * 0.9;
     // grain from a sine hash: the cell hash runs in columns at full resolution
     col += (fract(sin(dot(floor(uv * res) + fract(t * 3.0) * 97.0, float2(12.9898, 78.233))) * 43758.5453) - 0.5) * 0.01;
     float2 vq = (in.uv - 0.5) * 2.0;
