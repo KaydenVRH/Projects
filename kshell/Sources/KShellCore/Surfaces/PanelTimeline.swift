@@ -52,6 +52,8 @@ enum PanelTimelines {
         if Neon.active { return NeonPanelMotion.slack }
         if Arcane.active { return ArcanePanelMotion.slack }
         if Hud.active { return StarkPanelMotion.slack }
+        if Eclipse.active { return EclipsePanelMotion.slack }
+        if Abyss.active { return AbyssPanelMotion.slack }
         return nil
     }
 
@@ -61,6 +63,8 @@ enum PanelTimelines {
         if Neon.active { return NeonPanelMotion(screen: screen) }
         if Arcane.active { return ArcanePanelMotion(screen: screen) }
         if Hud.active { return StarkPanelMotion(screen: screen) }
+        if Eclipse.active { return EclipsePanelMotion(screen: screen) }
+        if Abyss.active { return AbyssPanelMotion(screen: screen) }
         return nil
     }
 }

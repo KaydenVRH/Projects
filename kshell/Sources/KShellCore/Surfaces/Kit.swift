@@ -17,6 +17,10 @@ struct KitPalette {
     let arcane: Bool
     /// The Neon theme: slants, tubes and colour fringes.
     let neon: Bool
+    /// The Eclipse theme: moons, corona and starlight.
+    let eclipse: Bool
+    /// The Abyss theme: bubbles, ripples and bioluminescence.
+    let abyss: Bool
     /// The theme's second colour (rose, for Arcane).
     let highlight: Color
 
@@ -32,6 +36,8 @@ struct KitPalette {
         hud = Hud.isHud(theme)
         arcane = !hud && Arcane.isArcane(theme)
         neon = !hud && !arcane && Neon.isNeon(theme)
+        eclipse = !hud && !arcane && !neon && Eclipse.isEclipse(theme)
+        abyss = !hud && !arcane && !neon && !eclipse && Abyss.isAbyss(theme)
         highlight = theme.highlight?.color ?? accent
     }
 }
@@ -50,7 +56,12 @@ struct KitHeader<Trailing: View>: View {
     @State private var arrived = false
 
     var body: some View {
-        if palette.hud { hudBody } else if palette.arcane { arcaneBody } else if palette.neon { neonBody } else { softBody }
+        if palette.hud { hudBody } else if palette.arcane { arcaneBody } else if palette.neon { neonBody }
+        else if palette.eclipse {
+            EclipseHeader(icon: icon, title: title, subtitle: subtitle, palette: palette, trailing: trailing)
+        } else if palette.abyss {
+            AbyssHeader(icon: icon, title: title, subtitle: subtitle, palette: palette, trailing: trailing)
+        } else { softBody }
     }
 
     /// Neon: the icon on a slanted magenta tile with a cyan echo, the title in
@@ -318,6 +329,54 @@ struct KeyHints: View {
                 }
             }
             .lineLimit(1)
+        } else if palette.eclipse {
+            // Eclipse: keys on small moons, labels in tracked serif capitals.
+            HStack(spacing: 12) {
+                ForEach(Array(hints.enumerated()), id: \.offset) { _, hint in
+                    HStack(spacing: 5) {
+                        Text(hint.key)
+                            .font(.system(size: 9.5, weight: .medium, design: .serif))
+                            .foregroundColor(palette.foreground)
+                            .padding(.horizontal, 6)
+                            .frame(minWidth: 18, minHeight: 18)
+                            .background(
+                                Capsule()
+                                    .fill(palette.highlight.opacity(0.1))
+                                    .overlay(Capsule().stroke(palette.accent.opacity(0.55), lineWidth: 0.8))
+                            )
+                        Text(hint.label.uppercased())
+                            .font(.system(size: 9, weight: .medium, design: .serif))
+                            .tracking(1.2)
+                            .foregroundColor(palette.foreground.opacity(0.55))
+                    }
+                }
+            }
+            .lineLimit(1)
+        } else if palette.abyss {
+            // Abyss: keys in bubbles.
+            HStack(spacing: 12) {
+                ForEach(Array(hints.enumerated()), id: \.offset) { _, hint in
+                    HStack(spacing: 5) {
+                        Text(hint.key)
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundColor(palette.foreground)
+                            .padding(.horizontal, 7)
+                            .frame(minHeight: 18)
+                            .background(
+                                Capsule()
+                                    .fill(palette.accent.opacity(0.14))
+                                    .overlay(Capsule().stroke(LinearGradient(colors: [.white.opacity(0.5), palette.accent.opacity(0.3)],
+                                                                             startPoint: .topLeading, endPoint: .bottomTrailing),
+                                                              lineWidth: 0.8))
+                                    .shadow(color: palette.accent.opacity(0.4), radius: 4)
+                            )
+                        Text(hint.label)
+                            .font(.system(size: 11, design: .rounded))
+                            .foregroundColor(palette.foreground.opacity(0.6))
+                    }
+                }
+            }
+            .lineLimit(1)
         } else {
             softBody
         }
@@ -392,7 +451,12 @@ struct KitCard: ViewModifier {
 
     func body(content: Content) -> some View {
         if palette.hud { hudBody(content) } else if palette.arcane { arcaneBody(content) }
-        else if palette.neon { neonBody(content) } else { softBody(content) }
+        else if palette.neon { neonBody(content) }
+        else if palette.eclipse {
+            content.modifier(EclipseCard(selected: selected, hovered: hovered, palette: palette, highlight: highlight))
+        } else if palette.abyss {
+            content.modifier(AbyssCard(selected: selected, hovered: hovered, palette: palette, highlight: highlight))
+        } else { softBody(content) }
     }
 
     /// Neon: slanted cells; the armed one lit magenta with a cyan tube a hair
@@ -565,7 +629,10 @@ struct IconBubble: View {
     @State private var pulse = false
 
     var body: some View {
-        if palette.hud { hudBody } else if palette.arcane { arcaneBody } else if palette.neon { neonBody } else { softBody }
+        if palette.hud { hudBody } else if palette.arcane { arcaneBody } else if palette.neon { neonBody }
+        else if palette.eclipse { EclipseIconBubble(symbol: symbol, active: active, palette: palette, size: size) }
+        else if palette.abyss { AbyssIconBubble(symbol: symbol, active: active, palette: palette, size: size) }
+        else { softBody }
     }
 
     /// Neon: a slanted tile, lit cyan with a magenta echo while live.
@@ -731,6 +798,40 @@ struct KitToggle: View {
                 }
                 .frame(width: 42, height: 22)
                 .contentShape(Capsule())
+            } else if palette.eclipse {
+                // Eclipse: the knob a moon — new when off, full and gold when on.
+                ZStack(alignment: isOn ? .trailing : .leading) {
+                    Capsule()
+                        .fill(isOn
+                              ? AnyShapeStyle(LinearGradient(colors: [palette.highlight.opacity(0.15), palette.accent.opacity(0.4)],
+                                                             startPoint: .leading, endPoint: .trailing))
+                              : AnyShapeStyle(palette.highlight.opacity(0.07)))
+                        .overlay(Capsule().stroke(palette.highlight.opacity(isOn ? 0.6 : 0.3), lineWidth: 1))
+                    Circle()
+                        .fill(isOn ? palette.accent : Color(nsColor: Eclipse.night))
+                        .overlay(Circle().stroke(palette.highlight.opacity(0.7), lineWidth: 1))
+                        .shadow(color: isOn ? palette.accent : .clear, radius: 8)
+                        .frame(width: travelling ? 22 : 16, height: 16)
+                        .padding(3)
+                }
+                .frame(width: 42, height: 22)
+                .contentShape(Capsule())
+            } else if palette.abyss {
+                // Abyss: a glowing current, and a bubble riding it.
+                ZStack(alignment: isOn ? .trailing : .leading) {
+                    Capsule()
+                        .fill(isOn
+                              ? AnyShapeStyle(LinearGradient(colors: [palette.accent.opacity(0.6), palette.highlight.opacity(0.45)],
+                                                             startPoint: .leading, endPoint: .trailing))
+                              : AnyShapeStyle(palette.accent.opacity(0.1)))
+                        .overlay(Capsule().stroke(palette.accent.opacity(isOn ? 0.8 : 0.3), lineWidth: 1))
+                        .shadow(color: isOn ? palette.accent : .clear, radius: 8)
+                    AbyssBubble(tint: isOn ? .white : palette.accent, lit: isOn)
+                        .frame(width: travelling ? 22 : 16, height: 16)
+                        .padding(3)
+                }
+                .frame(width: 42, height: 22)
+                .contentShape(Capsule())
             } else {
                 ZStack(alignment: isOn ? .trailing : .leading) {
                     Capsule()
@@ -789,6 +890,41 @@ struct StatusPill: View {
             )
             .shadow(color: lit ? palette.accent.opacity(0.7) : .clear, radius: 6)
             .animation(.kBouncy, value: lit)
+        } else if palette.eclipse {
+            HStack(spacing: 4) {
+                Image(systemName: lit ? "sun.max.fill" : "moon.fill")
+                    .font(.system(size: 8))
+                Text(text.uppercased())
+                    .font(.system(size: 9, weight: .medium, design: .serif))
+                    .tracking(1.3)
+            }
+            .foregroundColor(lit ? palette.accent : palette.dim)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(lit ? palette.accent.opacity(0.12) : Color.clear)
+                    .overlay(Capsule().stroke(lit ? palette.accent.opacity(0.7) : palette.dim.opacity(0.4), lineWidth: 0.8))
+            )
+            .shadow(color: lit ? palette.accent.opacity(0.5) : .clear, radius: 5)
+            .animation(.kBouncy, value: lit)
+        } else if palette.abyss {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(lit ? palette.accent : palette.dim.opacity(0.6))
+                    .frame(width: 6, height: 6)
+                    .shadow(color: lit ? palette.accent : .clear, radius: 4)
+                Text(text).font(.system(size: 10, weight: .medium, design: .rounded))
+            }
+            .foregroundColor(lit ? palette.accent : palette.dim)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(lit ? palette.accent.opacity(0.14) : Color.white.opacity(0.05))
+                    .overlay(Capsule().stroke(palette.accent.opacity(lit ? 0.5 : 0.15), lineWidth: 0.8))
+            )
+            .animation(.kBouncy, value: lit)
         } else {
             softBody
         }
@@ -839,6 +975,19 @@ struct KitEmpty: View {
                         .frame(width: 130, height: 130)
                     Twinkles(colours: [palette.highlight, palette.accent, .white], count: 7)
                         .frame(width: 170, height: 150)
+                } else if palette.eclipse {
+                    OrbitRing(colour: palette.highlight, planet: palette.accent, period: 14)
+                        .frame(width: 150, height: 150)
+                    EclipseDisc(size: 84, silver: palette.highlight)
+                    Twinkles(colours: [palette.highlight, palette.accent, .white], count: 6)
+                        .frame(width: 190, height: 160)
+                } else if palette.abyss {
+                    SonarPing(colour: palette.accent.opacity(0.6), period: 3)
+                        .frame(width: 130, height: 130)
+                    AbyssBubble(tint: palette.accent, lit: false)
+                        .frame(width: 92, height: 92)
+                    RisingBubbles(colours: [palette.accent, palette.highlight, .white], count: 7)
+                        .frame(width: 170, height: 150)
                 } else {
                     Circle().fill(palette.accent.opacity(0.1)).frame(width: 84, height: 84)
                     Circle().stroke(palette.accent.opacity(0.18), lineWidth: 1).frame(width: 110, height: 110)
@@ -848,10 +997,13 @@ struct KitEmpty: View {
                     .foregroundColor(palette.accent)
             }
             .offset(y: float ? -4 : 4)
-            Text(palette.hud || palette.neon ? title.uppercased() : title)
+            Text(palette.hud || palette.neon || palette.eclipse ? title.uppercased() : title)
                 .font(palette.hud ? .system(size: 13, weight: .semibold, design: .monospaced)
-                      : palette.neon ? .system(size: 14, weight: .black).italic() : .custom(palette.font, size: 15))
-                .tracking(palette.hud ? 2 : 0)
+                      : palette.neon ? .system(size: 14, weight: .black).italic()
+                      : palette.eclipse ? .system(size: 13, weight: .medium, design: .serif)
+                      : palette.abyss ? .system(size: 15, weight: .semibold, design: .rounded)
+                      : .custom(palette.font, size: 15))
+                .tracking(palette.hud ? 2 : (palette.eclipse ? 2.6 : 0))
                 .foregroundColor(palette.foreground)
             Text(detail)
                 .font(.custom(palette.font, size: 11))

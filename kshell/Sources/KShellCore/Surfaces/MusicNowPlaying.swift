@@ -136,6 +136,12 @@ struct NowPlayingCard: View {
                 } else if Arcane.isArcane(theme) {
                     ArcaneCover(player: player, path: path, tint: tint,
                                 rose: theme.highlight?.color ?? tint)
+                } else if Eclipse.isEclipse(theme) {
+                    EclipseCover(player: player, path: path, gold: theme.accent?.color ?? tint,
+                                 silver: theme.highlight?.color ?? tint)
+                } else if Abyss.isAbyss(theme) {
+                    AbyssCover(player: player, path: path, teal: theme.accent?.color ?? tint,
+                               jelly: theme.highlight?.color ?? tint)
                 } else {
                     ArtworkHero(player: player, path: path, tint: tint, dim: dim)
                 }
@@ -199,7 +205,8 @@ struct NowPlayingCard: View {
             Spacer(minLength: 0)
             PlayButton(playing: player.isPlaying, tint: tint, tintColour: tintColour,
                        hud: Hud.isHud(theme), arcane: Arcane.isArcane(theme),
-                       neon: Neon.isNeon(theme)) { player.toggle() }
+                       neon: Neon.isNeon(theme), eclipse: Eclipse.isEclipse(theme),
+                       abyss: Abyss.isAbyss(theme)) { player.toggle() }
             Spacer(minLength: 0)
             SkipButton(symbol: "forward.fill", colour: foreground) { player.next() }
                 .disabled(!player.hasTrack)
@@ -521,6 +528,10 @@ struct PlayButton: View {
     var arcane = false
     /// Neon: a slanted magenta block with a cyan echo.
     var neon = false
+    /// Eclipse: the moon's dark face, its corona blazing while it plays.
+    var eclipse = false
+    /// Abyss: a glowing bubble that pings while it plays.
+    var abyss = false
     let action: () -> Void
 
     @State private var hovering = false
@@ -537,6 +548,23 @@ struct PlayButton: View {
                         .fill(tint)
                         .shadow(color: tint.opacity(hovering ? 1 : 0.7), radius: hovering ? 16 : 10)
                         .frame(width: 66, height: 48)
+                } else if eclipse {
+                    CoronaGlow(radius: 29)
+                        .opacity(playing ? 1 : 0.35)
+                        .scaleEffect(hovering ? 1.08 : 1)
+                    Circle()
+                        .fill(Color(nsColor: Eclipse.night))
+                        .overlay(Circle().stroke(tint.opacity(playing ? 0.9 : 0.5), lineWidth: 1.2))
+                        .shadow(color: tint.opacity(hovering ? 0.9 : 0.5), radius: hovering ? 14 : 8)
+                        .frame(width: 56, height: 56)
+                } else if abyss {
+                    if playing {
+                        SonarPing(colour: tint, period: 2.4)
+                            .frame(width: 62, height: 62)
+                    }
+                    AbyssBubble(tint: tint, lit: true)
+                        .frame(width: 56, height: 56)
+                        .shadow(color: tint.opacity(hovering ? 1 : 0.7), radius: hovering ? 18 : 11)
                 } else if arcane {
                     Circle()
                         .stroke(tint.opacity(playing ? 0.5 : 0.2), lineWidth: 1)
@@ -562,16 +590,18 @@ struct PlayButton: View {
                 }
                 Image(systemName: playing ? "pause.fill" : "play.fill")
                     .font(.system(size: 20, weight: .bold))
-                    .foregroundColor(hud && !playing ? tint : (tintColour.map(prefersDarkText) ?? true ? .black.opacity(0.82) : .white))
+                    .foregroundColor(hud && !playing || eclipse ? tint
+                                     : abyss ? .white
+                                     : (tintColour.map(prefersDarkText) ?? true ? .black.opacity(0.82) : .white))
                     .contentTransition(.symbolEffect(.replace.downUp))
                     .offset(x: playing ? 0 : 1.5)
             }
-            .frame(width: playing || arcane || neon ? 56 : 62, height: 56)
+            .frame(width: playing || arcane || neon || eclipse || abyss ? 56 : 62, height: 56)
             .contentShape(Rectangle())
         }
         .pressBounce()
         .scaleEffect(hovering ? 1.06 : 1)
-        .rotationEffect(.degrees(playing || hud || arcane || neon ? 0 : -6))
+        .rotationEffect(.degrees(playing || hud || arcane || neon || eclipse || abyss ? 0 : -6))
         .onHover { hovering = $0 }
         .animation(.kBouncy, value: playing)
         .animation(.kHover, value: hovering)
@@ -946,6 +976,120 @@ private struct ArcaneCover: View {
         .overlay(Circle().stroke(LinearGradient(colors: [rose, tint], startPoint: .top, endPoint: .bottom), lineWidth: 1.5))
         .shadow(color: tint, radius: 16)
         .shadow(color: rose.opacity(0.5), radius: 30)
+    }
+}
+
+// MARK: - the Eclipse cover
+
+/// Eclipse: the cover is the moon at totality — a disc at the centre of a
+/// corona that blazes and turns while it plays, the spectrum flaring round it
+/// in gold, a planet on its orbit.
+private struct EclipseCover: View {
+    @ObservedObject var player: MusicPlayer
+    let path: String?
+    let gold: Color
+    let silver: Color
+
+    var body: some View {
+        ZStack {
+            RadialSpectrum(spectrum: player.spectrum, tint: gold, playing: player.isPlaying, inner: 92)
+                .frame(width: 236, height: 236)
+                .opacity(0.75)
+            Spinning(period: player.isPlaying ? 60 : 240) {
+                CoronaGlow(radius: 78)
+            }
+            .opacity(player.isPlaying ? 1 : 0.45)
+            OrbitRing(colour: silver, planet: gold, period: player.isPlaying ? 7 : 30)
+                .frame(width: 214, height: 214)
+            disc
+                .id(path ?? "none")
+                .transition(.asymmetric(
+                    insertion: .move(edge: .leading).combined(with: .opacity),
+                    removal: .move(edge: .trailing).combined(with: .opacity)
+                ))
+        }
+        .frame(width: 236, height: 236)
+        .padding(.vertical, -20)
+        .animation(.kBouncy, value: path)
+        .animation(.easeInOut(duration: 0.8), value: player.isPlaying)
+    }
+
+    private var disc: some View {
+        ZStack {
+            Circle().fill(Color(nsColor: Eclipse.night))
+            if let image = ArtworkCache.shared.image(path) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fill)
+                    .opacity(player.isPlaying ? 1 : 0.55)
+            } else {
+                Image(systemName: "moon.stars")
+                    .font(.system(size: 34, weight: .light))
+                    .foregroundStyle(LinearGradient(colors: [silver, gold], startPoint: .top, endPoint: .bottom))
+            }
+        }
+        .frame(width: 150, height: 150)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(silver.opacity(0.45), lineWidth: 1))
+    }
+}
+
+// MARK: - the Abyss cover
+
+/// Abyss: the cover inside a bubble deep in the water — the spectrum glowing
+/// round it like a living thing, a sonar ping going out on each beat of the
+/// playing, bubbles rising past.
+private struct AbyssCover: View {
+    @ObservedObject var player: MusicPlayer
+    let path: String?
+    let teal: Color
+    let jelly: Color
+
+    var body: some View {
+        ZStack {
+            RadialSpectrum(spectrum: player.spectrum, tint: teal, playing: player.isPlaying, inner: 90)
+                .frame(width: 236, height: 236)
+                .opacity(0.8)
+            if player.isPlaying {
+                SonarPing(colour: teal.opacity(0.7), period: 2.6)
+                    .frame(width: 170, height: 170)
+            }
+            RisingBubbles(colours: [teal, jelly, .white], count: 7)
+                .frame(width: 236, height: 236)
+                .opacity(player.isPlaying ? 0.9 : 0.3)
+            disc
+                .id(path ?? "none")
+                .transition(.asymmetric(
+                    insertion: .offset(y: 40).combined(with: .opacity),
+                    removal: .offset(y: -40).combined(with: .opacity)
+                ))
+        }
+        .frame(width: 236, height: 236)
+        .padding(.vertical, -20)
+        .animation(.spring(response: 0.6, dampingFraction: 0.75), value: path)
+    }
+
+    private var disc: some View {
+        ZStack {
+            Circle().fill(RadialGradient(colors: [teal.opacity(0.35), Color(nsColor: Abyss.deep)],
+                                         center: .center, startRadius: 4, endRadius: 80))
+            if let image = ArtworkCache.shared.image(path) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                Image(systemName: "water.waves")
+                    .font(.system(size: 34, weight: .light))
+                    .foregroundStyle(LinearGradient(colors: [.white, teal], startPoint: .top, endPoint: .bottom))
+            }
+        }
+        .frame(width: 150, height: 150)
+        .clipShape(Circle())
+        .overlay(AbyssBubble(tint: teal, lit: false).frame(width: 152, height: 152))
+        .shadow(color: teal.opacity(0.8), radius: 16)
+        .shadow(color: jelly.opacity(0.4), radius: 30)
     }
 }
 

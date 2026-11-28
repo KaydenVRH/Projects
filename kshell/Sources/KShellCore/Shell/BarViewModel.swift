@@ -25,6 +25,8 @@ public final class BarViewModel: ObservableObject {
         Hud.update(for: config.theme)
         Arcane.update(for: config.theme)
         Neon.update(for: config.theme)
+        Eclipse.update(for: config.theme)
+        Abyss.update(for: config.theme)
         left = []
         center = []
         right = []
@@ -40,6 +42,8 @@ public final class BarViewModel: ObservableObject {
         if Hud.update(for: config.theme) { HudBoot.play() }
         if Arcane.update(for: config.theme) { ArcaneCast.play() }
         if Neon.update(for: config.theme) { NeonBoot.play() }
+        if Eclipse.update(for: config.theme) { EclipseTotality.play() }
+        if Abyss.update(for: config.theme) { AbyssDive.play() }
         build(from: config)
     }
 
@@ -53,7 +57,9 @@ public final class BarViewModel: ObservableObject {
             attachment: edge.attachment,
             cut: Neon.isNeon(theme) ? Neon.panelCut : 0,
             notch: Arcane.isArcane(theme) ? Arcane.panelNotch : 0,
-            hud: Hud.isHud(theme) ? Hud.panelChamfer : 0
+            hud: Hud.isHud(theme) ? Hud.panelChamfer : 0,
+            bite: Eclipse.isEclipse(theme) ? Eclipse.panelBite : 0,
+            ripple: Abyss.isAbyss(theme) ? Abyss.panelRipple : 0
         )
     }
 

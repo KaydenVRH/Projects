@@ -49,6 +49,19 @@ public struct PanelStyle: Equatable, Sendable {
     /// the outline is cut into horizontal bands that thin toward nothing — a
     /// hologram resolving or derezzing. 1 is solid.
     public var interlace: CGFloat
+    /// Eclipse: a crescent bitten out of the big free corner (see `bigCut`)
+    /// by a moon of this radius sitting just past it. 0 is no bite.
+    public var bite: CGFloat
+    /// Eclipse: how far the moon has slid across the panel, 0…1 — at 1 it
+    /// covers the panel entirely, at 0 it has gone. Coming from (and leaving
+    /// toward) the bitten corner, so the panel waxes and wanes like the sun
+    /// behind it.
+    public var shade: CGFloat
+    /// Abyss: the far edge (the one away from the frame) rolls in a wave this
+    /// many points deep. 0 is a straight edge.
+    public var ripple: CGFloat
+    /// Abyss: where along its cycle the wave is, in radians.
+    public var ripplePhase: CGFloat
 
     public init(
         radius: CGFloat = SheetShape.defaultRadius,
@@ -57,7 +70,11 @@ public struct PanelStyle: Equatable, Sendable {
         cut: CGFloat = 0,
         notch: CGFloat = 0,
         hud: CGFloat = 0,
-        interlace: CGFloat = 1
+        interlace: CGFloat = 1,
+        bite: CGFloat = 0,
+        shade: CGFloat = 0,
+        ripple: CGFloat = 0,
+        ripplePhase: CGFloat = 0
     ) {
         self.radius = radius
         self.filletRadius = filletRadius
@@ -66,6 +83,10 @@ public struct PanelStyle: Equatable, Sendable {
         self.notch = notch
         self.hud = hud
         self.interlace = interlace
+        self.bite = bite
+        self.shade = shade
+        self.ripple = ripple
+        self.ripplePhase = ripplePhase
     }
 
     /// The big cut's corner: the one a reader's eye lands on first. The other
@@ -108,6 +129,7 @@ public struct PanelStyle: Equatable, Sendable {
 /// the panel's material flows into the frame instead of stopping at a corner.
 public enum PanelGeometry {
     public static func path(in rect: CGRect, style: PanelStyle) -> CGPath {
+        guard style.shade <= 0.001 else { return shaded(in: rect, style: style) }
         guard style.interlace < 1 else { return solidPath(in: rect, style: style) }
         // A hologram resolving: the outline, kept only where the scanlines are.
         guard style.interlace > 0.002, rect.width > 0, rect.height > 0 else { return CGMutablePath() }
@@ -126,7 +148,70 @@ public enum PanelGeometry {
         return outline.intersection(bands)
     }
 
+    /// The Eclipse moon: a disc sliding along the diagonal through the bitten
+    /// corner. At `shade` 1 it sits on the panel's centre and covers all of
+    /// it; at 0 it has slid clear past the corner. `nil` when it isn't there.
+    public static func moon(in rect: CGRect, style: PanelStyle) -> (centre: CGPoint, radius: CGFloat)? {
+        guard style.shade > 0.001, rect.width > 0, rect.height > 0 else { return nil }
+        let half = hypot(rect.width, rect.height) / 2
+        let radius = half * 1.08
+        let out = diagonal(of: style.bigCut, in: rect)
+        let distance = (1 - min(1, style.shade)) * (half + radius)
+        return (CGPoint(x: rect.midX + out.x * distance, y: rect.midY + out.y * distance), radius)
+    }
+
+    /// The resting bite's moon: just past the big free corner, so it takes a
+    /// crescent out of it. `nil` when the style has no bite.
+    public static func biteMoon(in rect: CGRect, style: PanelStyle) -> (centre: CGPoint, radius: CGFloat)? {
+        let limit = min(rect.width, rect.height) / 2.5
+        let radius = min(style.bite, limit)
+        guard radius > 0.5 else { return nil }
+        let out = diagonal(of: style.bigCut, in: rect)
+        let corner = cornerPoint(style.bigCut, in: rect)
+        // its centre sits just out past the corner, so the crescent goes well
+        // past where the corner's own rounding would have cut
+        let offset = radius * 0.18
+        return (CGPoint(x: corner.x + out.x * offset, y: corner.y + out.y * offset), radius)
+    }
+
+    static func cornerPoint(_ corner: SheetShape.Corners, in rect: CGRect) -> CGPoint {
+        if corner.contains(.topLeading) { return CGPoint(x: rect.minX, y: rect.maxY) }
+        if corner.contains(.topTrailing) { return CGPoint(x: rect.maxX, y: rect.maxY) }
+        if corner.contains(.bottomLeading) { return CGPoint(x: rect.minX, y: rect.minY) }
+        return CGPoint(x: rect.maxX, y: rect.minY)
+    }
+
+    /// The unit vector from the centre out through `corner`.
+    static func diagonal(of corner: SheetShape.Corners, in rect: CGRect) -> CGPoint {
+        let p = cornerPoint(corner, in: rect)
+        let dx = p.x - rect.midX, dy = p.y - rect.midY
+        let length = max(0.0001, hypot(dx, dy))
+        return CGPoint(x: dx / length, y: dy / length)
+    }
+
+    /// The outline with the moon across it.
+    private static func shaded(in rect: CGRect, style: PanelStyle) -> CGPath {
+        var clear = style
+        clear.shade = 0
+        let outline = path(in: rect, style: clear)
+        guard let moon = moon(in: rect, style: style) else { return outline }
+        if style.shade >= 0.999 { return CGMutablePath() }
+        let disc = CGPath(ellipseIn: CGRect(x: moon.centre.x - moon.radius, y: moon.centre.y - moon.radius,
+                                            width: moon.radius * 2, height: moon.radius * 2), transform: nil)
+        return outline.subtracting(disc)
+    }
+
     private static func solidPath(in rect: CGRect, style: PanelStyle) -> CGPath {
+        if style.bite > 0 {
+            var whole = style
+            whole.bite = 0
+            let outline = solidPath(in: rect, style: whole)
+            guard let moon = biteMoon(in: rect, style: style) else { return outline }
+            let disc = CGPath(ellipseIn: CGRect(x: moon.centre.x - moon.radius, y: moon.centre.y - moon.radius,
+                                                width: moon.radius * 2, height: moon.radius * 2), transform: nil)
+            return outline.subtracting(disc)
+        }
+        if style.ripple > 0 { return ripplePath(in: rect, style: style) }
         if style.hud > 0 { return hudPath(in: rect, style: style) }
         if style.cut > 0 { return cutPath(in: rect, style: style) }
         if style.notch > 0 { return notchPath(in: rect, style: style) }
@@ -248,6 +333,72 @@ public enum PanelGeometry {
         path.closeSubpath()
 
         addFlanges(to: path, in: rect, style: style)
+        return path
+    }
+
+    /// The Abyss outline, drawn as if the panel sat on the bottom edge: rounded
+    /// free corners, and the far edge between them rolling in a wave — never
+    /// past the rectangle, only dipping into it — then turned to the side it
+    /// really sits on. Attached corners meet the frame in curved fillets.
+    private static func ripplePath(in rect: CGRect, style: PanelStyle) -> CGPath {
+        let vertical = style.attachment == .leading || style.attachment == .trailing
+        let w = vertical ? rect.height : rect.width     // along the frame
+        let h = vertical ? rect.width : rect.height     // out from it
+        guard w > 0, h > 0 else { return CGMutablePath() }
+        let r = max(0, min(style.radius, min(w, h) / 2))
+        let depth = min(style.ripple, h / 4)
+        let floating = style.attachment == .none
+        // about three crests across a panel, however wide
+        let wavelength = max(60, (w - 2 * r) / 3)
+
+        func place(_ p: CGPoint) -> CGPoint {
+            switch style.attachment {
+            case .none, .bottom: return CGPoint(x: rect.minX + p.x, y: rect.minY + p.y)
+            case .top: return CGPoint(x: rect.minX + p.x, y: rect.maxY - p.y)
+            case .leading: return CGPoint(x: rect.minX + p.y, y: rect.minY + p.x)
+            case .trailing: return CGPoint(x: rect.maxX - p.y, y: rect.minY + p.x)
+            }
+        }
+        // corner arcs as polylines, so the whole outline maps through `place`
+        func arc(centre: CGPoint, from a0: CGFloat, to a1: CGFloat) -> [CGPoint] {
+            let steps = 8
+            return (0...steps).map { i in
+                let a = a0 + (a1 - a0) * CGFloat(i) / CGFloat(steps)
+                return CGPoint(x: centre.x + r * cos(a), y: centre.y + r * sin(a))
+            }
+        }
+        var points: [CGPoint] = []
+        if floating && r > 0 {
+            points += arc(centre: CGPoint(x: r, y: r), from: .pi * 1.5, to: .pi)
+        } else {
+            points.append(CGPoint(x: 0, y: 0))
+        }
+        points += r > 0 ? arc(centre: CGPoint(x: r, y: h - r), from: .pi, to: .pi / 2) : [CGPoint(x: 0, y: h)]
+        // the wave: full height at the corners, easing in so it meets them flat
+        let span = max(0, w - 2 * r)
+        let steps = max(8, Int(span / 6))
+        for i in 0...steps {
+            let x = r + span * CGFloat(i) / CGFloat(steps)
+            let u = span > 0 ? (x - r) / span : 0
+            let envelope = sin(.pi * u)
+            let wave = 0.5 - 0.5 * cos(2 * .pi * (x - r) / wavelength + style.ripplePhase)
+            points.append(CGPoint(x: x, y: h - depth * envelope * wave))
+        }
+        points += r > 0 ? arc(centre: CGPoint(x: w - r, y: h - r), from: .pi / 2, to: 0) : [CGPoint(x: w, y: h)]
+        if floating && r > 0 {
+            points += arc(centre: CGPoint(x: w - r, y: r), from: 0, to: -.pi / 2)
+        } else {
+            points.append(CGPoint(x: w, y: 0))
+        }
+        let path = CGMutablePath()
+        path.addLines(between: points.map(place))
+        path.closeSubpath()
+
+        let fillet = max(0, min(style.filletRadius, min(rect.width, rect.height) / 2))
+        guard fillet > 0 else { return path }
+        for corner in corners(of: style.filletCorners) {
+            path.addPath(filletPath(corner, in: rect, radius: fillet, attachment: style.attachment))
+        }
         return path
     }
 

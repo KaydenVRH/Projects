@@ -90,4 +90,55 @@ final class PanelGeometryTests: XCTestCase {
         style.interlace = 1
         XCTAssertTrue(PanelGeometry.path(in: rect, style: style).contains(CGPoint(x: 100, y: 3.5)))
     }
+
+    /// Eclipse's bite: a crescent out of the big free corner only — the moon's
+    /// edge, not a quarter circle on the corner — and the attached corners stay.
+    func testBittenCorner() {
+        let rect = CGRect(x: 0, y: 0, width: 400, height: 300)
+        let style = PanelStyle(radius: 22, filletRadius: 0, attachment: .bottom, bite: 30)
+        let path = PanelGeometry.path(in: rect, style: style)
+        XCTAssertFalse(path.contains(CGPoint(x: 8, y: 292)), "inside the bite at top-leading")
+        // well past where the rounding alone would have cut the corner
+        XCTAssertTrue(PanelGeometry.path(in: rect, style: PanelStyle(radius: 22, filletRadius: 0, attachment: .bottom))
+            .contains(CGPoint(x: 13, y: 287)))
+        XCTAssertFalse(path.contains(CGPoint(x: 13, y: 287)), "a crescent, not just a rounder corner")
+        XCTAssertTrue(path.contains(CGPoint(x: 392, y: 285)), "top-trailing is only rounded")
+        XCTAssertTrue(path.contains(CGPoint(x: 60, y: 296)), "the bite is local to its corner")
+        XCTAssertTrue(path.contains(CGPoint(x: 1, y: 1)), "attached corners stay square")
+        // on a panel hanging from the top, the far corner is bottom-trailing
+        let hanging = PanelGeometry.path(in: rect, style: PanelStyle(radius: 22, filletRadius: 0, attachment: .top, bite: 30))
+        XCTAssertFalse(hanging.contains(CGPoint(x: 392, y: 8)))
+        XCTAssertTrue(hanging.contains(CGPoint(x: 8, y: 8)))
+    }
+
+    /// The moon across a panel: all of it at 1, none at 0, and on the way it
+    /// leaves from the bitten corner's side last.
+    func testShade() {
+        let rect = CGRect(x: 0, y: 0, width: 400, height: 300)
+        var style = PanelStyle(radius: 22, filletRadius: 0, attachment: .bottom, bite: 30)
+        style.shade = 1
+        XCTAssertTrue(PanelGeometry.path(in: rect, style: style).boundingBox.isEmpty)
+        style.shade = 0
+        XCTAssertTrue(PanelGeometry.path(in: rect, style: style).contains(CGPoint(x: 200, y: 150)))
+        style.shade = 0.5
+        let half = PanelGeometry.path(in: rect, style: style)
+        XCTAssertTrue(half.contains(CGPoint(x: 380, y: 20)), "the far side waxes first")
+        XCTAssertFalse(half.contains(CGPoint(x: 40, y: 260)), "the bitten corner is still covered")
+    }
+
+    /// Abyss's far edge rolls; the near edge, and the corners against the
+    /// frame, stay put.
+    func testRippledEdge() {
+        let rect = CGRect(x: 0, y: 0, width: 400, height: 300)
+        let style = PanelStyle(radius: 22, filletRadius: 0, attachment: .bottom, ripple: 8)
+        let path = PanelGeometry.path(in: rect, style: style)
+        let box = path.boundingBox
+        XCTAssertEqual(box.maxY, 300, accuracy: 0.5, "the crests reach the far edge")
+        XCTAssertTrue(path.contains(CGPoint(x: 200, y: 1)), "the near edge is straight")
+        XCTAssertTrue(path.contains(CGPoint(x: 1, y: 1)), "attached corners stay square")
+        // somewhere along the far edge it dips into the panel
+        let dips = stride(from: 40.0, through: 360.0, by: 4).contains { !path.contains(CGPoint(x: $0, y: 296)) }
+        XCTAssertTrue(dips)
+        XCTAssertFalse(path.contains(CGPoint(x: 2, y: 298)), "free corners are rounded")
+    }
 }

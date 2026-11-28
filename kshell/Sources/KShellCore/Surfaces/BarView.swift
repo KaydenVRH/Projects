@@ -48,6 +48,16 @@ public struct BarView: View {
                         ArcaneBarTrim()
                             .frame(height: viewModel.appearance.height)
                             .allowsHitTesting(false)
+                    } else if Eclipse.isEclipse(viewModel.theme) {
+                        // Eclipse: a moonlit hairline with a star gliding along it.
+                        EclipseBarTrim()
+                            .frame(height: 2)
+                            .allowsHitTesting(false)
+                    } else if Abyss.isAbyss(viewModel.theme) {
+                        // Abyss: a glow line, a pulse along it, bubbles rising.
+                        AbyssBarTrim()
+                            .frame(height: viewModel.appearance.height)
+                            .allowsHitTesting(false)
                     }
                 }
         }

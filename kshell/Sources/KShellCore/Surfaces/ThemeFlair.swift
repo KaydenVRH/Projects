@@ -5,16 +5,20 @@ import SwiftUI
 /// chromatic fringes and decodes, with a tube that strikes on beneath it;
 /// Arcane's glows, with a sigil turning behind its colours and sparkles
 /// winking round it; Stark's types itself out in capitals between closing
-/// brackets, with a scan crossing the row. Quiet at rest, alive when the row is
-/// armed or under the pointer.
+/// brackets, with a scan crossing the row; Eclipse's waxes in from behind the
+/// moon while a small eclipse behind its colours goes to totality; Abyss's
+/// rises into place with bubbles drifting up and a wave drawn beneath it.
+/// Quiet at rest, alive when the row is armed or under the pointer.
 enum Flagship {
-    case neon, arcane, stark
+    case neon, arcane, stark, eclipse, abyss
 
     init?(_ theme: ThemeDefinition) {
         switch theme.name.lowercased() {
         case "neon": self = .neon
         case "arcane": self = .arcane
         case "stark": self = .stark
+        case "eclipse": self = .eclipse
+        case "abyss": self = .abyss
         default: return nil
         }
     }
@@ -56,7 +60,54 @@ struct FlagshipName: View {
                 .tracking(2.2)
                 .foregroundColor(foreground)
                 .shadow(color: accent.opacity(0.6), radius: 3)
+        case .eclipse:
+            Text(name.uppercased())
+                .font(.system(size: 13.5, weight: .medium, design: .serif))
+                .tracking(3)
+                .foregroundStyle(LinearGradient(colors: [foreground, accent], startPoint: .leading, endPoint: .trailing))
+                .shadow(color: accent.opacity(open ? 0.7 : 0.3), radius: open ? 6 : 3)
+                .modifier(WaxingOnce())
+        case .abyss:
+            Text(name)
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .foregroundStyle(LinearGradient(colors: [foreground, accent], startPoint: .top, endPoint: .bottom))
+                .shadow(color: accent.opacity(open ? 0.85 : 0.35), radius: open ? 7 : 3)
+                .modifier(RisingOnce(armed: armed > 0))
         }
+    }
+}
+
+/// Wax in once, as it appears.
+private struct WaxingOnce: ViewModifier {
+    @State private var shown = false
+
+    func body(content: Content) -> some View {
+        content
+            .modifier(Waxing(revealed: shown))
+            .onAppear {
+                guard !Motion.reduced else {
+                    shown = true
+                    return
+                }
+                withAnimation(.easeOut(duration: 0.7)) { shown = true }
+            }
+    }
+}
+
+/// Rise into place once, as it appears — but only when it's been armed, so a
+/// list scrolling by doesn't bob.
+private struct RisingOnce: ViewModifier {
+    let armed: Bool
+    @State private var risen = false
+
+    func body(content: Content) -> some View {
+        content
+            .offset(y: risen || !armed ? 0 : 9)
+            .opacity(risen || !armed ? 1 : 0)
+            .onAppear {
+                guard armed, !Motion.reduced else { return }
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.65)) { risen = true }
+            }
     }
 }
 
@@ -82,6 +133,18 @@ struct FlagshipFlair: ViewModifier {
                 }
         case .stark:
             content.overlay { StarkRowScan(accent: accent, ice: highlight, open: open) }
+        case .eclipse:
+            content
+                .background(alignment: .leading) { EclipseRowSky(gold: accent, silver: highlight, open: open) }
+        case .abyss:
+            content
+                .overlay(alignment: .bottom) { AbyssRowTide(teal: accent, jelly: highlight, open: open) }
+                .overlay {
+                    if open {
+                        RisingBubbles(colours: [accent, highlight, .white], count: 5)
+                            .transition(.opacity)
+                    }
+                }
         }
     }
 }
@@ -229,5 +292,58 @@ private struct StarkRowScan: View {
         DispatchQueue.main.async {
             withAnimation(.easeInOut(duration: 0.6)) { scan = 1.2 }
         }
+    }
+}
+
+// MARK: - Eclipse
+
+/// A small eclipse behind the theme's colours: at rest a faint crescent; armed,
+/// the moon slides over to totality and the corona blooms round it.
+private struct EclipseRowSky: View {
+    let gold: Color
+    let silver: Color
+    let open: Bool
+
+    var body: some View {
+        ZStack {
+            CoronaGlow(radius: 21)
+                .opacity(open ? 0.95 : 0)
+                .scaleEffect(open ? 1 : 0.7)
+            Circle()
+                .fill(silver.opacity(0.55))
+                .frame(width: 40, height: 40)
+                .opacity(open ? 0 : 1)
+            Circle()
+                .fill(Color(nsColor: Eclipse.night))
+                .overlay(Circle().stroke(silver.opacity(open ? 0.4 : 0.15), lineWidth: 0.8))
+                .frame(width: 41, height: 41)
+                .offset(x: open ? 0 : 11, y: open ? 0 : -6)
+        }
+        .frame(width: 46, height: 46)
+        .opacity(open ? 1 : 0.4)
+        .padding(.leading, 40)
+        .allowsHitTesting(false)
+        .animation(.easeInOut(duration: 0.6), value: open)
+    }
+}
+
+// MARK: - Abyss
+
+/// A wave along the foot of the row, drawn in as it's armed.
+private struct AbyssRowTide: View {
+    let teal: Color
+    let jelly: Color
+    let open: Bool
+
+    var body: some View {
+        TideLine(amplitude: 1.5, wavelength: 24)
+            .trim(from: 0, to: open ? 1 : 0.0)
+            .stroke(LinearGradient(colors: [teal, jelly], startPoint: .leading, endPoint: .trailing), lineWidth: 1.2)
+            .frame(height: 5)
+            .shadow(color: teal, radius: 4)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 2)
+            .allowsHitTesting(false)
+            .animation(.easeOut(duration: 0.55), value: open)
     }
 }

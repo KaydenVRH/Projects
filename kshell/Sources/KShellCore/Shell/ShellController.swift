@@ -34,6 +34,8 @@ public final class ShellController {
     private var cursorTrail: CursorTrail?
     /// The Neon theme's tubes over the frame.
     private var neonFrames: [NeonFramePanel] = []
+    /// The Eclipse sky or the Abyss rim over each frame.
+    private var themeFrames: [FrameOverlayPanel] = []
     private var visualisers: [VisualiserPanel] = []
     private var playingObserver: AnyCancellable?
     private var manualHidden = false
@@ -142,6 +144,8 @@ public final class ShellController {
         cursorTrail = nil
         for frame in neonFrames { frame.orderOut(nil) }
         neonFrames.removeAll()
+        for frame in themeFrames { frame.orderOut(nil) }
+        themeFrames.removeAll()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -481,7 +485,7 @@ public final class ShellController {
                 frame.orderFrontRegardless()
             }
         }
-        for frame in neonFrames {
+        for frame in neonFrames + themeFrames as [FrameOverlayPanel] {
             if fullscreenDisplays.contains(FullscreenWatch.displayID(frame.frameScreen) ?? 0) {
                 frame.orderOut(nil)
             } else {
@@ -646,6 +650,8 @@ public final class ShellController {
         cursorTrail = nil
         for frame in neonFrames { frame.orderOut(nil) }
         neonFrames.removeAll()
+        for frame in themeFrames { frame.orderOut(nil) }
+        themeFrames.removeAll()
 
         let screens: [NSScreen]
         if viewModel.appearance.display == "main" {
@@ -718,7 +724,13 @@ public final class ShellController {
                     return frame
                 }
             }
-            cursorTrail = ArcaneCursorTrail()
+            cursorTrail = ParticleCursorTrail {
+                Arcane.cells(rate: 40, velocity: 18, lifetime: 1.1, scale: 0.22).map { cell in
+                    cell.emissionRange = .pi * 2
+                    cell.yAcceleration = -14
+                    return cell
+                }
+            }
         }
         // Neon: double tubes round the frame, flickering corner signs, and a
         // light streak after a quick pointer.
@@ -732,6 +744,31 @@ public final class ShellController {
                 }
             }
             cursorTrail = NeonCursorTrail()
+        }
+        // Eclipse: a starlit sky round the frame, star dust after the pointer.
+        // Abyss: a glowing rim with plankton, bubbles after the pointer.
+        if Eclipse.active || Abyss.active {
+            if usesSurface {
+                let inset = CGFloat(borderConfig.inset + borderConfig.thickness)
+                let radius = CGFloat(borderConfig.radius)
+                themeFrames = screens.map { screen in
+                    let frame: FrameOverlayPanel = Eclipse.active
+                        ? EclipseFramePanel(screen: screen, inset: inset, radius: radius)
+                        : AbyssFramePanel(screen: screen, inset: inset, radius: radius)
+                    frame.orderFrontRegardless()
+                    return frame
+                }
+            }
+            cursorTrail = Eclipse.active
+                ? ParticleCursorTrail {
+                    Eclipse.stars(rate: 26, velocity: 10, lifetime: 0.9, scale: 0.2).map { cell in
+                        cell.emissionRange = .pi * 2
+                        return cell
+                    }
+                }
+                : ParticleCursorTrail {
+                    Abyss.bubbles(rate: 22, velocity: 24, lifetime: 1.3, scale: 0.2)
+                }
         }
 
         if manualHidden {

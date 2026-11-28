@@ -355,16 +355,17 @@ final class ArcaneFramePanel: FrameOverlayPanel {
 
 // MARK: - the pointer
 
-/// Sparks that trail the pointer as it moves, and stop when it rests. One
-/// click-through window per display; the pointer is sampled at the display's
-/// rate (no input monitoring, so no permissions).
 /// Something drawn after the pointer, one per theme that has one.
 protocol CursorTrail: AnyObject {
     func stop()
     func setHidden(_ hidden: Bool, on screen: NSScreen)
 }
 
-final class ArcaneCursorTrail: CursorTrail {
+/// Particles shed by the pointer as it moves — Arcane's sparks, Eclipse's
+/// star dust, Abyss's bubbles — stopping when it rests. One click-through
+/// window per display; the pointer is sampled at the display's rate (no input
+/// monitoring, so no permissions).
+final class ParticleCursorTrail: CursorTrail {
     private var panels: [(NSPanel, CAEmitterLayer)] = []
     private var timer: DispatchSourceTimer?
     private var last = NSPoint(x: -1, y: -1)
@@ -373,7 +374,9 @@ final class ArcaneCursorTrail: CursorTrail {
     /// Displays a full-screen app has taken over.
     private var hiddenScreens: [NSRect] = []
 
-    init() {
+    /// `cells` makes one display's emitter cells; the emitter's birth rate
+    /// scales them with the pointer's speed.
+    init(cells makeCells: () -> [CAEmitterCell]) {
         panels = NSScreen.screens.map { screen in
             let panel = NSPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel],
                                 backing: .buffered, defer: false)
@@ -392,12 +395,7 @@ final class ArcaneCursorTrail: CursorTrail {
             emitter.emitterShape = .point
             emitter.renderMode = .additive
             emitter.birthRate = 0
-            let cells = Arcane.cells(rate: 40, velocity: 18, lifetime: 1.1, scale: 0.22)
-            for cell in cells {
-                cell.emissionRange = .pi * 2
-                cell.yAcceleration = -14
-            }
-            emitter.emitterCells = cells
+            emitter.emitterCells = makeCells()
             root.layer?.addSublayer(emitter)
             return (panel, emitter)
         }

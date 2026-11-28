@@ -153,7 +153,9 @@ public final class MediaIslandPanel: NSPanel {
         // The trademark themes draw their own chrome over the content.
         let chrome: ThemeChrome? = Hud.active ? HudChromeView(frame: .zero)
             : Arcane.active ? ArcaneChromeView(frame: .zero)
-            : Neon.active ? NeonChromeView(frame: .zero) : nil
+            : Neon.active ? NeonChromeView(frame: .zero)
+            : Eclipse.active ? EclipseChromeView(frame: .zero)
+            : Abyss.active ? AbyssChromeView(frame: .zero) : nil
         if let chrome {
             container.addSubview(chrome)
             self.chrome = chrome
@@ -347,7 +349,9 @@ public final class MediaIslandPanel: NSPanel {
         PanelStyle(radius: radius, filletRadius: 0, attachment: .none,
                    cut: Neon.active ? Neon.panelCut * 0.7 : 0,
                    notch: Arcane.active ? Arcane.panelNotch * 0.8 : 0,
-                   hud: Hud.active ? Hud.panelChamfer : 0)
+                   hud: Hud.active ? Hud.panelChamfer : 0,
+                   bite: Eclipse.active ? Eclipse.panelBite * 0.7 : 0,
+                   ripple: Abyss.active ? Abyss.panelRipple : 0)
     }
 
     /// Put the island where its theme's timeline has it. Revealed (not
@@ -587,7 +591,7 @@ struct MediaIslandView: View {
 
             HStack(spacing: 22) {
                 SkipButton(symbol: "backward.fill", colour: foreground) { monitor.control(.previous) }
-                PlayButton(playing: state.isPlaying, tint: tint, tintColour: ArtworkCache.shared.tint(state.artworkPath), hud: Hud.isHud(theme), arcane: Arcane.isArcane(theme), neon: Neon.isNeon(theme)) {
+                PlayButton(playing: state.isPlaying, tint: tint, tintColour: ArtworkCache.shared.tint(state.artworkPath), hud: Hud.isHud(theme), arcane: Arcane.isArcane(theme), neon: Neon.isNeon(theme), eclipse: Eclipse.isEclipse(theme), abyss: Abyss.isAbyss(theme)) {
                     monitor.control(.playPause)
                 }
                 SkipButton(symbol: "forward.fill", colour: foreground) { monitor.control(.next) }

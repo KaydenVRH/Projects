@@ -156,7 +156,9 @@ public final class OverlayPanel: NSPanel {
             ?? PanelStyle(radius: SheetShape.defaultRadius, filletRadius: 0, attachment: .none,
                           cut: Neon.active ? Neon.panelCut : 0,
                           notch: Arcane.active ? Arcane.panelNotch : 0,
-                          hud: Hud.active ? Hud.panelChamfer : 0)
+                          hud: Hud.active ? Hud.panelChamfer : 0,
+                          bite: Eclipse.active ? Eclipse.panelBite : 0,
+                          ripple: Abyss.active ? Abyss.panelRipple : 0)
 
         // A popup that doesn't take the keyboard must not activate the app when
         // clicked, or a stray notification would steal the front from a terminal.
@@ -205,7 +207,9 @@ public final class OverlayPanel: NSPanel {
         // The trademark themes draw their own chrome over the content.
         let chrome: ThemeChrome? = Hud.active ? HudChromeView(frame: .zero)
             : Arcane.active ? ArcaneChromeView(frame: .zero)
-            : Neon.active ? NeonChromeView(frame: .zero) : nil
+            : Neon.active ? NeonChromeView(frame: .zero)
+            : Eclipse.active ? EclipseChromeView(frame: .zero)
+            : Abyss.active ? AbyssChromeView(frame: .zero) : nil
         if let chrome {
             container.addSubview(chrome)
             self.chrome = chrome
