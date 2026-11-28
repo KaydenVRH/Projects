@@ -60,6 +60,7 @@ final class NeonChromeView: NSView, ThemeChrome {
     private let scanline = CALayer()
     private let tracking = CAGradientLayer()
     private var slices: [CALayer] = []
+    private var recurring: [Recurring] = []
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -158,12 +159,7 @@ final class NeonChromeView: NSView, ThemeChrome {
         roll.toValue = [1.1, 1.15, 1.2, 1.25, 1.3]
         roll.duration = 1.8
         roll.timingFunction = CAMediaTimingFunction(name: .linear)
-        let group = CAAnimationGroup()
-        group.animations = [roll]
-        group.duration = 6.5
-        group.beginTime = CACurrentMediaTime() + 1.2
-        group.repeatCount = .infinity
-        tracking.add(group, forKey: "roll")
+        recurring = [Recurring(every: 6.5, after: 1.2) { [weak tracking] in tracking?.add(roll, forKey: "roll") }]
 
         // While it's open, a bad patch of tape now and then: two slices tear
         // across for a moment. Small layers, so it costs only their strips.
@@ -172,15 +168,14 @@ final class NeonChromeView: NSView, ThemeChrome {
             tear.values = [0, 0, 0.9, 0, 0.7, 0, 0]
             tear.keyTimes = [0, 0.9, 0.905, 0.915, 0.92, 0.93, 1]
             tear.duration = index == 2 ? 7.3 : 9.1
-            tear.beginTime = CACurrentMediaTime() + 0.5
-            tear.repeatCount = .infinity
-            slice.add(tear, forKey: "tear")
+            recurring.append(Recurring(replaying: tear, on: slice, forKey: "tear"))
         }
     }
 
     /// Switching off: the tubes stutter out and the tape tears, while the panel
     /// itself collapses like a CRT (see `NeonPanelMotion`).
     func powerOff() {
+        recurring = []
         let now = CACurrentMediaTime()
         for (index, tube) in [tubeA, tubeB].enumerated() {
             let out = CAKeyframeAnimation(keyPath: "opacity")
@@ -211,6 +206,7 @@ final class NeonChromeView: NSView, ThemeChrome {
 /// that flickers now and then like a failing sign — small layers, so the
 /// flicker costs only their corner.
 final class NeonFramePanel: FrameOverlayPanel {
+    private var recurring: [Recurring] = []
 
     init(screen: NSScreen, inset: CGFloat, radius: CGFloat) {
         super.init(screen: screen)
@@ -274,8 +270,7 @@ final class NeonFramePanel: FrameOverlayPanel {
             flicker.values = [1, 1, 0.2, 1, 0.4, 1, 1]
             flicker.keyTimes = [0, 0.86, 0.87, 0.89, 0.9, 0.92, 1]
             flicker.duration = 5 + Double(index) * 1.3
-            flicker.repeatCount = .infinity
-            tube.add(flicker, forKey: "flicker")
+            recurring.append(Recurring(replaying: flicker, on: tube, forKey: "flicker"))
         }
 
         addSigns(in: opening, scale: screen.backingScaleFactor)
@@ -322,8 +317,7 @@ final class NeonFramePanel: FrameOverlayPanel {
                 buzz.values = [1, 1, 0.15, 0.9, 0.1, 0.6, 0.2, 1, 1]
                 buzz.keyTimes = [0, 0.78, 0.785, 0.8, 0.81, 0.83, 0.845, 0.86, 1]
                 buzz.duration = 6.7
-                buzz.repeatCount = .infinity
-                text.add(buzz, forKey: "buzz")
+                recurring.append(Recurring(replaying: buzz, on: text, forKey: "buzz"))
             }
         }
 
@@ -341,8 +335,7 @@ final class NeonFramePanel: FrameOverlayPanel {
         blink.values = [1, 1, 0.1, 1, 0.1, 1, 1]
         blink.keyTimes = [0, 0.9, 0.91, 0.93, 0.94, 0.96, 1]
         blink.duration = 9.3
-        blink.repeatCount = .infinity
-        hours.add(blink, forKey: "blink")
+        recurring.append(Recurring(replaying: blink, on: hours, forKey: "blink"))
     }
 
     /// Lettering like a lit tube: a pale core with the tube's colour glowing
@@ -458,10 +451,14 @@ final class NeonCursorTrail: CursorTrail {
             let local = points.filter { frame.contains($0.point) }
                 .map { CGPoint(x: $0.point.x - frame.minX, y: $0.point.y - frame.minY) }
             if local.count >= 2 { path.addLines(between: local) }
+            // A display the streak isn't on stays as it is: re-setting its
+            // empty path every frame still had the window server recomposite
+            // that whole screen at 60 Hz for as long as the pointer moved.
+            if local.count < 2, screen.magenta.path == nil { continue }
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             for layer in [screen.magenta, screen.cyan] {
-                layer.path = path
+                layer.path = local.count >= 2 ? path : nil
                 layer.shadowPath = local.count >= 2
                     ? path.copy(strokingWithWidth: 3, lineCap: .round, lineJoin: .round, miterLimit: 4) : nil
             }
@@ -510,6 +507,7 @@ struct NeonBarTrim: NSViewRepresentable {
 final class NeonBarTrimView: NSView {
     private let tube = CAGradientLayer()
     private let glint = CAGradientLayer()
+    private var glinting: Recurring?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -533,6 +531,7 @@ final class NeonBarTrimView: NSView {
         glint.startPoint = CGPoint(x: 0, y: 0.5)
         glint.endPoint = CGPoint(x: 1, y: 0.5)
         layer?.addSublayer(glint)
+        glinting = Recurring(every: 7, after: 1) { [weak self] in self?.run() }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -548,17 +547,15 @@ final class NeonBarTrimView: NSView {
         glint.frame = CGRect(x: -120, y: 0, width: 120, height: 1.5)
         CATransaction.commit()
 
-        glint.removeAnimation(forKey: "run")
+    }
+
+    private func run() {
         let run = CABasicAnimation(keyPath: "position.x")
         run.fromValue = -60
         run.toValue = bounds.width + 60
         run.duration = 1.6
         run.timingFunction = CAMediaTimingFunction(name: .easeIn)
-        let group = CAAnimationGroup()
-        group.animations = [run]
-        group.duration = 7
-        group.repeatCount = .infinity
-        glint.add(group, forKey: "run")
+        glint.add(run, forKey: "run")
     }
 }
 

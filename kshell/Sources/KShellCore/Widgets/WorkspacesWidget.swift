@@ -55,7 +55,9 @@ final class WorkspacesMonitor {
     private func startPollingIfNeeded() {
         guard timer == nil else { return }
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + 1, repeating: 1)
+        // Focus changes are pushed (`aerospace_workspace_change`); the poll only
+        // notices workspaces gaining or losing windows, so it can be slow.
+        timer.schedule(deadline: .now() + 3, repeating: 3)
         timer.setEventHandler { [weak self] in self?.poll() }
         timer.resume()
         self.timer = timer
@@ -80,7 +82,7 @@ final class WorkspacesMonitor {
         publish(WorkspacesMonitor.parse(Shell.capture(WorkspacesMonitor.query)))
     }
 
-    /// Only notify on real changes — this poll runs every second, and every
+    /// Only notify on real changes — this poll runs every few seconds, and every
     /// notification repaints the bar.
     private func publish(_ snapshot: WorkspaceSnapshot) {
         guard snapshot != last else { return }

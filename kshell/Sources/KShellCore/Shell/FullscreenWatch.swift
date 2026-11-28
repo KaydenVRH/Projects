@@ -29,7 +29,11 @@ final class FullscreenWatch {
     }
 
     func start() {
-        runner.run(command: Self.command, interval: 0.5) { [weak self] output in
+        // Every `aerospace` call has the window manager walk all its windows on
+        // its main thread; at twice a second (with the workspaces poll on top)
+        // that kept it ~11% busy and slow to react. Native full screen is caught
+        // without it (see above), so this only backs up aerospace's own.
+        runner.run(command: Self.command, interval: 2) { [weak self] output in
             self?.apply(output)
         }
         // The poll is the baseline; these are the moments that actually change,
@@ -56,7 +60,7 @@ final class FullscreenWatch {
     /// server's own geometry is enough to answer "is anything still full
     /// screen", and this runs on every application activation. Spawning
     /// `aerospace` here put a full subprocess behind a serial queue that the
-    /// half-second poll already keeps busy, so a burst of activations built a
+    /// regular poll already keeps busy, so a burst of activations built a
     /// backlog that left `flagged` minutes stale — and a stale entry keeps its
     /// display in `covered`, which is the shell hiding itself with no way back.
     func refresh() {

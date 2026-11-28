@@ -20,6 +20,9 @@ public enum Arcane {
 
     /// How deep a panel's free corners are scooped (see `PanelStyle.notch`).
     static let panelNotch: CGFloat = 18
+    /// How often the always-on motes and sparkles gust. They gust together, on
+    /// the wall clock, so the displays can rest between gusts.
+    static let gustPeriod: TimeInterval = 20
 
     public static func isArcane(_ theme: Theme) -> Bool {
         theme.effects == "arcane" || theme.name?.lowercased() == "arcane"
@@ -278,6 +281,7 @@ final class ArcaneChromeView: NSView, ThemeChrome {
 /// Over the frame, per display: the opening's edge glowing violet and
 /// breathing, and motes rising off the bottom edge and drifting up the sides.
 final class ArcaneFramePanel: FrameOverlayPanel {
+    private var recurring: [Recurring] = []
 
     init(screen: NSScreen, inset: CGFloat, radius: CGFloat) {
         super.init(screen: screen)
@@ -331,6 +335,7 @@ final class ArcaneFramePanel: FrameOverlayPanel {
         floor.emitterCells = Arcane.cells(rate: 1.6, velocity: 30, lifetime: 5, scale: 0.3)
         // The motes drift up into the opening, so they rise behind windows.
         backdrop.root.layer?.addSublayer(floor)
+        recurring.append(floor.gusting(every: Arcane.gustPeriod, for: 3.5))
 
         for x in [opening.minX, opening.maxX] {
             let side = CAEmitterLayer()
@@ -343,6 +348,7 @@ final class ArcaneFramePanel: FrameOverlayPanel {
             side.renderMode = .additive
             side.emitterCells = Arcane.cells(rate: 0.45, velocity: 14, lifetime: 4, scale: 0.26)
             backdrop.root.layer?.addSublayer(side)
+            recurring.append(side.gusting(every: Arcane.gustPeriod, for: 3.5))
         }
     }
 }
@@ -469,6 +475,7 @@ struct ArcaneBarTrim: NSViewRepresentable {
 final class ArcaneBarTrimView: NSView {
     private let glow = CAGradientLayer()
     private let sparkles = CAEmitterLayer()
+    private var recurring: [Recurring] = []
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -494,6 +501,14 @@ final class ArcaneBarTrimView: NSView {
         for cell in cells { cell.yAcceleration = 3 }
         sparkles.emitterCells = cells
         layer?.addSublayer(sparkles)
+        // the glow drifts and the sparkles rise in a gust now and then, in step
+        // with the frame's motes, and the bar rests in between
+        recurring = [
+            sparkles.gusting(every: Arcane.gustPeriod, for: 2.5),
+            Recurring(every: Arcane.gustPeriod, after: Recurring.untilNext(Arcane.gustPeriod)) { [weak self] in
+                self?.drift()
+            },
+        ]
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -511,13 +526,15 @@ final class ArcaneBarTrimView: NSView {
         sparkles.emitterSize = CGSize(width: bounds.width * 0.95, height: 1)
         CATransaction.commit()
 
-        glow.removeAnimation(forKey: "drift")
+    }
+
+    private func drift() {
         let drift = CABasicAnimation(keyPath: "locations")
         drift.fromValue = [0, 0.3, 0.7, 1]
         drift.toValue = [0, 0.1, 0.45, 1]
-        drift.duration = 6
+        drift.duration = 3.5
         drift.autoreverses = true
-        drift.repeatCount = .infinity
+        drift.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         glow.add(drift, forKey: "drift")
     }
 }

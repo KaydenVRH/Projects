@@ -202,6 +202,7 @@ final class HudFramePanel: FrameOverlayPanel {
     private let runner = CAShapeLayer()
     private let runnerGlow = CAShapeLayer()
     private let corners = CAShapeLayer()
+    private var lapping: Recurring?
 
     init(screen: NSScreen, inset: CGFloat, radius: CGFloat) {
         super.init(screen: screen)
@@ -272,11 +273,12 @@ final class HudFramePanel: FrameOverlayPanel {
         runEnd.duration = 4
         let group = CAAnimationGroup()
         group.animations = [run, runEnd]
-        group.duration = 14
-        group.repeatCount = .infinity
+        group.duration = 4
         group.timingFunction = CAMediaTimingFunction(name: .linear)
-        runner.add(group, forKey: "run")
-        runnerGlow.add(group, forKey: "run")
+        lapping = Recurring(every: 14) { [weak runner, weak runnerGlow] in
+            runner?.add(group, forKey: "run")
+            runnerGlow?.add(group, forKey: "run")
+        }
 
 
         let draw = CABasicAnimation(keyPath: "strokeEnd")
@@ -306,6 +308,7 @@ final class HudBarTrimView: NSView {
     private let baseline = CAGradientLayer()
     private let ticks = CAShapeLayer()
     private let sweep = CAGradientLayer()
+    private var sweeping: Recurring?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -339,6 +342,7 @@ final class HudBarTrimView: NSView {
         sweep.startPoint = CGPoint(x: 0, y: 0.5)
         sweep.endPoint = CGPoint(x: 1, y: 0.5)
         layer?.addSublayer(sweep)
+        sweeping = Recurring(every: 9) { [weak self] in self?.run() }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -367,17 +371,15 @@ final class HudBarTrimView: NSView {
         sweep.frame = CGRect(x: -220, y: 0, width: 220, height: bounds.height)
         CATransaction.commit()
 
-        sweep.removeAnimation(forKey: "sweep")
+    }
+
+    private func run() {
         let run = CABasicAnimation(keyPath: "position.x")
         run.fromValue = -110
-        run.toValue = width + 110
+        run.toValue = bounds.width + 110
         run.duration = 2.6
         run.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        let group = CAAnimationGroup()
-        group.animations = [run]
-        group.duration = 9
-        group.repeatCount = .infinity
-        sweep.add(group, forKey: "sweep")
+        sweep.add(run, forKey: "sweep")
     }
 }
 
