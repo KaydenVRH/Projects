@@ -270,7 +270,15 @@ fn cmd_shaders() {
     println!("\nuse: lwp set-builtin <name>   or   lwp set-shader <file.metal>");
 }
 
-fn cmd_shader_check(path: Option<&str>, builtin: Option<&str>, size: &str, ascii: bool, out: Option<&str>, time: f32) {
+fn cmd_shader_check(
+    path: Option<&str>,
+    builtin: Option<&str>,
+    size: &str,
+    ascii: bool,
+    out: Option<&str>,
+    time: f32,
+    bench: Option<u32>,
+) {
     let src = match (path, builtin) {
         (_, Some(name)) => match shader::builtin_source(name) {
             Some(s) => s.to_string(),
@@ -308,6 +316,14 @@ fn cmd_shader_check(path: Option<&str>, builtin: Option<&str>, size: &str, ascii
             return;
         }
     };
+
+    if let Some(frames) = bench {
+        match shader::bench(&src, w, h, frames.max(1)) {
+            Ok((mean, worst)) => println!("{frames} frames at {w}x{h}: {mean:.2} ms mean, {worst:.2} ms worst (GPU)"),
+            Err(e) => println!("error: {e}"),
+        }
+        return;
+    }
 
     match shader::check_with_pixels(&src, w, h, time) {
         Ok((msg, px)) => {
@@ -599,6 +615,9 @@ enum Commands {
         /// The shader time to render, in seconds
         #[arg(long, default_value_t = 1.0)]
         time: f32,
+        /// Render this many frames and report the GPU time each one took
+        #[arg(long)]
+        bench: Option<u32>,
     },
     /// Internal: shader wallpaper worker
     #[command(name = "run-shader", hide = true)]
@@ -635,8 +654,8 @@ fn main() {
         Commands::SetShader { path, hide_icons } => cmd_set_shader(&path, hide_icons),
         Commands::SetBuiltin { name, hide_icons } => cmd_set_builtin(&name, hide_icons),
         Commands::Shaders => cmd_shaders(),
-        Commands::ShaderCheck { path, builtin, size, ascii, out, time } => {
-            cmd_shader_check(path.as_deref(), builtin.as_deref(), &size, ascii, out.as_deref(), time)
+        Commands::ShaderCheck { path, builtin, size, ascii, out, time, bench } => {
+            cmd_shader_check(path.as_deref(), builtin.as_deref(), &size, ascii, out.as_deref(), time, bench)
         }
         Commands::RunShader { path, hide_icons } => cmd_run_shader(&path, hide_icons),
         Commands::RunBuiltin { name, hide_icons } => cmd_run_builtin(&name, hide_icons),

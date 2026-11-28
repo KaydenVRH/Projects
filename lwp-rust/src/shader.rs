@@ -440,11 +440,16 @@ fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]])
     (
         "arcane",
         r#"
-// Arcane — a summoning at night. A circle of light lies on the ground in
-// perspective: rings of procedural runes turning against each other, a
-// seven-point star and a hexagram, all glowing violet. A pillar of light rises
-// out of it into a nebula sky, orbs circle the pillar trailing light, and
-// sparks spiral up out of the circle and drift off as fireflies.
+// Arcane — the astrolabe. A great sigil hangs in a violet night: rings of
+// runes turning against each other round a heptagram, two gyroscope hoops
+// tumbling through it with moons riding them, and a heart of light at the
+// centre that every so often sends a pulse of power out through the rings.
+// Ley lines of light run in from the edges of the sky, carrying sparks into
+// it, and motes drift up past it like dust in a beam.
+//
+// Written to be cheap: everything is evaluated in closed form at each pixel
+// (no loops over particles or trails, one octave of noise), and the sigil is
+// only worked out where it can be seen.
 static float hash21(float2 p) {
     p = fract(p * float2(234.34, 435.345));
     p += dot(p, p + 34.23);
@@ -457,34 +462,37 @@ static float vnoise(float2 p) {
     return mix(mix(hash21(i), hash21(i + float2(1, 0)), w.x),
                mix(hash21(i + float2(0, 1)), hash21(i + float2(1, 1)), w.x), w.y);
 }
-static float fbm(float2 p) {
-    float v = 0.0, a = 0.5;
-    for (int i = 0; i < 4; i++) { v += a * vnoise(p); p = p * 2.03 + 17.0; a *= 0.5; }
-    return v;
-}
 static float2 rot(float2 p, float a) {
     float c = cos(a), s = sin(a);
     return float2(c * p.x - s * p.y, s * p.x + c * p.y);
 }
+static float hair(float d, float w) { return 1.0 - smoothstep(0.0, w, d); }
 static float sdSeg(float2 p, float2 a, float2 b) {
     float2 pa = p - a, ba = b - a;
     float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
     return length(pa - ba * h);
 }
-static float hair(float d, float w) { return 1.0 - smoothstep(0.0, w, d); }
 
-// A star polygon {n/k} of radius r: the lines from each vertex to the k-th next.
+// A star polygon {n/k} of radius r, as n chords: each is a line at a fixed
+// distance from the centre, so the distance to it is two dot products.
 static float star(float2 p, float r, int n, int k, float turn) {
+    float h = r * cos(3.14159265 * float(k) / float(n));
+    float reach = r * sin(3.14159265 * float(k) / float(n));
     float d = 1e3;
+    // step the chord's normal round by rotation rather than a sin and cos each
+    float a0 = turn + 3.14159265 * float(k) / float(n);
+    float2 nrm = float2(cos(a0), sin(a0));
+    float step = 6.2831853 / float(n);
+    float2 by = float2(cos(step), sin(step));
     for (int i = 0; i < n; i++) {
-        float a0 = turn + 6.2831853 * float(i) / float(n);
-        float a1 = turn + 6.2831853 * float(i + k) / float(n);
-        d = min(d, sdSeg(p, r * float2(cos(a0), sin(a0)), r * float2(cos(a1), sin(a1))));
+        float along = dot(p, float2(-nrm.y, nrm.x));
+        d = min(d, length(float2(dot(p, nrm) - h, max(abs(along) - reach, 0.0))));
+        nrm = float2(nrm.x * by.x - nrm.y * by.y, nrm.x * by.y + nrm.y * by.x);
     }
     return d;
 }
 
-// One rune: a few strokes picked from a 3x3 lattice by the cell's hash.
+// One rune: three strokes picked from a 3x3 lattice by the cell's hash.
 static float rune(float2 uv, float seed) {
     float d = 1e3;
     for (int s = 0; s < 3; s++) {
@@ -495,6 +503,37 @@ static float rune(float2 uv, float seed) {
         if (length(a - b) > 0.1) d = min(d, sdSeg(uv, a, b));
     }
     return d;
+}
+
+// A band of runes between radii r0 and r1, n to the turn, turning.
+static float runeBand(float r, float a, float r0, float r1, float n, float turn, float seed, float t) {
+    if (r < r0 || r > r1) return 0.0;
+    float ang = fract(a / 6.2831853 + turn) * n;
+    float cell = floor(ang);
+    float2 ruv = (float2(fract(ang), (r - r0) / (r1 - r0)) - 0.5) * 1.3 + 0.5;
+    float d = rune(ruv, cell + seed);
+    float lit = 0.65 + 0.35 * sin(t * 1.3 + cell * 0.9 + seed);
+    return (hair(d, 0.06) * 0.85 + exp(-d * 16.0) * 0.12) * lit;
+}
+
+// A hoop tumbling about the centre: an ellipse whose minor axis breathes as it
+// turns, tilted, with a moon riding it trailing light. Returns the light.
+static float hoop(float2 q, float R, float tilt, float spin, float moon, float px, thread float &near) {
+    float2 o = rot(q, -tilt);
+    float b = R * max(abs(cos(spin)), 0.06);
+    float2 e = o / float2(R, b);
+    float k = length(e);
+    // distance to the ellipse, to first order: near enough for a hairline
+    float d = abs(k - 1.0) * k / max(length(e / float2(R, b)), 1e-3);
+    float line = hair(d, px * 1.4) * 0.55 + exp(-d * 70.0) * 0.12;
+    // where along the hoop this point is, and how far behind the moon
+    float along = atan2(e.y * sign(cos(spin)), e.x);
+    float behind = fract((moon - along) / 6.2831853);
+    float trail = exp(-behind * 9.0) * exp(-d * 120.0) * 0.9;
+    float2 mp = rot(float2(cos(moon), sin(moon) * sign(cos(spin))) * float2(R, b), tilt);
+    float md = length(q - mp);
+    near = md;
+    return line + trail;
 }
 
 fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]]) {
@@ -510,136 +549,138 @@ fragment float4 f_main(VOut in [[stage_in]], constant Uniforms &u [[buffer(0)]])
     float3 spark  = float3(0.55, 0.95, 1.00);
     float3 white  = float3(1.00, 0.95, 1.00);
 
-    // ---- the night: indigo, a nebula of violet and rose, stars
-    float3 col = mix(float3(0.020, 0.008, 0.040), float3(0.050, 0.020, 0.090), smoothstep(-1.0, 1.0, p.y));
-    float neb = fbm(p * 0.9 + float2(t * 0.012, -t * 0.006));
-    float neb2 = fbm(p * 1.7 - float2(t * 0.02, 0.0) + 5.0);
-    col += violet * 0.26 * smoothstep(0.30, 0.85, neb) * smoothstep(-0.6, 0.8, p.y);
-    col += rose * 0.15 * smoothstep(0.42, 0.9, neb2) * smoothstep(-0.2, 1.0, p.y);
+    float2 E = float2(aspect * 0.40, 0.02);
+    float2 q = p - E;
+    float r = length(q);
+
+    // ---- the night: indigo, warming to violet round the sigil
+    float3 col = mix(float3(0.016, 0.006, 0.034), float3(0.040, 0.016, 0.075), smoothstep(-1.0, 1.0, p.y));
+    col += violet * 0.10 * exp(-r * 1.3);
+    // nebula: a few slow clouds, their edges broken by one octave of noise
     {
-        float2 sp = p * 38.0;
+        float n = vnoise(p * 1.6 + float2(t * 0.02, -t * 0.01));
+        float2 c1 = float2(-aspect * 0.55 + 0.1 * sin(t * 0.03), 0.55);
+        float2 c2 = float2(-aspect * 0.1, -0.7 + 0.06 * cos(t * 0.025));
+        float2 c3 = E + float2(0.3, 0.55);
+        float cloud = exp(-dot(p - c1, p - c1) * 1.6) * 0.9 + exp(-dot(p - c2, p - c2) * 2.2) * 0.6;
+        float cloud2 = exp(-dot(p - c3, p - c3) * 2.5);
+        col += violet * 0.20 * cloud * (0.35 + 0.9 * n);
+        col += rose * 0.10 * cloud2 * (0.4 + 0.8 * n);
+    }
+    // stars
+    {
+        float2 sp = p * 34.0;
         float2 id = floor(sp);
         float h = hash21(id);
-        if (h > 0.965) {
+        if (h > 0.96) {
             float2 off = float2(hash21(id + 1.3), hash21(id + 4.1)) - 0.5;
             float d = length(fract(sp) - 0.5 - off * 0.6);
-            float tw = 0.5 + 0.5 * sin(t * (1.5 + h * 5.0) + h * 80.0);
-            col += white * exp(-d * 18.0) * 0.55 * tw * smoothstep(-0.5, 0.4, p.y);
+            float tw = 0.45 + 0.55 * sin(t * (1.2 + h * 4.0) + h * 80.0);
+            col += mix(white, spark, step(0.993, h)) * exp(-d * 16.0) * 0.6 * tw;
         }
     }
-    // an aurora ribbon across the top
+
+    // ---- ley lines: threads of light from the edges of the sky into the
+    // sigil, sparks running along them (they end at its heart)
+    for (int i = 0; i < (p.x < E.x ? 3 : 0); i++) {
+        float fi = float(i);
+        // each thread leaves the left edge at its own height and bends into E
+        float y0 = -0.75 + fi * 0.62;
+        float s = clamp((p.x + aspect) / (E.x + aspect), 0.0, 1.0);
+        float y = mix(y0, E.y, s * s * (3.0 - 2.0 * s)) + 0.05 * sin(p.x * 2.3 + t * 0.4 + fi * 2.0) * (1.0 - s);
+        float d = abs(p.y - y);
+        float fade = smoothstep(1.0, 0.75, s) * smoothstep(0.0, 0.15, s);
+        float run = fract(t * (0.12 + fi * 0.03) - s * 3.0 + fi * 0.3);
+        // a comet: bright at its head, soft ahead of it, a tail behind
+        float head = smoothstep(1.0, 0.93, run);
+        float pulse = exp(-run * 14.0) * head + 0.25;
+        float3 tint = (i == 1) ? rose : violet;
+        // the wide glow swells in just behind the comet and fades from zero at
+        // either end, so it shows no edge; only the hairline and the spark
+        // carry the comet's sharp head
+        float swell = 0.3 + exp(-run * 4.0) * smoothstep(0.0, 0.1, run);
+        col += tint * (hair(d, px * 1.2) * 0.45 * pulse + exp(-d * 45.0) * 0.10 * swell) * fade;
+        col += white * exp(-d * 250.0) * exp(-run * 30.0) * head * fade * 0.9;
+    }
+
+    // ---- the sigil
+    float pulse = 0.85 + 0.15 * sin(t * 1.4);
+    if (r < 1.05) {
+        float a = atan2(q.y, q.x);
+        float glow = 0.0;
+        // rings
+        glow += hair(abs(r - 0.86), px * 1.6) * 0.9 + exp(-abs(r - 0.86) * 45.0) * 0.18;
+        glow += hair(abs(r - 0.82), px * 1.2) * 0.6;
+        glow += hair(abs(r - 0.64), px * 1.4) * 0.8 + exp(-abs(r - 0.64) * 50.0) * 0.12;
+        glow += hair(abs(r - 0.52), px * 1.2) * 0.5;
+        glow += hair(abs(r - 0.30), px * 1.4) * 0.7;
+        // ticks round the outside, a long one every sixth
+        {
+            float x = a / 6.2831853 * 120.0 + t * 0.004;
+            float tk = fract(x);
+            float major = step(fmod(floor(x) + 120.0, 6.0), 0.5);
+            float len = mix(0.025, 0.045, major);
+            float d = abs(tk - 0.5) * r * 6.2831853 / 120.0;
+            glow += hair(d, px * 1.0) * step(0.86, r) * step(r, 0.86 + len) * 0.7;
+        }
+        // rune bands, turning opposite ways
+        glow += runeBand(r, a, 0.66, 0.80, 44.0, t * 0.012, 0.0, t);
+        glow += runeBand(r, a, 0.32, 0.42, 22.0, -t * 0.02, 100.0, t) * 0.9;
+        // a heptagram, and a hexagram inside it, turning slowly
+        float st = star(q, 0.64, 7, 3, t * 0.03);
+        glow += hair(st, px * 1.5) * 0.75 + exp(-st * 55.0) * 0.14;
+        float hx = star(q, 0.30, 6, 2, -t * 0.05);
+        glow += hair(hx, px * 1.3) * 0.6 + exp(-hx * 65.0) * 0.12;
+
+        float3 ink = mix(violet, rose, smoothstep(0.35, 0.95, r));
+        col += ink * glow * pulse;
+
+        // the hoops, tumbling, with their moons
+        // (a hoop never reaches past its radius, so further out only its
+        // moon's glow can be seen, and that fades long before)
+        float n1 = 9.0, n2 = 9.0, h1 = 0.0, h2 = 0.0;
+        if (r < 0.98) h1 = hoop(q, 0.74, 0.5 + t * 0.03, t * 0.21, t * 0.5, px, n1);
+        if (r < 0.82) h2 = hoop(q, 0.58, -0.9 - t * 0.04, t * 0.17 + 1.3, -t * 0.62 + 2.0, px, n2);
+        col += spark * h1 * 0.7 + rose * h2 * 0.65;
+        col += (spark * exp(-n1 * 70.0) + rose * exp(-n2 * 70.0)) * 1.4;
+        col += (spark * exp(-n1 * 12.0) + rose * exp(-n2 * 12.0)) * 0.1;
+
+        // the heart: a white-hot core in a violet bloom
+        col += white * exp(-r * 38.0) * 1.3 * pulse;
+        col += violet * exp(-r * 7.0) * 0.45 * pulse;
+        col += rose * exp(-r * 3.0) * 0.08;
+
+        // every eleven seconds a pulse of power rolls out through the rings
+        float wave = fract(t / 11.0) * 11.0;
+        float wr = wave * 0.55;
+        float wf = exp(-wave * 0.9) * smoothstep(0.0, 0.1, wave);
+        col += mix(white, violet, 0.4) * (hair(abs(r - wr), px * 3.0) * 0.6 + exp(-abs(r - wr) * 25.0) * 0.25) * wf;
+        // and the rings it crosses flare
+        col += ink * glow * exp(-abs(r - wr) * 12.0) * wf * 1.2;
+    } else {
+        col += violet * exp(-(r - 1.05) * 4.0) * 0.015;
+    }
+
+    // ---- motes drifting up, thicker round the sigil
     {
-        float y = 0.72 + 0.08 * sin(p.x * 1.3 + t * 0.15) + 0.05 * sin(p.x * 3.1 - t * 0.22);
-        float band = exp(-abs(p.y - y) * 9.0) * (0.6 + 0.4 * vnoise(float2(p.x * 3.0 - t * 0.3, 0.0)));
-        col += mix(violet, rose, 0.5 + 0.5 * sin(p.x * 0.8 + t * 0.1)) * band * 0.16;
-    }
-
-    // ---- the ground: a faint mist the circle lights up
-    float ground = smoothstep(-0.25, -0.6, p.y);
-    col += violet * 0.05 * ground * fbm(float2(p.x * 2.0 + t * 0.05, p.y * 6.0));
-
-    // ---- the circle, lying on the ground in perspective
-    float2 C = float2(0.0, -0.52);
-    float2 q = p - C;
-    q.y /= 0.38;
-    float r = length(q);
-    float a = atan2(q.y, q.x);
-    float pulse = 0.82 + 0.18 * sin(t * 1.7);
-    float w = px * 2.2 / 0.38;
-    float glow = 0.0;
-
-    for (int i = 0; i < 4; i++) {
-        float R = 0.38 + float(i) * 0.12 + (i == 3 ? 0.04 : 0.0);
-        float d = abs(r - R);
-        glow += hair(d, w * (i == 3 ? 1.6 : 1.0)) * 0.9 + exp(-d * 40.0) * 0.25;
-    }
-    // rune bands between the outer rings, turning opposite ways
-    for (int b = 0; b < 2; b++) {
-        float R0 = (b == 0) ? 0.62 : 0.74;
-        float R1 = R0 + 0.10;
-        if (r > R0 && r < R1) {
-            float N = (b == 0) ? 40.0 : 52.0;
-            float turn = (b == 0 ? 1.0 : -1.0) * t * 0.05;
-            float ang = fract((a / 6.2831853) + turn) * N;
-            float cell = floor(ang);
-            float2 ruv = float2(fract(ang), (r - R0) / (R1 - R0));
-            ruv = (ruv - 0.5) * float2(1.25, 1.25) + 0.5;
-            float d = rune(ruv, cell + float(b) * 100.0);
-            float lit = 0.7 + 0.3 * sin(t * 2.0 + cell * 0.7);
-            glow += hair(d, 0.05) * lit * 0.8 + exp(-d * 18.0) * lit * 0.12;
-        }
-    }
-    // a seven-point star and a hexagram, turning slowly
-    float st = star(q, 0.60, 7, 3, t * 0.06);
-    glow += hair(st, w * 1.2) * 0.8 + exp(-st * 50.0) * 0.18;
-    float hx = star(q, 0.36, 6, 2, -t * 0.1);
-    glow += hair(hx, w * 1.1) * 0.7 + exp(-hx * 60.0) * 0.15;
-    glow += exp(-r * 6.0) * 0.6;
-    col += mix(violet, rose, smoothstep(0.2, 0.9, r)) * glow * pulse;
-
-    // ---- the pillar of light rising out of it
-    float height = p.y - C.y;
-    {
-        float base = smoothstep(-0.10, 0.03, height);
-        height = max(height, 0.0);
-        float width = 0.13 + 0.015 * sin(height * 6.0 - t * 2.0);
-        col += violet * exp(-pow(p.x / (width * 3.5), 2.0)) * exp(-height * 0.7) * 0.18 * pulse * base;
-        float beam = exp(-pow(p.x / width, 2.0)) * exp(-height * 0.9);
-        float core = exp(-pow(p.x / (width * 0.18), 2.0)) * exp(-height * 1.4);
-        float shimmer = 0.75 + 0.25 * vnoise(float2(p.x * 20.0, height * 4.0 - t * 3.0));
-        col += (violet * beam * 0.55 * shimmer * pulse + white * core * 0.6 * pulse) * base;
-    }
-
-    // ---- orbs circling the pillar, trailing light
-    for (int o = 0; o < 3; o++) {
-        float fo = float(o);
-        for (int k = 0; k < 7; k++) {
-            float tk = t - float(k) * 0.05;
-            float ang = tk * (0.55 + fo * 0.12) + fo * 2.094;
-            float depth = sin(ang);
-            float2 op = float2(cos(ang) * (0.62 - fo * 0.08), C.y + 0.45 + fo * 0.28 + depth * 0.09);
-            float d = length(p - op);
-            float size = (k == 0) ? 1.0 : 0.55 * (1.0 - float(k) / 7.0);
-            float near = 0.55 + 0.45 * (depth * -0.5 + 0.5);
-            float3 tint = (o == 1) ? spark : mix(rose, violet, fo * 0.5);
-            col += tint * exp(-d * (k == 0 ? 55.0 : 90.0)) * size * near * (k == 0 ? 1.4 : 0.6);
-            if (k == 0) col += tint * exp(-d * 9.0) * 0.12 * near;
-        }
-    }
-
-    // ---- sparks spiralling up out of the circle, becoming fireflies
-    for (int l = 0; l < 3; l++) {
-        float fl = float(l);
-        float scale = 7.0 + fl * 5.0;
-        float speed = 0.18 + fl * 0.08;
-        float2 mp = p * scale;
-        mp.y -= t * speed * scale;
-        mp.x += sin(p.y * 3.0 + t * 0.8 + fl) * 0.6;
+        float2 mp = p * 11.0;
+        mp.y -= t * 0.9;
+        mp.x += sin(p.y * 2.5 + t * 0.5) * 0.5;
         float2 id = floor(mp);
-        float h = hash21(id + fl * 31.0);
-        float2 f = fract(mp) - 0.5;
-        float2 off = float2(hash21(id + 2.7), hash21(id + 9.1)) - 0.5;
-        float2 d2 = f - off * 0.7;
+        float h = hash21(id + 7.0);
+        float2 d2 = fract(mp) - 0.5 - (float2(hash21(id + 2.7), hash21(id + 9.1)) - 0.5) * 0.7;
         float d = length(d2);
-        // most sparks live in a cone above the circle; a few drift everywhere
-        float cone = exp(-abs(p.x) / (0.25 + max(p.y - C.y, 0.0) * 0.55)) * smoothstep(C.y - 0.1, C.y + 0.1, p.y);
-        float keep = step(1.0 - (0.08 + 0.75 * cone), h);
-        float tw = 0.5 + 0.5 * sin(t * (2.0 + h * 6.0) + h * 50.0);
-        float3 tint = h > 0.97 ? spark : (h > 0.9 ? rose : violet);
-        float bright = keep * tw * (0.55 + 1.1 * cone);
-        col += tint * exp(-d * 26.0) * bright * 0.9;
-        // the bright ones glint as four-point stars
-        if (h > 0.93) {
-            float glint = exp(-abs(d2.x) * 90.0) * exp(-abs(d2.y) * 9.0) + exp(-abs(d2.y) * 90.0) * exp(-abs(d2.x) * 9.0);
-            col += white * glint * bright * 0.45;
-        }
+        float near = exp(-r * 1.4);
+        float keep = step(1.0 - (0.06 + 0.5 * near), h);
+        float tw = 0.5 + 0.5 * sin(t * (2.0 + h * 5.0) + h * 50.0);
+        float3 tint = h > 0.985 ? spark : (h > 0.93 ? rose : violet);
+        col += tint * exp(-d * 30.0) * keep * tw * (0.6 + near);
     }
 
-    // ---- light on the ground around the circle, and a vignette
-    col += violet * 0.10 * exp(-length(float2(p.x * 0.7, (p.y - C.y) * 2.2)) * 1.6) * pulse;
+    // ---- vignette, grain
     float2 vq = (in.uv - 0.5) * 2.0;
-    col *= 1.0 - 0.4 * dot(vq, vq) * 0.5;
-    col += (hash21(uv * res + fract(t)) - 0.5) * 0.008;
+    col *= 1.0 - 0.35 * dot(vq, vq) * 0.5;
+    col += (fract(sin(dot(uv * res, float2(12.9898, 78.233)) + fract(t) * 7.0) * 43758.5453) - 0.5) * 0.008;
     return float4(max(col, 0.0), 1.0);
 }
 "#,
@@ -1287,6 +1328,47 @@ unsafe fn encode_frame(
 pub fn check(source: &str, width: u32, height: u32) -> Result<String, String> {
     let (msg, _buf) = check_with_pixels(source, width, height, 1.0)?;
     Ok(msg)
+}
+
+/// Render `frames` frames offscreen, a thirtieth of a second apart like the
+/// live wallpaper, and return the GPU time per frame in milliseconds: the
+/// mean and the worst.
+pub fn bench(source: &str, width: u32, height: u32, frames: u32) -> Result<(f64, f64), String> {
+    let gpu = build_gpu(source)?;
+    unsafe {
+        let desc = objc2_metal::MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
+            MTLPixelFormat::BGRA8Unorm,
+            width as usize,
+            height as usize,
+            false,
+        );
+        desc.setUsage(MTLTextureUsage::RenderTarget);
+        desc.setStorageMode(MTLStorageMode::Private);
+        let texture = gpu
+            .device
+            .newTextureWithDescriptor(&desc)
+            .ok_or("could not allocate the bench texture")?;
+        let (mut total, mut worst) = (0.0f64, 0.0f64);
+        // one frame first, to warm the pipeline up
+        for i in 0..=frames {
+            let uniforms = Uniforms {
+                resolution: [width as f32, height as f32],
+                time: 5.0 + i as f32 / 30.0,
+                frame: i as f32,
+                mouse: [0.0, 0.0],
+            };
+            let cb = encode_frame(&gpu, &texture, &uniforms)?;
+            cb.commit();
+            cb.waitUntilCompleted();
+            if i == 0 {
+                continue;
+            }
+            let ms = (cb.GPUEndTime() - cb.GPUStartTime()) * 1000.0;
+            total += ms;
+            worst = worst.max(ms);
+        }
+        Ok((total / frames as f64, worst))
+    }
 }
 
 /// Same as `check`, plus the raw BGRA pixels so a caller can look at the frame.

@@ -20,13 +20,16 @@ items so the loop has no seam. Hardware decode, ~3% CPU.
 ## Shader wallpapers
 
 `lwp set-builtin <name>` or `lwp set-shader <file.metal>` replaces the player with a
-`CAMetalLayer` and renders a fragment shader every frame at the display's native
-resolution. Nothing is stored: the picture is computed.
+`CAMetalLayer` and renders a fragment shader 30 times a second, at one pixel per
+point (`LWP_SHADER_FPS` and `LWP_SHADER_SCALE` change that). Nothing is stored:
+the picture is computed. `lwp shader-check --builtin <name> --size 1470x956
+--bench 120` reports how much GPU time a frame costs.
 
 Built-ins: `plasma`, `aurora`, `rings`, `stark` (a workshop hologram: a light-grid
 floor, a gyroscope of rings around a hex core, data panels and signal tears),
-`arcane` (a summoning circle of runes and stars, a pillar of light, orbiting orbs
-and spiralling sparks), `neon` (a synthwave city: striped sun, skyline, grid floor,
+`arcane` (an astrolabe sigil: rune rings turning against each other round a
+heptagram, tumbling gyroscope hoops with moons riding them, a heart that sends
+pulses through the rings, ley lines carrying comets in from the sky), `neon` (a synthwave city: striped sun, skyline, grid floor,
 VHS tracking), `eclipse` (totality: a black moon in a blazing, turning corona,
 sunset all round the horizon, a constellation, planets on their orbits, shooting
 stars and the odd bead of sunlight), `abyss` (the deep sea: light shafts swaying
