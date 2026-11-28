@@ -27,7 +27,10 @@ Built-ins: `plasma`, `aurora`, `rings`, `stark` (a workshop hologram: a light-gr
 floor, a gyroscope of rings around a hex core, data panels and signal tears),
 `arcane` (a summoning circle of runes and stars, a pillar of light, orbiting orbs
 and spiralling sparks), `neon` (a synthwave city: striped sun, skyline, grid floor,
-VHS tracking).
+VHS tracking), `eclipse` (totality: a black moon in a blazing, turning corona,
+sunset all round the horizon, a constellation, planets on their orbits, shooting
+stars and the odd bead of sunlight), `abyss` (the deep sea: light shafts swaying
+down, caustics on the floor, glowing jellyfish drifting up, plankton and bubbles).
 
 A shader file only has to define the fragment stage — lwp supplies the vertex
 shader, the `VOut` struct and the uniforms:
