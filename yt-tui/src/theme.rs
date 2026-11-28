@@ -1,4 +1,4 @@
-//! The three trademark looks, shared with kshell:
+//! The five trademark looks, shared with kshell:
 //!
 //! - **Neon** — a cyberpunk city on tape: hot magenta and electric cyan with
 //!   sunset yellow, tags that lean forward (◢ … ◤), panels with cut corners and
@@ -7,8 +7,13 @@
 //!   `[ READOUT ]` titles and `[KEY]` tags, an arc reactor on the empty screens.
 //! - **Arcane** — magic: violet into rose with a spectral spark, rounded panels
 //!   with `✦` titles, glowing runestone tags, a magic circle among the stars.
+//! - **Eclipse** — totality: the sun's gold and moonlight silver on midnight,
+//!   `☾` titles in tracked capitals, `⟨ TAGS ⟩` like a star chart, an eclipse
+//!   with its diamond ring on the empty screens.
+//! - **Abyss** — the deep sea: bioluminescent teal and jellyfish violet, `≋`
+//!   titles, tags in glowing pods, a jellyfish over the sea floor.
 //!
-//! By default the look follows whichever of the three kshell is wearing (its
+//! By default the look follows whichever of the five kshell is wearing (its
 //! `[theme] name`), live; `theme = …` in the config, `--theme` or `t` pick one.
 //! True colour throughout; the background is left to the terminal.
 
@@ -27,16 +32,20 @@ pub enum Theme {
     Neon,
     Stark,
     Arcane,
+    Eclipse,
+    Abyss,
 }
 
 impl Theme {
-    pub const ALL: [Theme; 3] = [Theme::Neon, Theme::Stark, Theme::Arcane];
+    pub const ALL: [Theme; 5] = [Theme::Neon, Theme::Stark, Theme::Arcane, Theme::Eclipse, Theme::Abyss];
 
     pub fn name(self) -> &'static str {
         match self {
             Theme::Neon => "Neon",
             Theme::Stark => "Stark",
             Theme::Arcane => "Arcane",
+            Theme::Eclipse => "Eclipse",
+            Theme::Abyss => "Abyss",
         }
     }
 
@@ -46,6 +55,8 @@ impl Theme {
             "neon" | "cyberpunk" | "synthwave" => Some(Theme::Neon),
             "stark" | "hud" | "jarvis" => Some(Theme::Stark),
             "arcane" | "magic" => Some(Theme::Arcane),
+            "eclipse" | "totality" | "celestial" => Some(Theme::Eclipse),
+            "abyss" | "deep" | "deep sea" => Some(Theme::Abyss),
             _ => None,
         }
     }
@@ -175,18 +186,41 @@ fn palette() -> Palette {
             selected: Color::Rgb(44, 22, 70),
             ink: Color::Rgb(14, 6, 26),
         },
+        Theme::Eclipse => Palette {
+            accent: Color::Rgb(233, 196, 106),
+            highlight: Color::Rgb(200, 211, 245),
+            // the corona's ember
+            mid: Color::Rgb(255, 158, 94),
+            text: Color::Rgb(230, 233, 245),
+            dim: Color::Rgb(106, 113, 147),
+            faint: Color::Rgb(40, 46, 74),
+            selected: Color::Rgb(24, 30, 58),
+            ink: Color::Rgb(7, 10, 24),
+        },
+        Theme::Abyss => Palette {
+            accent: Color::Rgb(46, 230, 214),
+            highlight: Color::Rgb(140, 123, 255),
+            // plankton green
+            mid: Color::Rgb(92, 255, 184),
+            text: Color::Rgb(210, 244, 241),
+            dim: Color::Rgb(63, 110, 122),
+            faint: Color::Rgb(20, 52, 64),
+            selected: Color::Rgb(6, 40, 52),
+            ink: Color::Rgb(2, 12, 20),
+        },
     }
 }
 
-/// The main colour: magenta, ice blue, violet.
+/// The main colour: magenta, ice blue, violet, gold, teal.
 pub fn accent() -> Color {
     palette().accent
 }
-/// The second colour: cyan, white light, rose.
+/// The second colour: cyan, white light, rose, moonlight, jellyfish violet.
 pub fn highlight() -> Color {
     palette().highlight
 }
-/// The warm note: sunset yellow, Iron Man gold, spectral cyan.
+/// The warm note: sunset yellow, Iron Man gold, spectral cyan, corona ember,
+/// plankton green.
 pub fn mid() -> Color {
     palette().mid
 }
@@ -215,6 +249,8 @@ pub fn mark() -> &'static str {
         Theme::Neon => "▸▸",
         Theme::Stark => "//",
         Theme::Arcane => "✦",
+        Theme::Eclipse => "☾",
+        Theme::Abyss => "≋",
     }
 }
 
@@ -224,6 +260,8 @@ pub fn cursor() -> (&'static str, &'static str) {
         Theme::Neon => ("▌", "▸"),
         Theme::Stark => ("┃", "▶"),
         Theme::Arcane => ("│", "✦"),
+        Theme::Eclipse => ("│", "☾"),
+        Theme::Abyss => ("│", "◉"),
     }
 }
 
@@ -233,6 +271,8 @@ pub fn track() -> (&'static str, &'static str, &'static str) {
         Theme::Neon => ("━", "◆", "─"),
         Theme::Stark => ("━", "▮", "╌"),
         Theme::Arcane => ("━", "✦", "┄"),
+        Theme::Eclipse => ("━", "◐", "┈"),
+        Theme::Abyss => ("━", "◉", "∙"),
     }
 }
 
@@ -293,6 +333,22 @@ pub fn panel(title: impl Into<String>, focused: bool) -> Block<'static> {
                 Span::styled(" ✦ ", Style::new().fg(if focused { p.accent } else { p.dim })),
             ],
         ),
+        Theme::Eclipse => (
+            border::ROUNDED,
+            vec![
+                Span::styled(" ☾ ", Style::new().fg(if focused { p.accent } else { p.dim })),
+                Span::styled(title.trim().to_uppercase(), Style::new().fg(if focused { p.highlight } else { p.dim }).bold()),
+                Span::styled(" ✧ ", Style::new().fg(if focused { p.accent } else { p.dim })),
+            ],
+        ),
+        Theme::Abyss => (
+            border::ROUNDED,
+            vec![
+                Span::styled(" ≋ ", Style::new().fg(if focused { p.accent } else { p.dim })),
+                Span::styled(title.trim().to_string(), Style::new().fg(if focused { p.text } else { p.dim }).bold()),
+                Span::styled(" ∘ ", Style::new().fg(if focused { p.highlight } else { p.dim })),
+            ],
+        ),
     };
     let mut block = Block::new().borders(Borders::ALL).border_set(set).border_style(edge);
     if !title.trim().is_empty() {
@@ -301,8 +357,8 @@ pub fn panel(title: impl Into<String>, focused: bool) -> Block<'static> {
     block
 }
 
-/// A tag: `◢ TEXT ◤` leaning forward, `[TEXT]` on a HUD, or a glowing
-/// runestone with round ends.
+/// A tag: `◢ TEXT ◤` leaning forward, `[TEXT]` on a HUD, a glowing runestone
+/// with round ends, `⟨ TEXT ⟩` like a label on a star chart, or a glowing pod.
 pub fn tag(text: impl Into<String>, colour: Color) -> Vec<Span<'static>> {
     let text = text.into();
     match current() {
@@ -320,6 +376,16 @@ pub fn tag(text: impl Into<String>, colour: Color) -> Vec<Span<'static>> {
             Span::styled("\u{e0b6}", Style::new().fg(colour)),
             Span::styled(text, Style::new().fg(ink()).bg(colour).bold()),
             Span::styled("\u{e0b4}", Style::new().fg(colour)),
+        ],
+        Theme::Eclipse => vec![
+            Span::styled("⟨", Style::new().fg(colour)),
+            Span::styled(text.trim().to_uppercase(), Style::new().fg(colour).bold()),
+            Span::styled("⟩", Style::new().fg(colour)),
+        ],
+        Theme::Abyss => vec![
+            Span::styled("◖", Style::new().fg(colour)),
+            Span::styled(text, Style::new().fg(ink()).bg(colour).bold()),
+            Span::styled("◗", Style::new().fg(colour)),
         ],
     }
 }
@@ -368,13 +434,25 @@ pub fn logo() -> Vec<Span<'static>> {
             spans.push(Span::styled(" ✧", Style::new().fg(p.mid)));
             spans
         }
+        Theme::Eclipse => {
+            let mut spans = vec![Span::styled("◐ ", Style::new().fg(p.accent).bold())];
+            spans.extend(gradient("Y T · T U I", p.accent, p.highlight, Style::new().bold()));
+            spans.push(Span::styled("  ☾ ✧", Style::new().fg(p.dim)));
+            spans
+        }
+        Theme::Abyss => {
+            let mut spans = vec![Span::styled("≋ ", Style::new().fg(p.accent).bold())];
+            spans.extend(gradient("yt-tui", p.accent, p.highlight, Style::new().bold()));
+            spans.push(Span::styled(" ∘ °", Style::new().fg(p.mid)));
+            spans
+        }
     }
 }
 
 /// A key hint: the key on a small tag, the label after it.
 pub fn hint(key: &str, what: &str) -> Vec<Span<'static>> {
     let mut spans = tag(key.to_string(), accent());
-    let label = if current() == Theme::Arcane { what.to_string() } else { what.to_uppercase() };
+    let label = if matches!(current(), Theme::Arcane | Theme::Abyss) { what.to_string() } else { what.to_uppercase() };
     spans.push(Span::styled(format!(" {label}   "), Style::new().fg(dim())));
     spans
 }
@@ -385,6 +463,8 @@ pub fn scene(width: u16) -> Vec<Line<'static>> {
         Theme::Neon => synthwave(width),
         Theme::Stark => arc_reactor(width),
         Theme::Arcane => magic_circle(width),
+        Theme::Eclipse => eclipse(width),
+        Theme::Abyss => jellyfish(width),
     };
     // Every row the full width: centred as lines, the picture keeps its shape.
     let w = width.clamp(18, 44) as usize;
@@ -490,6 +570,61 @@ fn magic_circle(width: u16) -> Vec<Line<'static>> {
     ]
 }
 
+/// The sun at totality: a dark moon in a ring of light, the corona's rays
+/// round it, the diamond ring's bead on its edge.
+fn eclipse(width: u16) -> Vec<Line<'static>> {
+    let p = palette();
+    let w = width.clamp(18, 44) as usize;
+    let ring = Style::new().fg(p.accent).bold();
+    let ray = Style::new().fg(p.mid);
+    let star = Style::new().fg(p.highlight);
+    let faint = Style::new().fg(p.dim);
+    let bead = Style::new().fg(Color::White).bold();
+    let row = |parts: Vec<(&str, Style)>| -> Line<'static> {
+        let len: usize = parts.iter().map(|(s, _)| s.chars().count()).sum();
+        let mut spans = vec![Span::raw(" ".repeat(w.saturating_sub(len) / 2))];
+        spans.extend(parts.into_iter().map(|(s, st)| Span::styled(s.to_string(), st)));
+        Line::from(spans)
+    };
+    // every row 17 wide, so centring each keeps the disc round
+    vec![
+        row(vec![("·", faint), ("   ╲   ", ray), ("│", ray), ("   ╱   ", ray), ("✧", star)]),
+        row(vec![("  ─ ", ray), ("╭──────", ring), ("◆", bead), ("╮", ring), (" ─  ", ray)]),
+        row(vec![("──  ", ray), ("│       │", ring), ("  ──", ray)]),
+        row(vec![("  ─ ", ray), ("╰───────╯", ring), (" ─  ", ray)]),
+        row(vec![("✧", star), ("   ╱   ", ray), ("│", ray), ("   ╲   ", ray), ("·", faint)]),
+        Line::raw(""),
+        centred("⟨ TOTALITY ⟩", w, Style::new().fg(p.highlight)),
+    ]
+}
+
+/// A jellyfish drifting over the sea floor, bubbles rising past it.
+fn jellyfish(width: u16) -> Vec<Line<'static>> {
+    let p = palette();
+    let w = width.clamp(18, 44) as usize;
+    let bell = Style::new().fg(p.accent).bold();
+    let glow = Style::new().fg(p.highlight);
+    let tentacle = Style::new().fg(p.dim);
+    let bubble = Style::new().fg(p.mid);
+    let floor = Style::new().fg(p.faint);
+    let row = |parts: Vec<(&str, Style)>| -> Line<'static> {
+        let len: usize = parts.iter().map(|(s, _)| s.chars().count()).sum();
+        let mut spans = vec![Span::raw(" ".repeat(w.saturating_sub(len) / 2))];
+        spans.extend(parts.into_iter().map(|(s, st)| Span::styled(s.to_string(), st)));
+        Line::from(spans)
+    };
+    // every row 17 wide, so centring each keeps the creature upright
+    vec![
+        row(vec![("   ∘             ", bubble)]),
+        row(vec![("     ", bell), ("╭─────╮", bell), ("   ° ", bubble)]),
+        row(vec![("  ∘ ", bubble), ("╱", bell), (" ◦ ◦ ◦ ", glow), ("╲", bell), ("    ", bell)]),
+        row(vec![("    ", bell), ("╰┬┴┬┴┬┴┬╯", bell), ("    ", bell)]),
+        row(vec![("     ", tentacle), ("┊ ╎ ┊ ╎", tentacle), ("     ", tentacle)]),
+        row(vec![("    ", tentacle), ("┊ ╎ ┊ ╎", tentacle), ("   ", tentacle), ("∘", bubble), ("  ", tentacle)]),
+        row(vec![("≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈", floor)]),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -523,7 +658,7 @@ mod tests {
     #[test]
     fn scene_rows_line_up() {
         let _turn = LOOK.lock().unwrap_or_else(|e| e.into_inner());
-        for theme in [Theme::Stark, Theme::Arcane] {
+        for theme in [Theme::Stark, Theme::Arcane, Theme::Eclipse, Theme::Abyss] {
             set(theme);
             let lines = scene(44);
             let widths: Vec<usize> = lines.iter().take(5).map(|l| l.width()).collect();
@@ -546,6 +681,9 @@ mod tests {
         assert_eq!(Theme::parse("hud"), Some(Theme::Stark));
         assert_eq!(Theme::parse("auto"), None);
         assert_eq!(Theme::Neon.next(), Theme::Stark);
-        assert_eq!(Theme::Arcane.next(), Theme::Neon);
+        assert_eq!(Theme::Arcane.next(), Theme::Eclipse);
+        assert_eq!(Theme::Abyss.next(), Theme::Neon);
+        assert_eq!(Theme::parse("Eclipse"), Some(Theme::Eclipse));
+        assert_eq!(Theme::parse("deep sea"), Some(Theme::Abyss));
     }
 }

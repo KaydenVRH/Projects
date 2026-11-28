@@ -7,7 +7,7 @@
 //! max_width = 1920
 //! results = 30
 //! volume = 80
-//! theme = auto      # neon, stark, arcane, or auto: follow kshell
+//! theme = auto      # neon, stark, arcane, eclipse, abyss, or auto: follow kshell
 //! ```
 //!
 //! Command-line options override the file; `YT_TUI_COOKIES_FROM_BROWSER`
@@ -23,7 +23,7 @@ pub struct Config {
     pub max_width: Option<u32>,
     pub results: Option<u32>,
     pub volume: Option<f64>,
-    /// `neon`, `stark`, `arcane`; anything else (or nothing) follows kshell.
+    /// `neon`, `stark`, `arcane`, `eclipse`, `abyss`; anything else (or nothing) follows kshell.
     pub theme: Option<String>,
 }
 

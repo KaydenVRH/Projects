@@ -37,13 +37,13 @@ options:
   --max-width W    widest frame to decode before kitty scales it (default 1920)
   --results N      search results to fetch (default 30)
   --volume N       starting volume, 0-100 (default 80)
-  --theme NAME     neon, stark or arcane; auto (the default) follows kshell
+  --theme NAME     neon, stark, arcane, eclipse or abyss; auto (the default) follows kshell
   -h, --help       show this
 
 config file: ~/.config/yt-tui/config, e.g.
   cookies_from_browser = firefox    your login: Home, Subscriptions, …
   fps = 30 / quality = 1080 / max_width = 1920 / results = 30 / volume = 80
-  theme = auto                      or neon / stark / arcane
+  theme = auto                      or neon / stark / arcane / eclipse / abyss
 
 environment:
   YT_TUI_GRAPHICS=on|off      force kitty graphics on or off
@@ -184,9 +184,9 @@ fn parse_args() -> Result<(Settings, Option<String>)> {
                 Some(name) if name == "auto" => settings.theme = None,
                 Some(name) => match theme::Theme::parse(&name) {
                     Some(theme) => settings.theme = Some(theme),
-                    None => bail!("--theme is neon, stark, arcane or auto"),
+                    None => bail!("--theme is neon, stark, arcane, eclipse, abyss or auto"),
                 },
-                None => bail!("--theme is neon, stark, arcane or auto"),
+                None => bail!("--theme is neon, stark, arcane, eclipse, abyss or auto"),
             },
             s if s.starts_with("--") => bail!("unknown option {s} (see --help)"),
             _ => words.push(arg),

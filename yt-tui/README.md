@@ -31,24 +31,24 @@ it, search still works.
 
 ## Look
 
-yt-tui wears the three trademark looks shared with kshell, in true colour
+yt-tui wears the five trademark looks shared with kshell, in true colour
 (`src/theme.rs`):
 
-| | Neon | Stark | Arcane |
-|---|---|---|---|
-| **Feel** | a cyberpunk city on tape | Tony Stark's HUD | magic |
-| **Colours** | magenta, cyan, sunset yellow | ice blue, white light, Iron Man gold | violet, rose, a spectral spark |
-| **Panels** | cut corners, `▸▸ READOUT` titles | heavy corner brackets, `[ READOUT ]` titles | rounded, `✦ Title ✦` |
-| **Tags** | lean forward (`◢ … ◤`) | `[KEY]` readouts | glowing runestones |
-| **Empty screens** | a synthwave sun over a grid floor | an arc reactor | a magic circle of runes |
+| | Neon | Stark | Arcane | Eclipse | Abyss |
+|---|---|---|---|---|---|
+| **Feel** | a cyberpunk city on tape | Tony Stark's HUD | magic | the sky at totality | the deep sea |
+| **Colours** | magenta, cyan, sunset yellow | ice blue, white light, Iron Man gold | violet, rose, a spectral spark | gold, moonlight, corona ember | teal, jellyfish violet, plankton green |
+| **Panels** | cut corners, `▸▸ READOUT` titles | heavy corner brackets, `[ READOUT ]` titles | rounded, `✦ Title ✦` | rounded, `☾ TITLE ✧` | rounded, `≋ Title ∘` |
+| **Tags** | lean forward (`◢ … ◤`) | `[KEY]` readouts | glowing runestones | star-chart labels (`⟨ … ⟩`) | glowing pods |
+| **Empty screens** | a synthwave sun over a grid floor | an arc reactor | a magic circle of runes | an eclipse and its diamond ring | a jellyfish over the sea floor |
 
 The logo, the tab you're on, LIVE and the key hints are all tags; the selected
 and playing titles and the progress bar run in the theme's gradient.
 
 **Which one:** by default (`theme = auto`) yt-tui follows whichever of the
-three kshell is wearing, live: switch kshell's theme and yt-tui changes with
+five kshell is wearing, live: switch kshell's theme and yt-tui changes with
 it within a second. Any other kshell theme keeps the last one. `theme = neon`
-(or `stark`, `arcane`) in the config, or `--theme`, keeps one; `t` cycles them
+(or `stark`, `arcane`, `eclipse`, `abyss`) in the config, or `--theme`, keeps one; `t` cycles them
 for the session.
 
 The terminal's own background is left alone.

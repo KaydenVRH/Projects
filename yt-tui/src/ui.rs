@@ -522,7 +522,7 @@ fn render_help(f: &mut Frame, in_player: bool) {
             ("1 – 5 / [ ]", "switch tab: feeds, search"),
             ("r", "reload this tab"),
             ("A", "toggle autoplay"),
-            ("t", "next theme: neon, stark, arcane"),
+            ("t", "next theme: neon, stark, arcane, eclipse, abyss"),
             ("q", "quit"),
         ]
     };
